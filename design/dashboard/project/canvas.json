@@ -1,0 +1,17 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-11-01T12:00:00Z"},
+  "title": "entowire dashboard",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 1040, "title": "Overview", "expand": "fill"},
+    "People.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 1040, "title": "People", "expand": "fill"},
+    "Devices.dc.html": {"x": 3040, "y": 0, "w": 1440, "h": 1040, "title": "Devices", "expand": "fill"},
+    "Access.dc.html": {"x": 0, "y": 1160, "w": 1440, "h": 1040, "title": "Access", "expand": "fill"},
+    "SignIn.dc.html": {"x": 1520, "y": 1160, "w": 1440, "h": 900, "title": "Open the dashboard", "expand": "fill"}
+  },
+  "order": ["Main.dc.html", "People.dc.html", "Devices.dc.html", "Access.dc.html", "SignIn.dc.html"],
+  "notes": {},
+  "designSystems": []
+}

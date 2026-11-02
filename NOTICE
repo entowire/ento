@@ -1,0 +1,18 @@
+ento
+Copyright 2026 Marius David
+
+Licensed under the Apache License, Version 2.0, with the Commons Clause License Condition v1.0
+(LICENSE): you may use, change and share ento, but not sell it, nor a product or service (hosting
+included) whose value derives entirely or substantially from it.
+
+This software includes third-party material under its own licenses:
+
+- The EFF large wordlist (internal/token/eff_large_wordlist.txt), Electronic Frontier Foundation,
+  CC BY 3.0 US (https://creativecommons.org/licenses/by/3.0/us/), embedded unchanged.
+- Archivo (internal/control/ui/fonts/archivo.woff2), SIL Open Font License 1.1
+  (internal/control/ui/fonts/OFL-archivo.txt).
+- IBM Plex Mono (internal/control/ui/fonts/plex-mono.woff2), SIL Open Font License 1.1
+  (internal/control/ui/fonts/OFL-ibm-plex.txt).
+- Google's hardware attestation root certificates (internal/attest/roots/), published by Google
+  for verifying Android key attestations.
+- Go modules listed in go.mod, each under its own license (BSD, MIT or Apache 2.0).

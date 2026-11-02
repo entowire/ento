@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard · entowire</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<svg class="sprite" width="0" height="0" aria-hidden="true">
+  <symbol id="i-mark" viewBox="-7 -3.8 45.6 45.6"><path d="M26.6 1.8H7A5.2 5.2 0 0 0 1.8 7V31A5.2 5.2 0 0 0 7 36.2H26.6M1.8 19H26.6" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/><circle cx="26.6" cy="1.8" r="5" fill="currentColor"/><circle cx="26.6" cy="19" r="5" fill="currentColor"/><circle cx="26.6" cy="36.2" r="5" fill="currentColor"/></symbol>
+  <symbol id="i-overview" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/></symbol>
+  <symbol id="i-laptop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="4" width="17" height="7" rx="1.5"/><rect x="3.5" y="13" width="17" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-access" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-routes" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"/></symbol>
+  <symbol id="i-names" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></symbol>
+  <symbol id="i-links" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-groups" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="7" rx="2"/><rect x="13" y="4" width="8" height="7" rx="2"/><rect x="8" y="13" width="8" height="7" rx="2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></symbol>
+  <symbol id="i-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+  <symbol id="i-both" viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h22M7 2L2 7l5 5M19 2l5 5-5 5"/></symbol>
+  <symbol id="i-one" viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h22M18 1l6 6-6 6"/></symbol>
+</svg>
+
+<div class="signin-page" id="signin" hidden>
+  <div class="brand"><svg class="logo" viewBox="0 -3.2 134.79 44.4" height="40" role="img" aria-label="entowire"><path d="M26.6 1.8H7A5.2 5.2 0 0 0 1.8 7V31A5.2 5.2 0 0 0 7 36.2H26.6M1.8 19H26.6" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/><path class="loop" pathLength="1" d="M26.6 1.8H127.79A5.2 5.2 0 0 1 132.99 7V19" fill="none" stroke="currentColor" stroke-width="3.6"/><path class="loop" pathLength="1" d="M26.6 36.2H127.79A5.2 5.2 0 0 0 132.99 31V19" fill="none" stroke="currentColor" stroke-width="3.6"/><g fill="currentColor"><circle cx="26.6" cy="1.8" r="5.0"/><circle cx="26.6" cy="19.0" r="5.0"/><circle cx="26.6" cy="36.2" r="5.0"/><path d="M44.72 25.37Q43.02 25.37 41.8 24.82Q40.58 24.28 39.93 23.16Q39.28 22.04 39.28 20.29Q39.28 18.57 39.92 17.45Q40.56 16.33 41.74 15.78Q42.92 15.22 44.55 15.22Q46.22 15.22 47.38 15.76Q48.54 16.3 49.15 17.41Q49.75 18.52 49.75 20.27V20.9H42.63Q42.63 21.62 42.84 22.13Q43.04 22.64 43.49 22.9Q43.94 23.16 44.67 23.16Q45.15 23.16 45.5 23.05Q45.84 22.94 46.07 22.74Q46.29 22.54 46.4 22.26Q46.51 21.98 46.51 21.65H49.75Q49.75 22.52 49.42 23.22Q49.09 23.91 48.45 24.39Q47.81 24.87 46.87 25.12Q45.94 25.37 44.72 25.37ZM42.65 19.21H46.36Q46.36 18.77 46.25 18.44Q46.13 18.11 45.91 17.88Q45.69 17.65 45.38 17.54Q45.06 17.43 44.66 17.43Q44.03 17.43 43.61 17.64Q43.18 17.85 42.96 18.24Q42.73 18.63 42.65 19.21ZM51 25.15V15.44H53.75L53.97 16.87H54.1Q54.48 16.33 54.98 15.96Q55.48 15.59 56.09 15.4Q56.71 15.22 57.38 15.22Q58.48 15.22 59.22 15.63Q59.96 16.04 60.33 16.83Q60.71 17.62 60.71 18.8V25.15H57.37V19.23Q57.37 18.87 57.28 18.6Q57.18 18.33 57.02 18.14Q56.85 17.95 56.6 17.85Q56.35 17.75 56.01 17.75Q55.52 17.75 55.14 17.99Q54.77 18.22 54.56 18.6Q54.34 18.98 54.34 19.46V25.15ZM66.14 25.37Q65.17 25.37 64.46 25.11Q63.75 24.85 63.38 24.28Q63 23.71 63 22.81V17.78H61.69V15.44H63.13L63.83 12.55H66.34V15.44H68.31V17.78H66.34V21.86Q66.34 22.44 66.54 22.73Q66.75 23.03 67.32 23.03H68.31V25.04Q68.05 25.13 67.65 25.21Q67.26 25.29 66.86 25.33Q66.45 25.37 66.14 25.37ZM74.3 25.37Q72.66 25.37 71.47 24.81Q70.29 24.25 69.64 23.12Q68.99 21.99 68.99 20.29Q68.99 18.57 69.64 17.45Q70.29 16.33 71.47 15.78Q72.66 15.22 74.3 15.22Q75.94 15.22 77.14 15.78Q78.33 16.33 78.98 17.45Q79.62 18.57 79.62 20.29Q79.62 21.99 78.98 23.12Q78.33 24.25 77.14 24.81Q75.94 25.37 74.3 25.37ZM74.3 23.03Q75 23.03 75.44 22.76Q75.87 22.49 76.07 21.98Q76.27 21.47 76.27 20.73V19.87Q76.27 19.13 76.07 18.61Q75.87 18.09 75.44 17.82Q75 17.55 74.3 17.55Q73.6 17.55 73.17 17.82Q72.74 18.09 72.54 18.61Q72.35 19.13 72.35 19.87V20.73Q72.35 21.47 72.54 21.98Q72.74 22.49 73.17 22.76Q73.6 23.03 74.3 23.03ZM83.15 25.15 79.76 15.44H83.34L84.23 18.93Q84.31 19.2 84.42 19.67Q84.53 20.14 84.65 20.63Q84.76 21.11 84.85 21.48H84.98Q85.09 21.05 85.2 20.61Q85.31 20.17 85.43 19.74Q85.54 19.31 85.63 18.93L86.53 15.44H89.89L90.78 18.95Q90.86 19.2 90.96 19.66Q91.07 20.11 91.19 20.6Q91.32 21.09 91.41 21.48H91.54Q91.61 21.15 91.73 20.69Q91.84 20.24 91.96 19.77Q92.08 19.31 92.16 18.96L93.07 15.44H96.32L92.91 25.15H89.61L88.65 21.56Q88.56 21.24 88.45 20.84Q88.35 20.43 88.25 20.04Q88.15 19.65 88.08 19.36H88Q87.96 19.59 87.87 19.95Q87.78 20.31 87.67 20.72Q87.56 21.13 87.44 21.55L86.45 25.15ZM96.91 14.22V11.81H100.25V14.22ZM96.91 25.15V15.44H100.25V25.15ZM101.95 25.15V15.44H104.7L104.92 16.92H105.05Q105.28 16.39 105.63 16Q105.98 15.62 106.46 15.41Q106.94 15.2 107.51 15.2Q107.86 15.2 108.14 15.27Q108.43 15.34 108.56 15.41V18.27H107.49Q106.91 18.27 106.49 18.42Q106.07 18.58 105.8 18.89Q105.54 19.2 105.42 19.65Q105.29 20.09 105.29 20.67V25.15ZM114.03 25.37Q112.33 25.37 111.11 24.82Q109.89 24.28 109.24 23.16Q108.59 22.04 108.59 20.29Q108.59 18.57 109.23 17.45Q109.87 16.33 111.05 15.78Q112.23 15.22 113.86 15.22Q115.53 15.22 116.69 15.76Q117.85 16.3 118.46 17.41Q119.07 18.52 119.07 20.27V20.9H111.94Q111.95 21.62 112.15 22.13Q112.35 22.64 112.8 22.9Q113.25 23.16 113.98 23.16Q114.46 23.16 114.81 23.05Q115.15 22.94 115.38 22.74Q115.61 22.54 115.71 22.26Q115.82 21.98 115.82 21.65H119.07Q119.07 22.52 118.74 23.22Q118.41 23.91 117.76 24.39Q117.12 24.87 116.18 25.12Q115.25 25.37 114.03 25.37ZM111.96 19.21H115.68Q115.68 18.77 115.56 18.44Q115.44 18.11 115.22 17.88Q115 17.65 114.69 17.54Q114.38 17.43 113.98 17.43Q113.34 17.43 112.92 17.64Q112.5 17.85 112.27 18.24Q112.04 18.63 111.96 19.21Z"/></g></svg></div>
+  <main class="signin-card">
+    <div>
+      <h1 id="signin-title">Open the dashboard</h1>
+      <p class="lead">This page opens only after you approve it from this device, with the key only ento holds. It must be an
+        administrator or operator device.</p>
+    </div>
+    <div class="code" id="signin-code" aria-live="polite"><span>····</span><i aria-hidden="true">·</i><span>····</span></div>
+    <div class="step" id="signin-phone" hidden>
+      <p>On this phone, in the ento app:</p>
+      <ol class="steps">
+        <li>Go back to the app. If its code box is not showing, tap <b>Open the admin page</b>.</li>
+        <li>Type the code above in <b>Code the admin page shows</b>.</li>
+        <li>Tap <b>Approve</b>. This page then opens by itself.</li>
+      </ol>
+      <div class="or">or on a computer</div>
+    </div>
+    <div class="step">
+      <p id="signin-run">In a terminal on this device, run</p>
+      <div class="term-wrap"><pre class="term cmd" id="signin-cmd">sudo ento admin ui ····-····</pre><button type="button" class="copy" data-copy="signin-cmd" title="Copy the command" aria-label="Copy the command"><svg width="16" height="16" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+      <p class="hint">Windows: the same without <code>sudo</code>, in a PowerShell run as administrator. A device that is in this
+        network through a link: <code>sudo ento admin --link NAME ui CODE</code>.</p>
+    </div>
+    <div class="waiting"><span class="spin" aria-hidden="true"></span>Waiting for approval · the code works for 5 minutes, the page then stays open up to 8 hours (30 minutes unused)</div>
+  </main>
+  <p class="foot" id="signin-foot"></p>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="side">
+    <a class="brand" href="#overview" aria-label="entowire, overview"><svg class="logo" viewBox="0 -3.2 134.79 44.4" height="42" role="img" aria-label="entowire"><path d="M26.6 1.8H7A5.2 5.2 0 0 0 1.8 7V31A5.2 5.2 0 0 0 7 36.2H26.6M1.8 19H26.6" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/><path class="loop" pathLength="1" d="M26.6 1.8H127.79A5.2 5.2 0 0 1 132.99 7V19" fill="none" stroke="currentColor" stroke-width="3.6"/><path class="loop" pathLength="1" d="M26.6 36.2H127.79A5.2 5.2 0 0 0 132.99 31V19" fill="none" stroke="currentColor" stroke-width="3.6"/><g fill="currentColor"><circle cx="26.6" cy="1.8" r="5.0"/><circle cx="26.6" cy="19.0" r="5.0"/><circle cx="26.6" cy="36.2" r="5.0"/><path d="M44.72 25.37Q43.02 25.37 41.8 24.82Q40.58 24.28 39.93 23.16Q39.28 22.04 39.28 20.29Q39.28 18.57 39.92 17.45Q40.56 16.33 41.74 15.78Q42.92 15.22 44.55 15.22Q46.22 15.22 47.38 15.76Q48.54 16.3 49.15 17.41Q49.75 18.52 49.75 20.27V20.9H42.63Q42.63 21.62 42.84 22.13Q43.04 22.64 43.49 22.9Q43.94 23.16 44.67 23.16Q45.15 23.16 45.5 23.05Q45.84 22.94 46.07 22.74Q46.29 22.54 46.4 22.26Q46.51 21.98 46.51 21.65H49.75Q49.75 22.52 49.42 23.22Q49.09 23.91 48.45 24.39Q47.81 24.87 46.87 25.12Q45.94 25.37 44.72 25.37ZM42.65 19.21H46.36Q46.36 18.77 46.25 18.44Q46.13 18.11 45.91 17.88Q45.69 17.65 45.38 17.54Q45.06 17.43 44.66 17.43Q44.03 17.43 43.61 17.64Q43.18 17.85 42.96 18.24Q42.73 18.63 42.65 19.21ZM51 25.15V15.44H53.75L53.97 16.87H54.1Q54.48 16.33 54.98 15.96Q55.48 15.59 56.09 15.4Q56.71 15.22 57.38 15.22Q58.48 15.22 59.22 15.63Q59.96 16.04 60.33 16.83Q60.71 17.62 60.71 18.8V25.15H57.37V19.23Q57.37 18.87 57.28 18.6Q57.18 18.33 57.02 18.14Q56.85 17.95 56.6 17.85Q56.35 17.75 56.01 17.75Q55.52 17.75 55.14 17.99Q54.77 18.22 54.56 18.6Q54.34 18.98 54.34 19.46V25.15ZM66.14 25.37Q65.17 25.37 64.46 25.11Q63.75 24.85 63.38 24.28Q63 23.71 63 22.81V17.78H61.69V15.44H63.13L63.83 12.55H66.34V15.44H68.31V17.78H66.34V21.86Q66.34 22.44 66.54 22.73Q66.75 23.03 67.32 23.03H68.31V25.04Q68.05 25.13 67.65 25.21Q67.26 25.29 66.86 25.33Q66.45 25.37 66.14 25.37ZM74.3 25.37Q72.66 25.37 71.47 24.81Q70.29 24.25 69.64 23.12Q68.99 21.99 68.99 20.29Q68.99 18.57 69.64 17.45Q70.29 16.33 71.47 15.78Q72.66 15.22 74.3 15.22Q75.94 15.22 77.14 15.78Q78.33 16.33 78.98 17.45Q79.62 18.57 79.62 20.29Q79.62 21.99 78.98 23.12Q78.33 24.25 77.14 24.81Q75.94 25.37 74.3 25.37ZM74.3 23.03Q75 23.03 75.44 22.76Q75.87 22.49 76.07 21.98Q76.27 21.47 76.27 20.73V19.87Q76.27 19.13 76.07 18.61Q75.87 18.09 75.44 17.82Q75 17.55 74.3 17.55Q73.6 17.55 73.17 17.82Q72.74 18.09 72.54 18.61Q72.35 19.13 72.35 19.87V20.73Q72.35 21.47 72.54 21.98Q72.74 22.49 73.17 22.76Q73.6 23.03 74.3 23.03ZM83.15 25.15 79.76 15.44H83.34L84.23 18.93Q84.31 19.2 84.42 19.67Q84.53 20.14 84.65 20.63Q84.76 21.11 84.85 21.48H84.98Q85.09 21.05 85.2 20.61Q85.31 20.17 85.43 19.74Q85.54 19.31 85.63 18.93L86.53 15.44H89.89L90.78 18.95Q90.86 19.2 90.96 19.66Q91.07 20.11 91.19 20.6Q91.32 21.09 91.41 21.48H91.54Q91.61 21.15 91.73 20.69Q91.84 20.24 91.96 19.77Q92.08 19.31 92.16 18.96L93.07 15.44H96.32L92.91 25.15H89.61L88.65 21.56Q88.56 21.24 88.45 20.84Q88.35 20.43 88.25 20.04Q88.15 19.65 88.08 19.36H88Q87.96 19.59 87.87 19.95Q87.78 20.31 87.67 20.72Q87.56 21.13 87.44 21.55L86.45 25.15ZM96.91 14.22V11.81H100.25V14.22ZM96.91 25.15V15.44H100.25V25.15ZM101.95 25.15V15.44H104.7L104.92 16.92H105.05Q105.28 16.39 105.63 16Q105.98 15.62 106.46 15.41Q106.94 15.2 107.51 15.2Q107.86 15.2 108.14 15.27Q108.43 15.34 108.56 15.41V18.27H107.49Q106.91 18.27 106.49 18.42Q106.07 18.58 105.8 18.89Q105.54 19.2 105.42 19.65Q105.29 20.09 105.29 20.67V25.15ZM114.03 25.37Q112.33 25.37 111.11 24.82Q109.89 24.28 109.24 23.16Q108.59 22.04 108.59 20.29Q108.59 18.57 109.23 17.45Q109.87 16.33 111.05 15.78Q112.23 15.22 113.86 15.22Q115.53 15.22 116.69 15.76Q117.85 16.3 118.46 17.41Q119.07 18.52 119.07 20.27V20.9H111.94Q111.95 21.62 112.15 22.13Q112.35 22.64 112.8 22.9Q113.25 23.16 113.98 23.16Q114.46 23.16 114.81 23.05Q115.15 22.94 115.38 22.74Q115.61 22.54 115.71 22.26Q115.82 21.98 115.82 21.65H119.07Q119.07 22.52 118.74 23.22Q118.41 23.91 117.76 24.39Q117.12 24.87 116.18 25.12Q115.25 25.37 114.03 25.37ZM111.96 19.21H115.68Q115.68 18.77 115.56 18.44Q115.44 18.11 115.22 17.88Q115 17.65 114.69 17.54Q114.38 17.43 113.98 17.43Q113.34 17.43 112.92 17.64Q112.5 17.85 112.27 18.24Q112.04 18.63 111.96 19.21Z"/></g></svg></a>
+    <div class="network"><b id="net-name"></b><small id="net-host"></small></div>
+    <nav class="nav" id="nav" aria-label="Sections">
+      <a href="#overview" data-tab="overview"><svg width="18" height="18" aria-hidden="true"><use href="#i-overview"/></svg>Overview</a>
+      <a href="#people" data-tab="people"><svg width="18" height="18" aria-hidden="true"><use href="#i-people"/></svg>People</a>
+      <a href="#devices" data-tab="devices"><svg width="18" height="18" aria-hidden="true"><use href="#i-laptop"/></svg>Devices<span class="count" id="nav-waiting" hidden></span></a>
+      <a href="#groups" data-tab="groups"><svg width="18" height="18" aria-hidden="true"><use href="#i-groups"/></svg>Groups</a>
+      <a href="#access" data-tab="access"><svg width="18" height="18" aria-hidden="true"><use href="#i-access"/></svg>Access</a>
+      <a href="#routes" data-tab="routes"><svg width="18" height="18" aria-hidden="true"><use href="#i-routes"/></svg>Routes</a>
+      <a href="#names" data-tab="names"><svg width="18" height="18" aria-hidden="true"><use href="#i-names"/></svg>Names</a>
+      <a href="#links" data-tab="links"><svg width="18" height="18" aria-hidden="true"><use href="#i-links"/></svg>Linked networks</a>
+    </nav>
+    <div class="me">
+      <span class="avatar" id="me-avatar" aria-hidden="true"></span>
+      <div><b id="me-name"></b><small id="me-device"></small></div>
+      <button type="button" class="icon-btn" id="sign-out" title="Close the dashboard on this browser" aria-label="Close the dashboard"><svg width="18" height="18" aria-hidden="true"><use href="#i-out"/></svg></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <p class="banner" id="banner" hidden></p>
+
+    <!-- Overview -->
+    <section class="view" id="overview" hidden>
+      <div class="head">
+        <div><h1>Overview</h1><p class="sub" id="ov-sub"></p></div>
+        <div class="tools"><a class="btn primary" href="#devices" data-add-device><svg width="16" height="16" aria-hidden="true"><use href="#i-plus"/></svg>Add a device</a></div>
+      </div>
+      <section class="card health" id="health" aria-label="Control nodes"></section>
+      <section class="stats" id="stats" aria-label="At a glance"></section>
+      <div class="cols">
+        <div class="col">
+          <section class="card" aria-labelledby="wait-h">
+            <div class="card-head"><h2 id="wait-h">Waiting for approval</h2><a class="link" href="#devices">All devices</a></div>
+            <div class="list" id="waiting"></div>
+          </section>
+          <section class="card" aria-labelledby="att-h">
+            <div class="card-head"><h2 id="att-h">Needs a look</h2></div>
+            <div class="list" id="attention"></div>
+          </section>
+        </div>
+        <div class="col">
+          <section class="card" aria-labelledby="net-h">
+            <div class="card-head"><h2 id="net-h">This network</h2></div>
+            <div class="card-body"><dl class="facts" id="facts"></dl></div>
+          </section>
+          <section class="card" aria-labelledby="inv-h">
+            <div class="card-head"><h2 id="inv-h">Open invitations</h2><a class="link" href="#devices" data-add-device>New</a></div>
+            <div class="card-body" id="ov-tokens"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- People -->
+    <section class="view" id="people" hidden>
+      <div class="head">
+        <div><h1>People</h1><p class="sub" id="people-sub"></p></div>
+        <div class="tools">
+          <label class="search"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg><input type="search" id="people-search" placeholder="Name, e-mail or group" aria-label="Find a person"></label>
+          <button type="button" class="btn primary" id="person-new" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-plus"/></svg>Invite a person</button>
+        </div>
+      </div>
+      <div class="chips" id="people-filter" role="group" aria-label="Show"></div>
+      <div class="split">
+        <section class="card scroll" aria-label="People"><table id="people-table"><thead><tr><th>Person</th><th>Groups</th><th>Devices</th><th>Last active</th><th>Status</th></tr></thead><tbody></tbody></table></section>
+        <aside class="card detail sticky" id="person-detail" aria-live="polite"></aside>
+      </div>
+    </section>
+
+    <!-- Devices -->
+    <section class="view" id="devices" hidden>
+      <div class="head">
+        <div><h1>Devices</h1><p class="sub" id="dev-sub"></p></div>
+        <div class="tools">
+          <label class="search"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg><input type="search" id="device-search" placeholder="Name, person, address or group" aria-label="Find a device"></label>
+          <button type="button" class="btn primary" id="add-device"><svg width="16" height="16" aria-hidden="true"><use href="#i-plus"/></svg>Add a device</button>
+        </div>
+      </div>
+      <div class="chips" id="device-filter" role="group" aria-label="Show"></div>
+      <div class="split solo" id="device-split">
+        <section class="card scroll" aria-label="Devices"><table id="device-table"><thead><tr><th>Device</th><th>Person</th><th>Address</th><th>State</th><th>Checks</th><th><span class="sr">Actions</span></th></tr></thead><tbody></tbody></table></section>
+        <aside class="card detail sticky" id="device-side" aria-live="polite" hidden>
+          <div id="device-detail" class="stack" hidden></div>
+        </aside>
+      </div>
+      <section class="card" aria-labelledby="tok-h">
+        <div class="card-head"><h2 id="tok-h">Open invitations</h2></div>
+        <div class="scroll"><table id="token-table"><thead><tr><th>Invitation</th><th>Device name</th><th>Groups</th><th>Joins</th><th>Made by</th><th>Expires</th><th><span class="sr">Actions</span></th></tr></thead><tbody></tbody></table></div>
+      </section>
+    </section>
+
+    <!-- Access -->
+    <section class="view" id="access" hidden>
+      <div class="head">
+        <div><h1>Access</h1><p class="sub">Who can reach what. Anything not allowed here is blocked.</p></div>
+      </div>
+      <div class="col">
+          <section class="card" aria-labelledby="rules-h">
+            <form class="builder" id="policy-form">
+              <h2 id="rules-h" class="sr">Rules</h2>
+              <span>Let</span>
+              <label><span class="sr">From group</span><select class="input from" name="source" required></select></label>
+              <span>reach</span>
+              <label><span class="sr">To group or route</span><select class="input to" name="destination" required></select></label>
+              <span>on</span>
+              <label><span class="sr">Ports</span><input class="input ports" name="ports" autocomplete="off" placeholder="all ports" title="all, or e.g. tcp/22, tcp/443, udp/53, icmp"></label>
+              <label class="check"><input type="checkbox" name="one_way"><span>one way</span></label>
+              <button type="button" class="link" id="policy-checks-btn" data-admin-only>device checks…</button>
+              <button type="submit" class="btn sm primary" data-push>Allow</button>
+            </form>
+            <div id="policy-list"></div>
+            <div class="deny"><svg width="18" height="18" aria-hidden="true"><use href="#i-block"/></svg><span><b>Everything else is blocked</b>, between people's devices too.
+              One way: only the first group opens connections; the other answers. Ports and direction are enforced by the receiving device.</span></div>
+          </section>
+          <section class="card" aria-labelledby="chk-h">
+            <div class="card-head"><h2 id="chk-h">Device checks</h2><button type="button" class="link" id="check-new" data-admin-only>New check</button></div>
+            <p class="hint pad">Devices report their system version, disk encryption, firewall and Secure Boot when they start, when it changes and
+              every 10 minutes. A rule that requires a check leaves out every device that fails it, or whose report is missing or too old.
+              Phones' verified boot and patch level are what their secure hardware attests.</p>
+            <div id="check-list"></div>
+          </section>
+      </div>
+    </section>
+
+    <!-- Groups -->
+    <section class="view" id="groups" hidden>
+      <div class="head">
+        <div><h1>Groups</h1><p class="sub">People groups hold people, device groups hold devices. Rules on the Access page join them.</p></div>
+        <div class="tools"><button type="button" class="btn primary" id="group-new"><svg width="16" height="16" aria-hidden="true"><use href="#i-plus"/></svg>New group</button></div>
+      </div>
+      <div class="split left">
+        <section class="card sticky" aria-labelledby="grp-h">
+          <div class="card-head"><h2 id="grp-h">Groups</h2><span class="dim" id="group-count"></span></div>
+          <ul class="groups" id="group-list"></ul>
+        </section>
+        <div class="col">
+          <section class="card" id="signin-default" hidden aria-labelledby="sd-h"></section>
+          <section class="card" id="group-detail" hidden aria-live="polite"></section>
+          <p class="empty card" id="group-none">Select a group to see who is in it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Routes -->
+    <section class="view" id="routes" hidden>
+      <div class="head">
+        <div><h1>Routes</h1><p class="sub">Networks behind a gateway device, and exits to the internet.</p></div>
+      </div>
+      <div class="split">
+        <section class="card" aria-label="Routes"><div class="list" id="route-list"></div></section>
+        <aside class="card detail sticky" data-admin-only>
+          <form id="route-form" class="stack">
+            <div class="dhead"><div><b>New route</b><small>A device forwards to it under its own address</small></div></div>
+            <label class="field"><span>Name</span><input name="name" required autocomplete="off" maxlength="32" pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?" title="lowercase letters, digits and dashes" placeholder="office"></label>
+            <label class="field"><span>Kind</span><select name="kind" id="route-kind"><option value="networks">Networks behind the gateway</option><option value="exit">Exit: all internet traffic</option></select></label>
+            <label class="field" id="route-networks"><span>Networks</span><input name="networks" required autocomplete="off" placeholder="192.168.10.0/24" title="one or more, separated by commas"></label>
+            <label class="field"><span>Gateway</span><select name="via" required id="route-via"></select></label>
+            <label class="check" id="route-default" hidden><input type="checkbox" name="default"><span>Used by default<small>Devices allowed to use it do, unless they turn it off.</small></span></label>
+            <p class="hint" id="route-never" hidden></p>
+            <p class="hint" id="route-hint">The gateway (a Linux device there) forwards only what a rule allows, under its own LAN address: the office router needs no change.</p>
+            <button type="submit" class="btn primary">Add route</button>
+          </form>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Names -->
+    <section class="view" id="names" hidden>
+      <div class="head">
+        <div><h1>Names</h1><p class="sub" id="dns-sub"></p></div>
+      </div>
+      <div class="cols" id="dns-on">
+        <div class="col">
+          <section class="card" aria-labelledby="rec-h">
+            <div class="card-head"><h2 id="rec-h">Added names</h2><span class="dim">for machines without ento, such as a printer</span></div>
+            <form class="builder" id="dns-record-form" data-admin-only>
+              <label><span class="sr">Name</span><input class="input" name="name" required autocomplete="off" maxlength="200" placeholder="nas.office" title="lowercase letters, digits, dashes and dots"></label>
+              <span id="dns-suffix" class="mono"></span>
+              <span>is</span>
+              <label><span class="sr">Address</span><input class="input mono" name="address" required autocomplete="off" placeholder="192.168.10.5"></label>
+              <button type="submit" class="btn sm primary" data-push>Add name</button>
+            </form>
+            <div class="list" id="dns-records"></div>
+          </section>
+          <section class="card" aria-labelledby="fwd-h">
+            <div class="card-head"><h2 id="fwd-h">Forwarded zones</h2><span class="dim">asked of their own name servers</span></div>
+            <form class="builder" id="dns-forward-form" data-admin-only>
+              <span>Ask</span>
+              <label><span class="sr">Zone</span><input class="input" name="zone" required autocomplete="off" placeholder="office.example.com"></label>
+              <span>of</span>
+              <label><span class="sr">Name servers</span><input class="input mono" name="servers" required autocomplete="off" placeholder="192.168.10.1" title="one or more, separated by commas"></label>
+              <button type="submit" class="btn sm primary" data-push>Forward</button>
+            </form>
+            <div class="list" id="dns-forwards"></div>
+          </section>
+        </div>
+        <section class="card" aria-labelledby="dn-h">
+          <div class="card-head"><h2 id="dn-h">Devices</h2><span class="dim">their device names</span></div>
+          <div class="list" id="dns-devices"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Linked networks -->
+    <section class="view" id="links" hidden>
+      <div class="head">
+        <div><h1>Linked networks</h1><p class="sub">Other, independent networks our devices may join, and those that may send devices here.</p></div>
+      </div>
+      <section class="card" aria-labelledby="lnk-h">
+        <div class="card-head"><h2 id="lnk-h">Links to other networks</h2><span class="dim">made with <code>ento admin link create</code></span></div>
+        <div id="link-list"></div>
+      </section>
+      <section class="card" aria-labelledby="aut-h">
+        <div class="card-head"><h2 id="aut-h">Authorities</h2><span class="dim">networks allowed to send their devices here, made with <code>ento admin authority add</code></span></div>
+        <div class="list" id="authority-list"></div>
+      </section>
+    </section>
+
+    <footer class="foot" id="foot"></footer>
+  </main>
+</div>
+
+<template id="posture-template">
+  <div class="stack">
+    <label class="field"><span>Name</span><input name="name" required autocomplete="off" maxlength="32" pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?" title="lowercase letters, digits and dashes" placeholder="managed"></label>
+    <div class="fields">
+      <label class="check"><input type="checkbox" name="disk_encryption"><span>Disk encrypted</span></label>
+      <label class="check"><input type="checkbox" name="firewall"><span>Firewall on</span></label>
+      <label class="check"><input type="checkbox" name="secure_boot"><span>Secure Boot on<small>Phones: attested verified boot</small></span></label>
+      <label class="check"><input type="checkbox" name="antimalware"><span>Anti-malware on</span></label>
+    </div>
+    <div class="fields">
+      <label class="field"><span>Oldest Linux kernel</span><input name="min_linux" placeholder="6.1" autocomplete="off" pattern="[0-9]+(\.[0-9]+)*"></label>
+      <label class="field"><span>Oldest Windows</span><input name="min_windows" placeholder="10.0.22631" autocomplete="off" pattern="10(\.[0-9]+)*" title="10.0.BUILD, also for Windows 11 (10.0.22000 and later)"></label>
+      <label class="field"><span>Oldest macOS</span><input name="min_darwin" placeholder="14.0" autocomplete="off" pattern="[0-9]+(\.[0-9]+)*"></label>
+      <label class="field"><span>Oldest Android</span><input name="min_android" placeholder="13" autocomplete="off" pattern="[0-9]+(\.[0-9]+)*"></label>
+      <label class="field"><span>Android patch at most</span><select name="patch_android"><option value="" selected>any age</option><option value="60">2 months old</option><option value="90">3 months old</option><option value="180">6 months old</option><option value="365">1 year old</option></select></label>
+      <label class="field"><span>Report at most</span><select name="max_age"><option value="900">15 minutes old</option><option value="1800" selected>30 minutes old</option><option value="3600">1 hour old</option><option value="86400">1 day old</option></select></label>
+    </div>
+    <p class="hint">Systems left empty are not limited. Windows versions are 10.0.BUILD, Windows 11 too (10.0.22631 is 23H2).</p>
+  </div>
+</template>
+
+<dialog id="add-dialog" class="wide" aria-label="Add a device">
+  <div class="dialog-pad">
+          <form id="token-form" class="stack">
+            <div class="dhead"><div><b>Add a device</b><small>An invitation for one device</small></div><button type="button" class="icon-btn" id="add-close" aria-label="Close"><svg width="16" height="16" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+            <div class="seg" role="group" aria-label="How it joins">
+              <button type="button" data-kind="words" aria-pressed="true">Five words</button>
+              <button type="button" data-kind="file" aria-pressed="false">Token file</button>
+            </div>
+            <p class="hint" id="token-kind-hint">For people's computers, phones and Windows: read out five words, or show the QR code to the phone.</p>
+            <div class="field"><span>Groups</span><div class="group-pick" id="token-groups" role="group" aria-label="Groups"></div></div>
+            <p class="hint" id="token-need-group">Choose at least one group: it decides what the device reaches.</p>
+            <label class="field"><span>Valid for</span>
+              <select name="ttl"><option value="900">15 minutes</option><option value="3600" selected>1 hour</option><option value="86400">1 day</option><option value="604800" data-file>7 days</option></select>
+            </label>
+            <button type="submit" class="btn primary">Create invitation</button>
+          </form>
+          <div id="token-result" class="stack" hidden></div>
+  </div>
+</dialog>
+
+<dialog id="dialog">
+  <form method="dialog" id="dialog-form">
+    <h2 id="dialog-title"></h2>
+    <p class="text" id="dialog-text"></p>
+    <input class="input" id="dialog-input" hidden autocomplete="off">
+    <div id="dialog-body"></div>
+    <div class="dialog-buttons">
+      <button value="cancel" type="submit" class="btn" formnovalidate>Cancel</button>
+      <button value="ok" type="submit" class="btn primary" id="dialog-ok">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" popover="manual"><p id="toast-text"></p><button type="button" id="toast-close" aria-label="Dismiss">×</button></div>
+</body>
+</html>

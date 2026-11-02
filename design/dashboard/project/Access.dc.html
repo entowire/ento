@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Access · entowire</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@font-face{font-family:"Archivo";src:url("/_blob/7aa764209e88a42a78619f6d5c1996be") format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("/_blob/480ed3292118e70ca1b5dcfffaf6e3b8") format("woff2");font-weight:400;font-display:swap}
+body{margin:0;background:#eeeeee}
+a{color:#003399}a:hover{color:#002680}
+.app{--bg:#eeeeee;--side:#e4e4e4;--panel:#f9f9f9;--fg:#262626;--muted:#595959;--line:#d4d4d4;--soft:#e9e9e9;--accent:#003399;--ok:#1a7f37;--warn:#8a5a00;--bad:#c4271b;font:15px/1.5 "Archivo",system-ui,sans-serif;color:var(--fg);background:var(--bg);display:flex;flex-wrap:wrap;min-height:100vh}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.86em}
+.side{flex:1 1 236px;max-width:260px;background:var(--side);border-right:1px solid var(--line);padding:20px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 8px;color:var(--fg);text-decoration:none;font-weight:800;font-size:19px;letter-spacing:-.03em}
+.net{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit;color:inherit;text-align:left;cursor:pointer;width:100%}
+.net b{display:block;font-weight:650}
+.net small{display:block;color:var(--muted);font-size:12px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:8px;color:var(--muted);text-decoration:none;font-weight:500}
+.nav a:hover{color:var(--fg);background:var(--soft)}
+.nav a.on{color:var(--fg);background:var(--panel);box-shadow:0 0 0 1px var(--line)}
+.nav .count{margin-left:auto;background:var(--accent);color:#fff;border-radius:999px;font-size:11.5px;font-weight:650;padding:1px 7px}
+.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}
+.avatar{width:32px;height:32px;border-radius:50%;background:#262626;color:#f2f2f2;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.me small{display:block;color:var(--muted);font-size:12px}
+.main{flex:999 1 560px;min-width:0;padding:28px clamp(16px,3vw,44px) 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px;max-width:1240px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+h1{margin:0;font-size:30px;font-weight:750;letter-spacing:-.03em;line-height:1.1}
+h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:4px 0 0}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);font:inherit;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#a8a8a8}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.sm{height:34px;padding:0 14px;font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.card-head small{color:var(--muted);font-size:13.5px}
+.split{display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px;align-items:start}
+.groups{list-style:none;margin:0;padding:8px}
+.groups li a{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:9px;color:var(--fg);text-decoration:none}
+.groups li a:hover{background:var(--soft)}
+.groups li a.on{background:#e8ecf6;box-shadow:inset 3px 0 0 var(--accent)}
+.groups b{font-weight:600}
+.groups small{color:var(--muted);font-size:13px}
+.gfoot{padding:12px 20px 18px;border-top:1px solid var(--soft)}
+.gfoot a{font-size:14px;font-weight:600;text-decoration:none}
+.builder{padding:18px 20px;display:flex;flex-wrap:wrap;align-items:center;gap:10px;border-bottom:1px solid var(--line);background:#fff;border-radius:14px 14px 0 0}
+.builder span{color:var(--muted)}
+.pick{height:36px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font:inherit;font-weight:600;color:var(--fg);padding:0 10px}
+.ports{height:36px;width:110px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font:13px "IBM Plex Mono",ui-monospace,monospace;color:var(--fg);padding:0 10px;box-sizing:border-box}
+.rule{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--soft)}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.who{display:inline-flex;align-items:center;gap:7px;font-weight:650;border-radius:8px;padding:5px 11px;background:#e8ecf6;color:#00267a}
+.what{display:inline-flex;align-items:center;gap:7px;font-weight:650;border-radius:8px;padding:5px 11px;background:#fff;border:1px solid var(--line)}
+.arrow{color:var(--muted)}
+.on-ports{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13px;color:var(--muted)}
+.cond{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--warn);background:rgba(212,160,23,.16);border-radius:999px;padding:3px 10px}
+.toggle{display:inline-flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted)}
+.sw{width:38px;height:22px;border-radius:999px;background:var(--accent);position:relative;border:0;cursor:pointer;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:19px;width:16px;height:16px;border-radius:50%;background:#fff}
+.sw.off{background:#b5b5b5}
+.sw.off::after{left:3px}
+.deny{display:flex;align-items:center;gap:12px;padding:16px 20px;color:var(--muted);font-size:14px}
+.deny b{color:var(--fg)}
+@media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:900px){.side{max-width:none;flex-basis:100%}.nav{flex-direction:row;flex-wrap:wrap}.me{display:none}.rule{grid-template-columns:minmax(0,1fr)}}
+</style>
+</helmet>
+<div class="app">
+  <aside class="side">
+    <a class="brand" href="Main.dc.html" aria-label="entowire, overview">
+      <svg width="24" height="24" viewBox="-7 -3.8 45.6 45.6" aria-hidden="true"><path d="M26.6 1.8H7A5.2 5.2 0 0 0 1.8 7V31A5.2 5.2 0 0 0 7 36.2H26.6M1.8 19H26.6" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"></path><circle cx="26.6" cy="1.8" r="5" fill="currentColor"></circle><circle cx="26.6" cy="19" r="5" fill="currentColor"></circle><circle cx="26.6" cy="36.2" r="5" fill="currentColor"></circle></svg>
+      entowire
+    </a>
+    <button type="button" class="net" aria-label="Switch network">
+      <span><b>Acme</b><small class="mono">net.acme.entowire.net</small></span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path></svg>
+    </button>
+    <nav class="nav" aria-label="Sections">
+      <a href="Main.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Overview</a>
+      <a href="People.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"></path></svg>People</a>
+      <a href="Devices.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="16" height="11" rx="1.5"></rect><path d="M2 19h20"></path></svg>Devices<span class="count">3</span></a>
+      <a class="on" href="Access.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"></path><path d="M9 12l2 2 4-4"></path></svg>Access</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="18" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><path d="M8.5 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"></path></svg>Routes</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"></path></svg>Names</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Links</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>Activity</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"></path></svg>Settings</a>
+    </nav>
+    <div class="me">
+      <span class="avatar" aria-hidden="true">MP</span>
+      <span><b>Maria Popescu</b><small class="mono">maria-mbp · admin</small></span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <div>
+        <h1>Access</h1>
+        <p class="sub">Who can reach what. Anything not allowed here is blocked.</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <section class="card" aria-labelledby="grp-h">
+        <div class="card-head"><h2 id="grp-h">Groups</h2><small>from sign-in</small></div>
+        <ul class="groups">
+          <sc-for list="{{groups}}" as="g" hint-placeholder-count="8">
+            <li><a class="{{g.cls}}" href="#"><b>{{g.name}}</b><small>{{g.n}}</small></a></li>
+          </sc-for>
+        </ul>
+        <div class="gfoot"><a href="#">New group</a></div>
+      </section>
+
+      <section class="card" aria-labelledby="rules-h">
+        <form class="builder" aria-labelledby="rules-h">
+          <h2 id="rules-h" style="position: absolute; left: -9999px">Rules</h2>
+          <span>Let</span>
+          <label><span style="position: absolute; left: -9999px">Who</span><select class="pick"><option>engineers</option><option>staff</option><option>support</option></select></label>
+          <span>reach</span>
+          <label><span style="position: absolute; left: -9999px">What</span><select class="pick"><option>servers</option><option>db-1</option><option>office-bucharest</option></select></label>
+          <span>on</span>
+          <label><span style="position: absolute; left: -9999px">Ports</span><input class="ports" value="22, 443"></label>
+          <label class="toggle"><input type="checkbox" checked> only if device checks pass</label>
+          <button type="submit" class="btn sm primary" style="margin-left: auto">Allow</button>
+        </form>
+
+        <sc-for list="{{rules}}" as="r" hint-placeholder-count="6">
+          <div class="rule">
+            <div class="flow">
+              <span class="who">{{r.from}}</span>
+              <svg class="arrow" width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-label="can reach" role="img"><path d="M1 7h19M14 1l6 6-6 6"></path></svg>
+              <span class="what">{{r.to}}</span>
+              <span class="on-ports">{{r.ports}}</span>
+              <sc-if value="{{r.checked}}" hint-placeholder-val="{{false}}"><span class="cond">devices passing checks</span></sc-if>
+            </div>
+            <div class="toggle"><span>{{r.state}}</span><button type="button" class="{{r.swClass}}" aria-label="{{r.label}}"></button></div>
+          </div>
+        </sc-for>
+
+        <div class="deny">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M5.6 5.6l12.8 12.8"></path></svg>
+          <span><b>Everything else is blocked</b>, between people's devices too.</span>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const r = (from, to, ports, checked, on) => ({
+      from, to, ports, checked,
+      state: on ? 'On' : 'Off',
+      swClass: on ? 'sw' : 'sw off',
+      label: (on ? 'Turn off: ' : 'Turn on: ') + from + ' to ' + to
+    });
+    return {
+      groups: [
+        { name: 'staff', n: '22 people', cls: '' },
+        { name: 'engineers', n: '8 people', cls: 'on' },
+        { name: 'admins', n: '3 people', cls: '' },
+        { name: 'support', n: '4 people', cls: '' },
+        { name: 'finance', n: '2 people', cls: '' },
+        { name: 'sales', n: '5 people', cls: '' },
+        { name: 'servers', n: '14 devices', cls: '' },
+        { name: 'offices', n: '2 devices', cls: '' }
+      ],
+      rules: [
+        r('engineers', 'servers', 'ssh, https', true, true),
+        r('engineers', 'db-1, db-2', 'tcp 5432', true, true),
+        r('support', 'helpdesk', 'https', false, true),
+        r('finance', 'erp', 'https', true, true),
+        r('staff', 'office-bucharest', 'internet exit', false, true),
+        r('sales', 'servers', 'https', false, false)
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+ec-tee/, ec-strongbox/: attestation certificate chains of real phones (DER, leaf first), copied
+unchanged from https://github.com/google/android-key-attestation (src/test/resources/der/
+algorithm_EC_SecurityLevel_TEE and algorithm_EC_SecurityLevel_StrongBox), Copyright Google LLC,
+Apache License 2.0.

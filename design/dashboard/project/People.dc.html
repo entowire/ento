@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>People · entowire</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@font-face{font-family:"Archivo";src:url("/_blob/7aa764209e88a42a78619f6d5c1996be") format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("/_blob/480ed3292118e70ca1b5dcfffaf6e3b8") format("woff2");font-weight:400;font-display:swap}
+body{margin:0;background:#eeeeee}
+a{color:#003399}a:hover{color:#002680}
+.app{--bg:#eeeeee;--side:#e4e4e4;--panel:#f9f9f9;--fg:#262626;--muted:#595959;--line:#d4d4d4;--soft:#e9e9e9;--accent:#003399;--ok:#1a7f37;--warn:#8a5a00;--bad:#c4271b;font:15px/1.5 "Archivo",system-ui,sans-serif;color:var(--fg);background:var(--bg);display:flex;flex-wrap:wrap;min-height:100vh}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.86em}
+.side{flex:1 1 236px;max-width:260px;background:var(--side);border-right:1px solid var(--line);padding:20px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 8px;color:var(--fg);text-decoration:none;font-weight:800;font-size:19px;letter-spacing:-.03em}
+.net{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit;color:inherit;text-align:left;cursor:pointer;width:100%}
+.net b{display:block;font-weight:650}
+.net small{display:block;color:var(--muted);font-size:12px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:8px;color:var(--muted);text-decoration:none;font-weight:500}
+.nav a:hover{color:var(--fg);background:var(--soft)}
+.nav a.on{color:var(--fg);background:var(--panel);box-shadow:0 0 0 1px var(--line)}
+.nav .count{margin-left:auto;background:var(--accent);color:#fff;border-radius:999px;font-size:11.5px;font-weight:650;padding:1px 7px}
+.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}
+.avatar{width:32px;height:32px;border-radius:50%;background:#262626;color:#f2f2f2;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.avatar.lg{width:52px;height:52px;font-size:18px}
+.avatar.lite{background:#d9dfee;color:#003399}
+.me small{display:block;color:var(--muted);font-size:12px}
+.main{flex:999 1 560px;min-width:0;padding:28px clamp(16px,3vw,44px) 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px;max-width:1240px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+h1{margin:0;font-size:30px;font-weight:750;letter-spacing:-.03em;line-height:1.1}
+h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+h3{margin:0;font-size:13px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.sub{color:var(--muted);margin:4px 0 0}
+.tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.search{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:0 14px;height:40px;color:var(--muted)}
+.search input{border:0;background:transparent;font:inherit;color:var(--fg);width:200px;outline:none}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);font:inherit;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#a8a8a8}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.sm{height:34px;padding:0 14px;font-size:14px}
+.btn.danger{color:var(--bad)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.filters{display:flex;flex-wrap:wrap;gap:8px}
+.chip{height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:transparent;font:inherit;font-size:14px;font-weight:550;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.chip.on{background:var(--fg);border-color:var(--fg);color:#f2f2f2}
+.chip span{font-size:12.5px;opacity:.75}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px;align-items:start}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th{text-align:left;font-size:12.5px;font-weight:650;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:12px 16px;border-bottom:1px solid var(--soft);vertical-align:middle;font-size:14.5px}
+tr:last-child td{border-bottom:0}
+tr.sel td{background:#e8ecf6}
+tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.person{display:flex;align-items:center;gap:12px}
+.person b{display:block;font-weight:650}
+.person small{display:block;color:var(--muted);font-size:13px}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{font-size:12.5px;font-weight:550;border:1px solid var(--line);border-radius:6px;padding:1px 8px;background:#fff;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;border-radius:999px;padding:3px 10px;white-space:nowrap}
+.badge.ok{color:var(--ok);background:rgba(26,127,55,.1)}
+.badge.warn{color:var(--warn);background:rgba(212,160,23,.16)}
+.badge.bad{color:var(--bad);background:rgba(196,39,27,.09)}
+.badge.mute{color:var(--muted);background:var(--soft)}
+.muted{color:var(--muted)}
+.detail{padding:22px;display:flex;flex-direction:column;gap:22px}
+.dhead{display:flex;align-items:center;gap:14px}
+.dhead b{display:block;font-size:18px;font-weight:700;letter-spacing:-.01em}
+.dhead small{display:block;color:var(--muted)}
+.sect{display:flex;flex-direction:column;gap:10px}
+.item{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff}
+.item .grow{flex:1;min-width:0}
+.item b{display:block;font-weight:600;font-size:14.5px}
+.item small{display:block;color:var(--muted);font-size:12.5px}
+.icon-btn{width:34px;height:34px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.icon-btn:hover{border-color:var(--line);color:var(--bad)}
+.add{font-size:14px;font-weight:600;text-decoration:none}
+.dfoot{display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid var(--line);padding-top:18px}
+@media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:900px){.side{max-width:none;flex-basis:100%}.nav{flex-direction:row;flex-wrap:wrap}.me{display:none}}
+</style>
+</helmet>
+<div class="app">
+  <aside class="side">
+    <a class="brand" href="Main.dc.html" aria-label="entowire, overview">
+      <svg width="24" height="24" viewBox="-7 -3.8 45.6 45.6" aria-hidden="true"><path d="M26.6 1.8H7A5.2 5.2 0 0 0 1.8 7V31A5.2 5.2 0 0 0 7 36.2H26.6M1.8 19H26.6" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"></path><circle cx="26.6" cy="1.8" r="5" fill="currentColor"></circle><circle cx="26.6" cy="19" r="5" fill="currentColor"></circle><circle cx="26.6" cy="36.2" r="5" fill="currentColor"></circle></svg>
+      entowire
+    </a>
+    <button type="button" class="net" aria-label="Switch network">
+      <span><b>Acme</b><small class="mono">net.acme.entowire.net</small></span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path></svg>
+    </button>
+    <nav class="nav" aria-label="Sections">
+      <a href="Main.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Overview</a>
+      <a class="on" href="People.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"></path></svg>People</a>
+      <a href="Devices.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="16" height="11" rx="1.5"></rect><path d="M2 19h20"></path></svg>Devices<span class="count">3</span></a>
+      <a href="Access.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"></path><path d="M9 12l2 2 4-4"></path></svg>Access</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="18" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><path d="M8.5 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"></path></svg>Routes</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"></path></svg>Names</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Links</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>Activity</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"></path></svg>Settings</a>
+    </nav>
+    <div class="me">
+      <span class="avatar" aria-hidden="true">MP</span>
+      <span><b>Maria Popescu</b><small class="mono">maria-mbp · admin</small></span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <div>
+        <h1>People</h1>
+        <p class="sub">Everyone who signs in to Acme's network, at <span class="mono">id.acme.entowire.net</span></p>
+      </div>
+      <div class="tools">
+        <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg><input type="search" placeholder="Name, e-mail or group" aria-label="Find a person"></label>
+        <button type="button" class="btn primary"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Invite people</button>
+      </div>
+    </div>
+
+    <div class="filters" role="group" aria-label="Show">
+      <button type="button" class="chip on">Everyone <span>24</span></button>
+      <button type="button" class="chip">Admins <span>3</span></button>
+      <button type="button" class="chip">Invited <span>2</span></button>
+      <button type="button" class="chip">No passkey <span>2</span></button>
+      <button type="button" class="chip">Disabled <span>1</span></button>
+    </div>
+
+    <div class="split">
+      <section class="card scroll" aria-label="People">
+        <table>
+          <thead><tr><th>Person</th><th>Groups</th><th>Devices</th><th>Last sign-in</th><th>Status</th></tr></thead>
+          <tbody>
+            <sc-for list="{{people}}" as="p" hint-placeholder-count="9">
+              <tr class="{{p.rowClass}}">
+                <td><div class="person"><span class="{{p.avatarClass}}" aria-hidden="true">{{p.ini}}</span><div><b>{{p.name}}</b><small>{{p.email}}</small></div></div></td>
+                <td><div class="tags"><sc-for list="{{p.groups}}" as="g" hint-placeholder-count="2"><span class="tag">{{g}}</span></sc-for></div></td>
+                <td>{{p.devices}}</td>
+                <td class="muted">{{p.seen}}</td>
+                <td><span class="{{p.badgeClass}}">{{p.status}}</span></td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </section>
+
+      <aside class="card detail" aria-label="Lena Fischer">
+        <div class="dhead">
+          <span class="avatar lg lite" aria-hidden="true">LF</span>
+          <div><b>Lena Fischer</b><small>lena.fischer@acme.com</small></div>
+        </div>
+
+        <div class="sect">
+          <h3>Groups</h3>
+          <div class="tags"><span class="tag">engineers</span><span class="tag">staff</span></div>
+          <a class="add" href="#">Change groups</a>
+        </div>
+
+        <div class="sect">
+          <h3>Passkeys</h3>
+          <div class="item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="4"></circle><path d="M12 12h9M18 12v3M21 12v2"></path></svg>
+            <div class="grow"><b>YubiKey 5C</b><small>Added 12 Oct · used today</small></div>
+            <button type="button" class="icon-btn" aria-label="Remove passkey YubiKey 5C"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg></button>
+          </div>
+          <div class="item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="12" r="4"></circle><path d="M12 12h9M18 12v3M21 12v2"></path></svg>
+            <div class="grow"><b>iCloud Keychain</b><small>Added 14 Oct · used 3 days ago</small></div>
+            <button type="button" class="icon-btn" aria-label="Remove passkey iCloud Keychain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg></button>
+          </div>
+          <a class="add" href="#">Send a link to add a passkey</a>
+        </div>
+
+        <div class="sect">
+          <h3>Devices</h3>
+          <div class="item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="16" height="11" rx="1.5"></rect><path d="M2 19h20"></path></svg>
+            <div class="grow"><b>lena-mbp</b><small class="mono">waiting for approval</small></div>
+            <span class="badge warn">Waiting</span>
+          </div>
+          <div class="item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"></rect><path d="M11 18.5h2"></path></svg>
+            <div class="grow"><b>lena-iphone</b><small class="mono">100.71.4.18 · online</small></div>
+            <span class="badge ok">Online</span>
+          </div>
+        </div>
+
+        <div class="dfoot">
+          <button type="button" class="btn sm">Sign out everywhere</button>
+          <button type="button" class="btn sm danger">Disable</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const p = (name, email, groups, devices, seen, status, kind, sel) => ({
+      name, email, groups, devices, seen, status,
+      ini: name.split(' ').map((w) => w[0]).join('').slice(0, 2),
+      badgeClass: 'badge ' + kind,
+      avatarClass: sel ? 'avatar lite' : 'avatar',
+      rowClass: sel ? 'sel' : ''
+    });
+    return {
+      people: [
+        p('Maria Popescu', 'maria.popescu@acme.com', ['admins', 'staff'], '3', 'today, 08:02', 'Active', 'ok'),
+        p('Lena Fischer', 'lena.fischer@acme.com', ['engineers', 'staff'], '2', 'today, 10:15', 'Active', 'ok', true),
+        p('Andrei Ionescu', 'andrei.ionescu@acme.com', ['engineers', 'staff'], '3', 'today, 09:41', 'Active', 'ok'),
+        p('Tom Berger', 'tom.berger@acme.com', ['sales', 'staff'], '1', 'yesterday', 'No passkey', 'warn'),
+        p('Sofia Marin', 'sofia.marin@acme.com', ['finance', 'staff'], '2', '2 days ago', 'Active', 'ok'),
+        p('Jonas Weber', 'jonas.weber@acme.com', ['admins', 'engineers'], '4', 'today, 07:55', 'Active', 'ok'),
+        p('Elena Radu', 'elena.radu@acme.com', ['staff'], '0', 'never', 'Invited', 'mute'),
+        p('Paul Schmidt', 'paul.schmidt@acme.com', ['support', 'staff'], '1', '3 weeks ago', 'Disabled', 'bad'),
+        p('Ioana Stan', 'ioana.stan@acme.com', ['support', 'staff'], '2', 'today, 09:12', 'Active', 'ok')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

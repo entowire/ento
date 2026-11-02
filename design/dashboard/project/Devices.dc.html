@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Devices · entowire</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@font-face{font-family:"Archivo";src:url("/_blob/7aa764209e88a42a78619f6d5c1996be") format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("/_blob/480ed3292118e70ca1b5dcfffaf6e3b8") format("woff2");font-weight:400;font-display:swap}
+body{margin:0;background:#eeeeee}
+a{color:#003399}a:hover{color:#002680}
+.app{--bg:#eeeeee;--side:#e4e4e4;--panel:#f9f9f9;--fg:#262626;--muted:#595959;--line:#d4d4d4;--soft:#e9e9e9;--accent:#003399;--ok:#1a7f37;--warn:#8a5a00;--bad:#c4271b;font:15px/1.5 "Archivo",system-ui,sans-serif;color:var(--fg);background:var(--bg);display:flex;flex-wrap:wrap;min-height:100vh}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.86em}
+.side{flex:1 1 236px;max-width:260px;background:var(--side);border-right:1px solid var(--line);padding:20px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 8px;color:var(--fg);text-decoration:none;font-weight:800;font-size:19px;letter-spacing:-.03em}
+.net{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit;color:inherit;text-align:left;cursor:pointer;width:100%}
+.net b{display:block;font-weight:650}
+.net small{display:block;color:var(--muted);font-size:12px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:8px;color:var(--muted);text-decoration:none;font-weight:500}
+.nav a:hover{color:var(--fg);background:var(--soft)}
+.nav a.on{color:var(--fg);background:var(--panel);box-shadow:0 0 0 1px var(--line)}
+.nav .count{margin-left:auto;background:var(--accent);color:#fff;border-radius:999px;font-size:11.5px;font-weight:650;padding:1px 7px}
+.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}
+.avatar{width:32px;height:32px;border-radius:50%;background:#262626;color:#f2f2f2;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.me small{display:block;color:var(--muted);font-size:12px}
+.main{flex:999 1 560px;min-width:0;padding:28px clamp(16px,3vw,44px) 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px;max-width:1240px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+h1{margin:0;font-size:30px;font-weight:750;letter-spacing:-.03em;line-height:1.1}
+h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:4px 0 0}
+.tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.search{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:0 14px;height:40px;color:var(--muted)}
+.search input{border:0;background:transparent;font:inherit;color:var(--fg);width:200px;outline:none}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);font:inherit;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#a8a8a8}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.sm{height:34px;padding:0 14px;font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.filters{display:flex;flex-wrap:wrap;gap:8px}
+.chip{height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:transparent;font:inherit;font-size:14px;font-weight:550;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.chip.on{background:var(--fg);border-color:var(--fg);color:#f2f2f2}
+.chip span{font-size:12.5px;opacity:.75}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:700px}
+th{text-align:left;font-size:12.5px;font-weight:650;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 16px;border-bottom:1px solid var(--soft);vertical-align:middle;font-size:14.5px}
+tr:last-child td{border-bottom:0}
+tr.wait td{background:#f1f3f9}
+.dev{display:flex;align-items:center;gap:12px}
+.dev b{display:block;font-weight:650}
+.dev small{display:block;color:var(--muted);font-size:13px}
+.ico{width:34px;height:34px;border-radius:9px;background:var(--soft);display:flex;align-items:center;justify-content:center;flex:none}
+.seen{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.dot.on{background:var(--ok)}.dot.off{background:#a3a3a3}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;border-radius:999px;padding:3px 10px;white-space:nowrap}
+.badge.ok{color:var(--ok);background:rgba(26,127,55,.1)}
+.badge.warn{color:var(--warn);background:rgba(212,160,23,.16)}
+.badge.bad{color:var(--bad);background:rgba(196,39,27,.09)}
+.badge.mute{color:var(--muted);background:var(--soft)}
+.muted{color:var(--muted)}
+.acts{display:flex;gap:6px;justify-content:flex-end}
+.addcard{padding:22px;display:flex;flex-direction:column;gap:16px}
+.seg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--soft);border-radius:10px;padding:3px;gap:3px}
+.seg button{height:34px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer}
+.seg button.on{background:#fff;color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.step{display:flex;flex-direction:column;gap:8px}
+.step p{margin:0;font-size:14px;color:var(--muted)}
+.step p b{color:var(--fg)}
+.term{margin:0;background:#1c1c1c;color:#f2f2f2;border-radius:10px;padding:14px 16px;font:12.5px/1.6 "IBM Plex Mono",ui-monospace,monospace;white-space:pre-wrap;word-break:break-all}
+.term i{font-style:normal;color:#a5a5a5}
+.words{display:flex;flex-wrap:wrap;gap:6px}
+.words span{font:15px "IBM Plex Mono",ui-monospace,monospace;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.fine{font-size:13px;color:var(--muted);margin:0}
+.row2{display:flex;gap:8px;flex-wrap:wrap}
+@media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:900px){.side{max-width:none;flex-basis:100%}.nav{flex-direction:row;flex-wrap:wrap}.me{display:none}}
+</style>
+</helmet>
+<div class="app">
+  <aside class="side">
+    <a class="brand" href="Main.dc.html" aria-label="entowire, overview">
+      <svg width="24" height="24" viewBox="-7 -3.8 45.6 45.6" aria-hidden="true"><path d="M26.6 1.8H7A5.2 5.2 0 0 0 1.8 7V31A5.2 5.2 0 0 0 7 36.2H26.6M1.8 19H26.6" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"></path><circle cx="26.6" cy="1.8" r="5" fill="currentColor"></circle><circle cx="26.6" cy="19" r="5" fill="currentColor"></circle><circle cx="26.6" cy="36.2" r="5" fill="currentColor"></circle></svg>
+      entowire
+    </a>
+    <button type="button" class="net" aria-label="Switch network">
+      <span><b>Acme</b><small class="mono">net.acme.entowire.net</small></span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path></svg>
+    </button>
+    <nav class="nav" aria-label="Sections">
+      <a href="Main.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Overview</a>
+      <a href="People.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"></path></svg>People</a>
+      <a class="on" href="Devices.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="16" height="11" rx="1.5"></rect><path d="M2 19h20"></path></svg>Devices<span class="count">3</span></a>
+      <a href="Access.dc.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"></path><path d="M9 12l2 2 4-4"></path></svg>Access</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="18" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><path d="M8.5 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"></path></svg>Routes</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"></path></svg>Names</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Links</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>Activity</a>
+      <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"></path></svg>Settings</a>
+    </nav>
+    <div class="me">
+      <span class="avatar" aria-hidden="true">MP</span>
+      <span><b>Maria Popescu</b><small class="mono">maria-mbp · admin</small></span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <div>
+        <h1>Devices</h1>
+        <p class="sub">61 devices · 57 online · 3 waiting for you</p>
+      </div>
+      <div class="tools">
+        <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg><input type="search" placeholder="Name, owner or address" aria-label="Find a device"></label>
+      </div>
+    </div>
+
+    <div class="filters" role="group" aria-label="Show">
+      <button type="button" class="chip on">All <span>61</span></button>
+      <button type="button" class="chip">Waiting <span>3</span></button>
+      <button type="button" class="chip">Failing a check <span>2</span></button>
+      <button type="button" class="chip">Servers <span>14</span></button>
+      <button type="button" class="chip">Offline <span>4</span></button>
+    </div>
+
+    <div class="split">
+      <section class="card scroll" aria-label="Devices">
+        <table>
+          <thead><tr><th>Device</th><th>Owner</th><th>Address</th><th>Checks</th><th>Last seen</th><th><span style="position: absolute; left: -9999px">Actions</span></th></tr></thead>
+          <tbody>
+            <sc-for list="{{devices}}" as="d" hint-placeholder-count="10">
+              <tr class="{{d.rowClass}}">
+                <td><div class="dev"><span class="ico" aria-hidden="true">
+                  <sc-if value="{{d.isPhone}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2"></rect><path d="M11 18.5h2"></path></svg></sc-if>
+                  <sc-if value="{{d.isServer}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="4" width="17" height="7" rx="1.5"></rect><rect x="3.5" y="13" width="17" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg></sc-if>
+                  <sc-if value="{{d.isLaptop}}" hint-placeholder-val="{{true}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="11" rx="1.5"></rect><path d="M2 19h20"></path></svg></sc-if>
+                </span><div><b>{{d.name}}</b><small>{{d.os}}</small></div></div></td>
+                <td>{{d.owner}}</td>
+                <td class="mono">{{d.ip}}</td>
+                <td><span class="{{d.checkClass}}">{{d.check}}</span></td>
+                <td><span class="seen"><span class="{{d.dotClass}}" aria-hidden="true"></span>{{d.seen}}</span></td>
+                <td>
+                  <sc-if value="{{d.waiting}}" hint-placeholder-val="{{false}}"><div class="acts"><button type="button" class="btn sm">Deny</button><button type="button" class="btn sm primary">Approve</button></div></sc-if>
+                </td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </section>
+
+      <aside class="card addcard" aria-labelledby="add-h">
+        <h2 id="add-h">Add a device</h2>
+        <div class="seg" role="group" aria-label="Kind of device">
+          <button type="button" class="on">Mac</button><button type="button">Linux</button><button type="button">Windows</button><button type="button">Phone</button>
+        </div>
+        <div class="step">
+          <p><b>1.</b> On the device, run</p>
+          <pre class="term"><i>$</i> curl -fsSL https://entowire.com/install.sh | sudo ENTO_JOIN=acme.com sh</pre>
+        </div>
+        <div class="step">
+          <p><b>2.</b> When it asks, type these five words</p>
+          <div class="words"><span>abacus</span><span>zoom</span><span>gumdrop</span><span>dropbox</span><span>snowdrop</span></div>
+          <p class="fine">For one device, valid for 30 minutes. It joins as Maria Popescu's, in staff.</p>
+        </div>
+        <div class="row2">
+          <button type="button" class="btn sm">New words</button>
+          <button type="button" class="btn sm">For someone else</button>
+        </div>
+        <p class="fine">Or they sign in with their Acme account: the device then waits here for your approval.</p>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const d = (name, os, kind, owner, ip, check, ck, seen, online, waiting) => ({
+      name, os, owner, ip, check, seen, waiting: !!waiting,
+      isPhone: kind === 'phone', isServer: kind === 'server', isLaptop: kind === 'laptop',
+      checkClass: 'badge ' + ck,
+      dotClass: online ? 'dot on' : 'dot off',
+      rowClass: waiting ? 'wait' : ''
+    });
+    return {
+      devices: [
+        d('lena-mbp', 'macOS 15.1', 'laptop', 'Lena Fischer', 'not yet', 'Passed', 'ok', 'asking now', true, true),
+        d('build-03', 'Debian 12', 'server', 'Servers', 'not yet', 'Passed', 'ok', 'asking now', true, true),
+        d('tom-thinkpad', 'Windows 11', 'laptop', 'Tom Berger', 'not yet', 'Disk not encrypted', 'warn', 'yesterday', false, true),
+        d('maria-mbp', 'macOS 15.1', 'laptop', 'Maria Popescu', '100.71.0.12', 'Passed', 'ok', 'online', true),
+        d('andrei-pixel', 'Android 15', 'phone', 'Andrei Ionescu', '100.71.2.40', 'Passed', 'ok', 'online', true),
+        d('db-1', 'Flatcar 4152', 'server', 'Servers', '100.71.1.2', 'Passed', 'ok', 'online', true),
+        d('db-2', 'Flatcar 4152', 'server', 'Servers', '100.71.1.3', 'Passed', 'ok', 'online', true),
+        d('sofia-xps', 'Windows 11', 'laptop', 'Sofia Marin', '100.71.3.7', 'Update needed', 'warn', '2 h ago', false),
+        d('jonas-fw13', 'Fedora 41', 'laptop', 'Jonas Weber', '100.71.0.31', 'Passed', 'ok', 'online', true),
+        d('office-bucharest', 'Debian 12 · exit', 'server', 'Offices', '100.71.1.9', 'Passed', 'ok', 'online', true)
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

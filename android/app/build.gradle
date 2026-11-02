@@ -1,0 +1,48 @@
+// The ento Android app: a VpnService that hands its TUN interface to the agent (libs/ento.aar,
+// built from ../../mobile by scripts/build-android.sh). Its one library, ZXing's core, reads
+// enrollment QR codes from the camera (the camera code is the app's own). Every dependency is
+// checked against gradle/verification-metadata.xml.
+plugins {
+    id "com.android.application"
+}
+
+def env = System.getenv()
+
+android {
+    namespace "com.entowire.ento.app"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.entowire.ento"
+        minSdk 26
+        targetSdk 36
+        versionCode Integer.parseInt(env.getOrDefault("ENTO_VERSION_CODE", "1"))
+        versionName env.getOrDefault("ENTO_VERSION", "dev")
+    }
+
+    signingConfigs {
+        release {
+            storeFile env.ENTO_ANDROID_KEYSTORE ? file(env.ENTO_ANDROID_KEYSTORE) : null
+            storePassword env.ENTO_ANDROID_KEYSTORE_PASSWORD
+            keyAlias "ento"
+            keyPassword env.ENTO_ANDROID_KEYSTORE_PASSWORD
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation files("libs/ento.aar")
+    implementation "com.google.zxing:core:3.5.4" // QR code decoding only; no transitive dependencies
+}
