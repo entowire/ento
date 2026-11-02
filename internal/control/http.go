@@ -764,15 +764,25 @@ func (s *Server) handleUpdatePeer(w http.ResponseWriter, r *http.Request, self s
 		}
 		req.Groups = &g
 	}
-	// Giving a device a role (ento admin role) puts it in that role's group, out of isolated.
-	if self.Admin && req.Groups == nil && current.Authority == "" && (req.Admin != nil && *req.Admin || req.Operator != nil && *req.Operator) {
-		g := slices.DeleteFunc(slices.Clone(current.Machine.Groups), func(x string) bool { return x == IsolatedGroup })
-		role := s.operatorGroups()[0]
-		if req.Admin != nil && *req.Admin {
-			role = s.adminGroups()[0]
+	// A device's role is its groups (0.47): giving it one (ento admin role) puts it in that role's
+	// group, out of isolated; taking one away takes it out of the role's groups.
+	if self.Admin && req.Groups == nil && current.Authority == "" && (req.Admin != nil || req.Operator != nil) {
+		g := slices.Clone(current.Machine.Groups)
+		set := func(on bool, groups []string) {
+			if on {
+				g = slices.DeleteFunc(g, func(x string) bool { return x == IsolatedGroup })
+				if !intersects(g, groups) {
+					g = append(g, groups[0])
+				}
+			} else {
+				g = slices.DeleteFunc(g, func(x string) bool { return slices.Contains(groups, x) })
+			}
 		}
-		if !slices.Contains(g, role) {
-			g = append(g, role)
+		if req.Admin != nil {
+			set(*req.Admin, s.adminGroups())
+		}
+		if req.Operator != nil {
+			set(*req.Operator, s.operatorGroups())
 		}
 		req.Groups = &g
 	}
@@ -806,7 +816,6 @@ func (s *Server) handleUpdatePeer(w http.ResponseWriter, r *http.Request, self s
 				writeErr(w, http.StatusBadRequest, "you cannot isolate this device or take away its admin group from it")
 				return
 			}
-			admin = admin || current.Machine.Admin && !self.Admin // an operator never changes it
 			if req.Approved == nil {
 				req.Approved = &approved
 			}
@@ -1194,6 +1203,7 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 			s.cfg.Logf("sso login for peer %d: %v", self.ID, err)
 			return
 		}
+		p = s.dropDeviceAdmin(ctx, p)
 		s.keepSSOToken(ctx, p.ID, c.Subject, refreshToken)
 		s.cfg.Logf("sso: peer %d %s is now %q (approved=%v admin=%v operator=%v groups=%q)", p.ID, p.Hostname, p.UserName,
 			p.Approved, p.Admin, p.Operator, p.Groups)

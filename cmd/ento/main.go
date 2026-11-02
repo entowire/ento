@@ -519,7 +519,18 @@ func setAdmin(ctx context.Context, st store.Store, name string, admin bool) (sto
 	}
 	for _, p := range peers {
 		if p.Hostname == name {
-			return st.UpdatePeer(ctx, p.ID, store.PeerUpdate{Admin: &admin})
+			// The role is the device's admin group (0.47): in it, out of isolated, or out of it.
+			groups := slices.DeleteFunc(slices.Clone(p.Machine.Groups), func(g string) bool {
+				return g == control.DeviceAdminGroup || admin && g == control.IsolatedGroup
+			})
+			if admin {
+				groups = append(groups, control.DeviceAdminGroup)
+			}
+			u := store.PeerUpdate{Admin: &admin, Groups: &groups}
+			if admin {
+				u.Approved = &admin
+			}
+			return st.UpdatePeer(ctx, p.ID, u)
 		}
 	}
 	return store.Peer{}, fmt.Errorf("no device named %s (ento admin peers lists them)", name)
@@ -536,13 +547,16 @@ func setGroups(ctx context.Context, st store.Store, name string, groups []string
 		gs = append(gs, g)
 	}
 	approved := !slices.Contains(gs, control.IsolatedGroup)
+	// The device's role is its groups (0.47; the built-in role groups here).
+	admin := slices.Contains(gs, control.DeviceAdminGroup)
+	operator := !admin && slices.Contains(gs, control.DeviceOperatorGroup)
 	peers, err := st.Peers(ctx)
 	if err != nil {
 		return store.Peer{}, err
 	}
 	for _, p := range peers {
 		if p.Hostname == name {
-			return st.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &gs, Approved: &approved})
+			return st.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &gs, Approved: &approved, Admin: &admin, Operator: &operator})
 		}
 	}
 	return store.Peer{}, fmt.Errorf("no device named %s (ento admin peers lists them)", name)

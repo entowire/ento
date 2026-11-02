@@ -807,8 +807,20 @@ or role to set:
   (**Let in…** on the dashboard) lets it in, **Isolate** puts it back. `PATCH approved` does the
   same for older clients.
 - the device groups **admin** and **operator** (`--admin-groups`, `--operator-groups`) make a device
-  an admin or an operator; a person's role comes from their people groups. Only admins put devices in them or take them out; `ento admin role` and an
-  administrator invitation put the device in that group.
+  an admin or an operator, and nothing else does (0.47): a device's own role is only ever its
+  groups. A person's role comes from their people groups, and lasts while they are signed in on the
+  device. Only admins put devices in them or take them out; `ento admin role`, `ento control admin`
+  and an administrator token or words put the device in that group, even when the token names other
+  groups too. A control node of 0.47 puts a device that was an admin or operator by an older flag
+  alone in that role's group once, at start (audited as `device_roles_from_groups`).
+- **The device leaves admin when an admin signs in on it** (0.47): once a person whose groups make
+  them an admin signs in on a device in the admin group (or becomes an admin while signed in), the
+  device leaves that group (audited as `device_admin_dropped`); it keeps its other groups and its
+  approval. From then on administration on that device is the person's: it ends when they sign out
+  or their session closes. This is how a network's first device (enrolled with the first
+  administrator's words) hands over to its people. A device that must administer with nobody signed
+  in (automation) is put back in admin by an admin, and stays there while no admin person signs in
+  on it.
 - **viewers** (`--viewer-groups`) open the dashboard and the admin API read-only, for devices and
   for people signed in on them.
 

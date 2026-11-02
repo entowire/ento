@@ -149,18 +149,72 @@ func (s *Server) placeNewDevice(ctx context.Context, p store.Peer) (store.Peer, 
 		return p, nil
 	}
 	groups := deviceGroups(p.Machine.Groups)
+	// An administrator or operator token (ento admin token --admin, the first administrator's words)
+	// means that role's group, besides any groups it names: a device's role is only ever its groups.
 	switch {
-	case len(groups) > 0:
-	case p.Machine.Admin: // an administrator token: the admin group is what it means now
-		groups = []string{s.adminGroups()[0]}
-	case p.Machine.Operator:
-		groups = []string{s.operatorGroups()[0]}
-	default:
+	case p.Machine.Admin && !intersects(groups, s.adminGroups()):
+		groups = append(groups, s.adminGroups()[0])
+	case p.Machine.Operator && !p.Machine.Admin && !intersects(groups, s.operatorGroups()):
+		groups = append(groups, s.operatorGroups()[0])
+	}
+	if len(groups) == 0 {
 		groups = []string{IsolatedGroup}
 	}
 	approved, admin, operator := s.groupRights(groups)
-	admin = admin || p.Machine.Admin // an administrator token (ento admin token --admin)
 	return s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &groups, Approved: &approved, Admin: &admin, Operator: &operator})
+}
+
+// rolesFromGroups makes every device's own role what its groups say (0.47): a device made an admin
+// or operator before, by a token or `ento control admin`, without being in that role's group, is put
+// in it, so its role shows in its groups and goes with them. Run at start; changes nothing twice.
+func (s *Server) rolesFromGroups(ctx context.Context) {
+	peers, err := s.cfg.Store.Peers(ctx)
+	if err != nil {
+		s.cfg.Logf("device roles: %v", err)
+		return
+	}
+	for _, p := range peers {
+		if p.Authority != "" {
+			continue
+		}
+		groups := slices.Clone(p.Machine.Groups)
+		if p.Machine.Admin && !intersects(groups, s.adminGroups()) {
+			groups = append(groups, s.adminGroups()[0])
+		}
+		if p.Machine.Operator && !intersects(groups, s.operatorGroups()) && !intersects(groups, s.adminGroups()) {
+			groups = append(groups, s.operatorGroups()[0])
+		}
+		_, admin, operator := s.groupRights(groups)
+		if slices.Equal(groups, p.Machine.Groups) && admin == p.Machine.Admin && operator == p.Machine.Operator {
+			continue
+		}
+		if _, err := s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &groups, Admin: &admin, Operator: &operator}); err != nil {
+			s.cfg.Logf("device roles of %s: %v", p.Hostname, err)
+			continue
+		}
+		s.audit(nil, nil, "device_roles_from_groups", fmt.Sprintf("%s groups=%s admin=%v operator=%v",
+			peerLabel(p), strings.Join(groups, ","), admin, operator), "ok")
+	}
+}
+
+// dropDeviceAdmin takes a device out of the admin groups once an admin person has signed in on it
+// (0.47): from then on its admin rights are that person's, while they are signed in, and end with
+// their session. The device keeps its other groups and its approval. The first administrator's device
+// (enrolled with admin words) is how a network starts; this ends that once a person holds the role.
+func (s *Server) dropDeviceAdmin(ctx context.Context, p store.Peer) store.Peer {
+	if p.Authority != "" || !p.Person.Active || !p.Person.Admin || !intersects(p.Machine.Groups, s.adminGroups()) {
+		return p
+	}
+	groups := slices.DeleteFunc(slices.Clone(p.Machine.Groups), func(g string) bool { return slices.Contains(s.adminGroups(), g) })
+	_, admin, operator := s.groupRights(groups)
+	updated, err := s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &groups, Admin: &admin, Operator: &operator})
+	if err != nil {
+		s.cfg.Logf("device admin of %s: %v", p.Hostname, err)
+		return p
+	}
+	s.audit(nil, &updated, "device_admin_dropped", fmt.Sprintf("%s: %s signed in as an admin; the device's own admin group is gone (groups=%s)",
+		peerLabel(updated), userLabel(updated), strings.Join(groups, ",")), "ok")
+	return updated
 }
 
 // prefixDeviceGroups gives the devices' own groups their prefix, once, for a network that ran an
@@ -218,7 +272,8 @@ func (s *Server) syncGroups(ctx context.Context) {
 		if len(keep) == len(p.Machine.Groups) {
 			continue
 		}
-		if _, err := s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &keep}); err != nil {
+		_, admin, operator := s.groupRights(keep) // a role group deleted there takes the role with it
+		if _, err := s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &keep, Admin: &admin, Operator: &operator}); err != nil {
 			s.cfg.Logf("groups of %s: %v", p.Hostname, err)
 			continue
 		}

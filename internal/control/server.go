@@ -241,6 +241,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		s.people = newPeople(*cfg.People)
 	}
 	s.prefixDeviceGroups(ctx)
+	s.rolesFromGroups(ctx)
 	// Groups come from the identity provider only: checked at start, then every 30 seconds.
 	go func() {
 		s.syncGroups(ctx)
