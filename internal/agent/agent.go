@@ -555,12 +555,16 @@ func (a *runner) loop(ctx context.Context) error {
 		}
 		if a.saveFn == nil {
 			a.mu.Lock()
-			if nm.Self.PersonActive != a.personActive {
+			changed := nm.Self.PersonActive != a.personActive
+			if changed {
 				a.personActive = nm.Self.PersonActive
 				close(a.personChanged)
 				a.personChanged = make(chan struct{})
 			}
 			a.mu.Unlock()
+			if changed {
+				a.announce() // `ento agent status` shows the session as it is now (it showed the last one written)
+			}
 		}
 		if nm.Self.Approved {
 			a.setFailing(nm.Self.PostureFailing)
