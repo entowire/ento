@@ -231,6 +231,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := setDown(cfg.StateDir, false); err != nil {
 		cfg.Logf("%v", err)
 	}
+	// What the joined networks hold is known before any network applies its map, so that none
+	// takes it in the meantime (networks.go).
+	preloadClaims(cfg.StateDir)
 	a, err := startRunner(cfg, hostEnv(), st, nil)
 	if err != nil {
 		return err
@@ -246,12 +249,20 @@ func Run(ctx context.Context, cfg Config) error {
 	go a.reportPosture(ctx)
 	go a.checkIns(ctx)
 	go manageLinks(ctx, cfg, a)
+	networksDone := make(chan struct{})
+	go func() { manageNetworks(ctx, cfg); close(networksDone) }()
+	defer func() { <-networksDone }() // the joined networks are down before the first goes
 	go serveSessions(ctx, cfg)
 	return a.loop(ctx)
 }
 
 // startRunner configures a network's interface from its state.
 func startRunner(cfg Config, env netEnv, st State, onApply func(api.NetMap)) (*runner, error) {
+	return startNetwork(cfg, env, st, onApply, false)
+}
+
+// startNetwork is startRunner, for a network joined besides the first with member.
+func startNetwork(cfg Config, env netEnv, st State, onApply func(api.NetMap), member bool) (*runner, error) {
 	ifc, err := env.openIface(cfg)
 	if err != nil {
 		return nil, err
@@ -267,7 +278,10 @@ func startRunner(cfg Config, env netEnv, st State, onApply func(api.NetMap)) (*r
 	}
 	a := &runner{cfg: cfg, env: env, st: st, ifc: ifc, relay: rel, onApply: onApply, started: time.Now(),
 		paths: map[wgtypes.Key]*path{}, last: api.NetMap{Controls: st.Controls}, postureWake: make(chan struct{}, 1),
-		personChanged: make(chan struct{})}
+		personChanged: make(chan struct{}), member: member}
+	if !a.linked() {
+		claimNetwork(ifc.IfName(), st)
+	}
 	if err := a.apply(a.last); err != nil {
 		a.close()
 		return nil, err
@@ -275,9 +289,14 @@ func startRunner(cfg Config, env netEnv, st State, onApply func(api.NetMap)) (*r
 	return a, nil
 }
 
-// home reports whether the runner is the device's own network (not a linked network, which lives in
-// a namespace of its own: exits and the system's DNS are none of its business).
-func (a *runner) home() bool { return a.saveFn == nil && !a.env.ns.IsOpen() }
+// home reports whether the runner is the device's first network: not a linked network, which lives
+// in a namespace of its own, nor another network the device joined (networks.go). Exits and
+// releases come from it alone.
+func (a *runner) home() bool { return !a.member && !a.linked() }
+
+// linked reports whether the runner is a linked network's, in a namespace of its own (the system's
+// DNS and the device's other networks are none of its business).
+func (a *runner) linked() bool { return a.saveFn != nil || a.env.ns.IsOpen() }
 
 // save persists the state; the caller holds a.mu.
 func (a *runner) save() error {
@@ -301,6 +320,9 @@ func (a *runner) close() {
 		a.resolver = nil
 	}
 	a.mu.Unlock()
+	if !a.linked() {
+		dropClaim(a.ifc.IfName())
+	}
 	a.relay.Close()
 	a.ifc.Close()
 }
@@ -340,6 +362,9 @@ type runner struct {
 	env     netEnv
 	onApply func(api.NetMap)  // called with every applied network map (linked networks)
 	saveFn  func(State) error // persists a changed state; nil: the home state in cfg.StateDir
+	// member: a network the device joined besides the first (networks.go), with its own state
+	// directory in cfg.StateDir.
+	member  bool
 	st      State
 	ifc     tunnel
 	relay   *relayer
@@ -393,8 +418,10 @@ type runner struct {
 	exitSet   bool
 	exitAt    time.Time
 	exitNoted string
-	// filterFailed: the last inbound filter could not be applied, so only the control nodes are peers.
+	// filterFailed: the last inbound filter could not be applied, so only the control nodes are peers;
+	// filterErr (under mu) says why, for `ento agent status` and the check-ins.
 	filterFailed bool
+	filterErr    string
 	// resolver: the agent's resolver (dns.go), nil when nothing needs it; dnsApplied: the system's
 	// DNS settings made for it (dnsSettings.key, "" for none), dnsAt when; dnsNoted the last thing
 	// logged about it.
@@ -407,6 +434,8 @@ type runner struct {
 	dnsApplied  string
 	dnsAt       time.Time
 	dnsNoted    string
+	dnsTaken    string // the names left out last as another network's (networks.go)
+	apart       string // the other networks' interfaces the filter last kept apart (networks.go)
 	// The latest posture report the control plane took, and the checks the device fails.
 	posture   *api.Posture
 	postureAt time.Time
@@ -432,10 +461,10 @@ func (a *runner) announce() {
 	a.announceMu.Lock()
 	defer a.announceMu.Unlock()
 	a.mu.Lock()
-	r := Running{Version: a.cfg.Version, PID: os.Getpid(), Links: linksSupported, Interface: a.ifc.IfName(),
+	r := Running{Version: a.cfg.Version, PID: os.Getpid(), Links: linksSupported, Networks: networksSupported, Interface: a.ifc.IfName(),
 		LoginRequired: a.loginRequired, Posture: a.posture, PostureFailing: slices.Clone(a.failing),
 		User: a.user, UserName: a.userName, Serves: slices.Clone(a.last.Self.Routes), ExitFor: a.last.Self.Exit,
-		Exits: a.runningExits()}
+		Exits: a.runningExits(), FilterFailed: a.filterErr}
 	if a.last.DNS != nil && a.resolver != nil {
 		r.DNSDomain, r.Resolver = a.last.DNS.Domain, a.resolver.addr.String()
 	}
@@ -633,8 +662,23 @@ func (a *runner) apply(nm api.NetMap) error {
 	wantRoutes := map[netip.Prefix]bool{}
 	var local []netip.Prefix
 	var exit *exitPick
-	if a.saveFn == nil { // the device's own namespace, where its other networks are
+	// granted: the routes no other network of the device holds (nil: a linked network, alone in its
+	// namespace).
+	var granted map[netip.Prefix]bool
+	if !a.linked() { // the device's own namespace, where its other networks are
 		local = localNetworks(a.ifc.IfName())
+		var candidates []netip.Prefix
+		if !a.cut {
+			for _, p := range nm.Peers {
+				for _, s := range p.Routes {
+					// As routeNetworks takes them: a default route (an exit's) is no route here.
+					if n, err := netip.ParsePrefix(s); err == nil && n.Addr().Is4() && n.Bits() > 0 {
+						candidates = append(candidates, n)
+					}
+				}
+			}
+		}
+		granted = claimRoutes(a.ifc.IfName(), candidates)
 	}
 	if a.home() {
 		if o, ok := chooseExit(nm, ExitChoice(a.cfg.StateDir)); ok {
@@ -658,7 +702,7 @@ func (a *runner) apply(nm api.NetMap) error {
 		if !a.cfg.Quiet && !p.Quiet { // a quiet peer (a phone) is sent nothing it did not ask for
 			pc.Keepalive = keepalive
 		}
-		pc.AllowedIPs = append(pc.AllowedIPs, a.routeNetworks(p, local, wantRoutes)...)
+		pc.AllowedIPs = append(pc.AllowedIPs, a.routeNetworks(p, local, granted, wantRoutes)...)
 		if exit != nil && p.PublicKey == exit.Key && !controls[pc.PublicKey] && !seen[pc.PublicKey] {
 			pc.AllowedIPs = append(pc.AllowedIPs, exitNetwork)
 			exitPeer = true
@@ -684,6 +728,16 @@ func (a *runner) apply(nm api.NetMap) error {
 	// everything passes as before), applied before any peer is (0.50, D2): a filter that cannot be
 	// applied leaves only the control nodes as peers, so nothing reaches the device unfiltered.
 	filter := filterFromMap(nm)
+	if filter != nil && !a.linked() {
+		_, ifaces := otherClaims(a.ifc.IfName())
+		filter.isolateFrom(ifaces)
+		if apart := strings.Join(ifaces, ", "); apart != a.apart {
+			a.apart = apart
+			if apart != "" {
+				a.cfg.Logf("nothing forwarded between %s and %s (the device's other networks)", a.ifc.IfName(), apart)
+			}
+		}
+	}
 	if filter != nil && a.cfg.LogDrops {
 		if a.dropLog == nil {
 			a.dropLog = &dropLog{logf: a.cfg.Logf, iface: a.ifc.IfName()}
@@ -693,7 +747,7 @@ func (a *runner) apply(nm api.NetMap) error {
 	}
 	switch {
 	case filter == nil:
-	case !a.home(): // a linked network: everything the device sends there is its person's work
+	case a.linked(): // a linked network: everything the device sends there is its person's work
 		filter.countPerson(&personRules{all: true, controls: filter.controls})
 	case filter.person != nil:
 		r := *filter.person
@@ -711,6 +765,15 @@ func (a *runner) apply(nm api.NetMap) error {
 		a.cfg.Logf("inbound filter applied: the network's peers are back")
 	}
 	a.filterFailed = filterErr != nil
+	why := ""
+	if filterErr != nil {
+		why = filterErr.Error()
+	}
+	changedWhy := a.filterErr != why // apply holds a.mu
+	a.filterErr = why
+	if changedWhy {
+		go a.announce() // takes a.mu itself, once apply is done
+	}
 	a.relay.SetPeers(seen)
 	if err := a.ifc.Configure(wgtypes.Key(a.st.PrivateKey), desired); err != nil {
 		return err
@@ -730,7 +793,7 @@ func (a *runner) apply(nm api.NetMap) error {
 		}
 		a.cfg.Logf("this device is the gateway of %s, but it forwards only with the kernel's WireGuard (Linux, without --userspace)", what)
 	}
-	if a.home() {
+	if !a.linked() {
 		a.syncResolver(nm, filter)
 	}
 	if a.onApply != nil {
@@ -986,11 +1049,21 @@ func InProcessPeers() (map[wgtypes.Key]PeerStatus, bool, bool) {
 // routeNetworks are the networks this device reaches through peer p (its routes), less those that
 // overlap a network the device is on (in the office itself, the LAN is reached directly; routing it
 // into the tunnel would also capture WireGuard's own packets to the gateway). They go into want.
-func (a *runner) routeNetworks(p api.Peer, local []netip.Prefix, want map[netip.Prefix]bool) []netip.Prefix {
+func (a *runner) routeNetworks(p api.Peer, local []netip.Prefix, granted, want map[netip.Prefix]bool) []netip.Prefix {
 	var out []netip.Prefix
 	for _, s := range p.Routes {
 		n, err := netip.ParsePrefix(s)
 		if err != nil || !n.Addr().Is4() || n.Bits() == 0 || want[n] {
+			continue
+		}
+		if granted != nil && !granted[n] {
+			if a.skipped == nil {
+				a.skipped = map[netip.Prefix]bool{}
+			}
+			if !a.skipped[n] {
+				a.skipped[n] = true
+				a.cfg.Logf("route %s through %q left out: it overlaps another network of this device (its range or a route it uses)", n, p.Hostname)
+			}
 			continue
 		}
 		if slices.ContainsFunc(local, n.Overlaps) {

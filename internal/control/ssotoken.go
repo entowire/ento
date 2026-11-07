@@ -24,7 +24,34 @@ const (
 	// unavailableReport: while the provider cannot be asked, an audit line this often (the first at
 	// once), so the SIEM can tell a blip from an outage.
 	unavailableReport = 10 * time.Minute
+	// unreadableRetry: a token that does not open with this node's key is tried again this much
+	// later (kept: another control node, or this one with the right key, may still open it).
+	unreadableRetry = time.Hour
+	tokenCanary     = "ento/v1/sso-token-canary"
 )
+
+// errTokenKey: the token key does not open the network's canary.
+var errTokenKey = errors.New("ENTO_OIDC_TOKEN_KEY does not open the refresh tokens this network keeps " +
+	"(it differs from the other control nodes' key, or was changed): set the key they use, or, to " +
+	"change it on purpose, run `ento control sso-forget` (it signs every person out)")
+
+// checkTokenKey refuses a token key that does not open the network's canary, a value sealed with
+// the key of the first control node that kept tokens (2026-11-03 review, I8: before 0.51, a node
+// with another key deleted every token it claimed, and those people were never checked again).
+func checkTokenKey(ctx context.Context, st store.Store, key []byte) error {
+	sealed, err := sealToken(key, 0, tokenCanary)
+	if err != nil {
+		return err
+	}
+	stored, err := st.KeepSetting(ctx, store.SettingSSOTokenCanary, sealed)
+	if err != nil {
+		return fmt.Errorf("sso token key: %w", err)
+	}
+	if plain, err := openToken(key, 0, stored); err != nil || plain != tokenCanary {
+		return errTokenKey
+	}
+	return nil
+}
 
 func (s *Server) refreshInterval() time.Duration {
 	if s.cfg.OIDC != nil && s.cfg.OIDC.RefreshInterval > 0 {
@@ -161,8 +188,14 @@ func (s *Server) refreshDevice(ctx context.Context, t store.SSOToken) bool {
 	}
 	token, err := openToken(s.oidc.cfg.TokenKey, p.ID, t.Encrypted)
 	if err != nil {
-		s.cfg.Logf("sso: refresh token of peer %d: %v", p.ID, err)
-		_ = s.cfg.Store.DeleteSSOToken(ctx, t.PeerID, t.Encrypted)
+		// Kept, not deleted: a deleted token would never be checked again, and the person would keep
+		// their rights until the session limits (I8). Tried again later, audited each time.
+		s.audit(nil, nil, "sso_token_unreadable", fmt.Sprintf("%s: %v; tried again in %s", userLabel(p), err, unreadableRetry), "failed")
+		later := t
+		later.NextCheck, later.Previous = time.Now().Add(unreadableRetry), t.Encrypted
+		if err := s.cfg.Store.SetSSOToken(ctx, later); err != nil && !errors.Is(err, store.ErrChanged) && !errors.Is(err, store.ErrNotFound) {
+			s.cfg.Logf("sso: refresh token of peer %d: %v", p.ID, err)
+		}
 		return false
 	}
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)

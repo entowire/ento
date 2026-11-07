@@ -677,10 +677,18 @@ func postureNames(list []string) ([]string, error) {
 	return slices.Compact(out), nil
 }
 
+// sameGroup reports whether two names can select the same devices: equal, or a plain name and the
+// device group of that name (hasGroup lets a plain name match it). Comparing names literally let
+// an operator connect `device:laptops` with servers past an admin's checks on `laptops` (2026-11-03
+// review, A4).
+func sameGroup(g, h string) bool {
+	return g == h || !strings.Contains(g, ":") && DevicePrefix+g == h || !strings.Contains(h, ":") && DevicePrefix+h == g
+}
+
 // coversGroups reports whether a policy between groups x and y connects devices of groups a and b,
-// going by the names ("*" matches every group).
+// going by the names ("*" matches every group; a plain name and its device group match).
 func coversGroups(x, y, a, b string) bool {
-	match := func(g, h string) bool { return g == "*" || h == "*" || g == h }
+	match := func(g, h string) bool { return g == "*" || h == "*" || sameGroup(g, h) }
 	return match(x, a) && match(y, b) || match(x, b) && match(y, a)
 }
 
@@ -697,7 +705,7 @@ func bypasses(o, p store.Policy) bool {
 		!coversGroups(o.Source, o.Destination, p.Source, p.Destination) {
 		return false
 	}
-	checksThem := o.Source == "*" || o.Source == p.Source
+	checksThem := o.Source == "*" || sameGroup(o.Source, p.Source)
 	return !checksThem || slices.ContainsFunc(p.Posture, func(c string) bool { return !slices.Contains(o.Posture, c) })
 }
 

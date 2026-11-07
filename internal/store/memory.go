@@ -45,6 +45,7 @@ type Memory struct {
 	offers   map[string]time.Time
 	signIns  map[string]SignInCode
 	signUse  map[int64]SignInCode // PersonSince and, in ExpiresAt, when the device last signed someone in
+	settings map[string]string
 	nextID   int64
 }
 
@@ -980,6 +981,32 @@ func (m *Memory) DeleteSSOToken(_ context.Context, peerID int64, token string) e
 	}
 	delete(m.sso, peerID)
 	return nil
+}
+
+func (m *Memory) ForgetSSOTokens(context.Context) ([]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []int64
+	for id := range m.sso {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	m.sso = map[int64]SSOToken{}
+	delete(m.settings, SettingSSOTokenCanary)
+	return ids, nil
+}
+
+func (m *Memory) KeepSetting(_ context.Context, key, value string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.settings == nil {
+		m.settings = map[string]string{}
+	}
+	if v, ok := m.settings[key]; ok {
+		return v, nil
+	}
+	m.settings[key] = value
+	return value, nil
 }
 
 func (m *Memory) CreateUISession(_ context.Context, u UISession) error {

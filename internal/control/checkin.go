@@ -84,10 +84,15 @@ func (s *Server) suspendsClones(p store.Peer) bool {
 
 func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request, self store.Peer) {
 	var req api.CheckInRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil ||
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&req); err != nil ||
 		!validCheckInValue(req.Token, 64) || !validCheckInValue(req.Fingerprint, 64) || !validCheckInValue(req.BootID, 64) {
 		writeErr(w, http.StatusBadRequest, "invalid check-in")
 		return
+	}
+	if req.FilterFailed != "" {
+		// The device has only its control nodes as peers until its filter applies (D2): say so where
+		// administrators look, at every check-in while it lasts.
+		s.audit(r, &self, "filter_failed", fmt.Sprintf("%s: %s; only the control nodes are its peers", peerLabel(self), printable(req.FilterFailed, 200)), "failed")
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

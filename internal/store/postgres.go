@@ -1600,6 +1600,32 @@ func (p *Postgres) DeleteSSOToken(ctx context.Context, peerID int64, token strin
 	return err
 }
 
+func (p *Postgres) ForgetSSOTokens(ctx context.Context) ([]int64, error) {
+	var ids []int64
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `DELETE FROM ento_sso_tokens RETURNING peer_id`)
+		if err != nil {
+			return err
+		}
+		ids, err = pgx.CollectRows(rows, pgx.RowTo[int64])
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM ento_settings WHERE key = $1`, SettingSSOTokenCanary)
+		return err
+	})
+	slices.Sort(ids)
+	return ids, err
+}
+
+func (p *Postgres) KeepSetting(ctx context.Context, key, value string) (string, error) {
+	var stored string
+	err := p.pool.QueryRow(ctx,
+		`INSERT INTO ento_settings (key, value) VALUES ($1, $2)
+		 ON CONFLICT (key) DO UPDATE SET key = EXCLUDED.key RETURNING value`, key, value).Scan(&stored)
+	return stored, err
+}
+
 // Sessions of the admin interface are not part of the network map either.
 
 func (p *Postgres) CreateUISession(ctx context.Context, u UISession) error {

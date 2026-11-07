@@ -76,6 +76,15 @@ func upstream() []string {
 // resolver about it. The caller holds a.mu.
 func (a *runner) syncResolver(nm api.NetMap, f *inboundFilter) {
 	conf := newResolverConf(nm.DNS)
+	if !a.linked() {
+		dropped := strings.Join(claimNames(a.ifc.IfName(), recordFQDN(a.st.RecordDomain), conf), ", ")
+		if dropped != a.dnsTaken {
+			a.dnsTaken = dropped
+			if dropped != "" {
+				a.cfg.Logf("DNS: %s left out: another network of this device holds it", dropped)
+			}
+		}
+	}
 	if a.exit != nil {
 		conf.exit = a.exit.Addr
 	}

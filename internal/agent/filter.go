@@ -37,7 +37,18 @@ type inboundFilter struct {
 	person *personRules
 	// logDrops, when set, logs the new connections the filter refuses (Config.LogDrops).
 	logDrops *dropLog
-	key      string // canonical text, to leave an unchanged filter alone
+	// isolate: the interfaces of the device's other networks, which nothing is forwarded to or from
+	// (networks.go; the kernel's WireGuard).
+	isolate []string
+	key     string // canonical text, to leave an unchanged filter alone
+}
+
+// isolateFrom keeps the device from forwarding anything between this network and the networks on
+func (f *inboundFilter) isolateFrom(ifaces []string) {
+	f.isolate = ifaces
+	for _, i := range ifaces {
+		f.key += "\nisolate " + i
+	}
 }
 
 // exitBlocked are the destinations an exit never forwards to: private, shared and special ranges (an

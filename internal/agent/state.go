@@ -93,6 +93,8 @@ type Running struct {
 	Version string `json:"version"`
 	PID     int    `json:"pid"`
 	Links   bool   `json:"links"` // handles linked network requests
+	// Networks: joins and leaves networks besides the first (networks.go, 0.51).
+	Networks bool `json:"networks,omitempty"`
 	// Interface is the home network's interface as the system names it (macOS: utunN).
 	Interface string `json:"interface,omitempty"`
 	// LoginRequired: the home network ended this device's SSO session; `ento agent login`.
@@ -123,6 +125,9 @@ type Running struct {
 	Posture           *api.Posture         `json:"posture,omitempty"`
 	PostureReportedAt string               `json:"posture_reported_at,omitempty"`
 	PostureFailing    []api.PostureFailure `json:"posture_failing,omitempty"`
+	// FilterFailed says why the inbound filter could not be applied (0.51): until it can, the
+	// device's only peers are its control nodes.
+	FilterFailed string `json:"filter_failed,omitempty"`
 }
 
 const runningFile = "agent.json"

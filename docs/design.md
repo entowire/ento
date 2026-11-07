@@ -34,6 +34,7 @@ A single binary, `ento`:
 | `ento agent` | Runs on every device. Configures a WireGuard interface (kernel WireGuard on Linux), enrolls with a token, keeps the network map up to date and applies it. |
 | `ento admin …` | Administration through the control API, as a peer that has the admin flag. |
 | admin web interface | Served by `ento control` itself on port 443 of its overlay address for one name (`--admin-ui`): the node reads the server name of each TLS connection, terminates those for the interface and passes all others through to the identity provider. Authorization is the calling device (admin flag), as for the API; changes need the interface's own header, origin and name (cross-site requests from other pages cannot make them), and the plain API refuses browsers. |
+| `ento agent join DOMAIN` | Joins another network besides the first, with its own invitation, on an interface of its own (see "Several networks on one device"). |
 | `ento agent link NAME` | Joins a linked network (see "Linked networks") in namespace `ento-NAME`. |
 | `ento control token …` | Local bootstrap commands operating directly on the database (first admin token). |
 
@@ -312,8 +313,10 @@ The receiving device's agent enforces it, never the sender's: a modified agent o
 gains nothing. Answers to the device's own connections and everything from control nodes pass. The
 filter is applied before the peers are, and one that cannot be applied leaves the control nodes as
 the only peers until it can (0.50; before, it was only logged and every peer reached every port).
-Still open: the table is looked for once a minute after a removal (`nft flush ruleset`), and
-`ento agent status` does not say the filter failed.
+Since 0.51 the table is looked for at every application of the map (every few seconds; before,
+once a minute, so `nft flush ruleset` left no filter for up to a minute), and a filter that cannot
+be applied is said: `ento agent status` shows a WARNING with the reason, and each check-in carries
+it to the control plane, which audits `filter_failed` (failed) while it lasts.
 With the Linux kernel's WireGuard the agent keeps an nftables table of its own (`inet
 ento-filter`: a prerouting chain after conntrack, for answers, and before the system's DNAT, so it
 sees the port the peer connected to; re-created if removed; not at the input hook, where it would
@@ -505,6 +508,48 @@ done inside the tunnel):
 - Changes are propagated between control nodes through the database (PostgreSQL `LISTEN/NOTIFY`,
   polling as a fallback).
 
+## Several networks on one device
+
+A device may be in several networks as equals (0.51, Linux): the first, whose state is the agent's
+state directory, and each network joined with `ento agent join DOMAIN`, whose state is
+`<state dir>/networks/<domain>/` (`internal/agent/networks.go`). One agent runs them all: one
+service, and on the phones, which give a device one VPN interface, the only way it can be done
+there later. Each joined network is a runner like the first's on an interface of its own (`ento1`,
+`ento2`, ...) in the device's own namespace, with its own key, hardware key (its own TPM key blob),
+WireGuard port, control nodes, filter table (`ento-filter-<interface>`), posture reports,
+check-ins, person and resolver. The running agent acts on the directories (`network.json` and
+`enroll.token` written by `join`, `remove` by `leave`) every few seconds, as it does on linked
+networks'.
+
+Every program on the device reaches every network, so what keeps them apart is that no network can
+
+1. **Distinct ranges.** `join` refuses a network whose range (from its record, checked again after
+   enrolling) overlaps one of the device's networks, linked ones included, or a route one uses.
+2. **Claims.** The agent keeps, per interface, what each network holds in the device's namespace:
+   its range, the routes it routes, its record domain and the names its resolver answers. A
+   network's routes and names that overlap another's claim are left out, whatever their prefix
+   length (a narrower route would otherwise win in the routing table, a narrower zone in
+   systemd-resolved). Checking and claiming are one step under one lock, so that two networks
+   offering the same route never both take it (nor both drop it): the first keeps it. A network's
+   own record domain is always its own, so another network cannot take its sign-in names by
+   claiming them first. The joined networks' ranges and domains are claimed before any network of
+   a starting agent applies its map.
+3. **No forwarding.** Each network's filter table drops, in its forward chain and before anything
+   else, what would pass from its interface to another network's or back (counted). A packet from a
+   network's peer reaches the device only for the device itself or a network it serves there (the
+   prerouting filter); a network it serves that another network routes is dropped there.
+4. **What only one network decides.** Exits (the system's default route and `~.` DNS) and releases
+   come from the first network alone; a joined network's exits are not used. Its WireGuard packets
+   carry the exit's mark, as the first network's do, so they never go through the exit.
+5. **Saying which network asks.** Sign-ins, sign-in approvals and `ento agent approvals` name the
+   network on a device in several.
+
+Leaving deletes the network's interface, filter table and state on the device; the device stays in
+that network's list until an administrator there deletes it (a device leaving by itself is a
+linked membership's right only, `POST /v1/leave`). Each network still learns what the device
+reports to it (host name, posture facts), which may let two networks that compare notes tell it is
+one device.
+
 ## Linked networks (access across independent deployments)
 
 An organisation that operates many ento deployments it does not own (a managed service provider
@@ -642,7 +687,8 @@ the authority public key.
    gateway since 0.24, exits since 0.25, internal DNS since 0.26)
 3. Relay through control nodes (done), NAT traversal improvements (periodic direct probing).
 4. Linked networks: multiple networks per agent in separate namespaces, authorities, access
-   credentials. (done)
+   credentials. (done) Several networks on one device as equals, each joined with its own
+   invitation (done on Linux, 0.51; macOS, Windows and the apps to come).
 5. SQLite backend, packaging (container image, systemd unit), documentation for self-hosting.
 6. More platforms: macOS and Windows (done), Android (done), iOS.
 7. Device posture checks on policies and links (done); attested facts: Android (done, 0.30), TPM later.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"time"
 
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
@@ -21,15 +20,14 @@ import (
 // and moved there; addresses, routes and WireGuard configuration go through handles opened in
 // that namespace.
 type Iface struct {
-	Name          string
-	ListenPort    int
-	MTU           int
-	ns            netns.NsHandle // closed handle: the agent's own namespace
-	filter        *inboundFilter // the inbound filter last applied (filter_linux.go)
-	filterSet     bool
-	filterChecked time.Time
-	nl            *netlink.Handle
-	wg            *wgctrl.Client
+	Name       string
+	ListenPort int
+	MTU        int
+	ns         netns.NsHandle // closed handle: the agent's own namespace
+	filter     *inboundFilter // the inbound filter last applied (filter_linux.go)
+	filterSet  bool
+	nl         *netlink.Handle
+	wg         *wgctrl.Client
 }
 
 // OpenIface creates the interface if needed and brings it up, in the agent's own namespace.

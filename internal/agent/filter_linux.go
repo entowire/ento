@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"os"
 	"slices"
-	"time"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/binaryutil"
@@ -54,18 +53,37 @@ import (
 // fact unknown (0.19.3, 0.20.0). An input-hook chain would also count in the firewall fact; this one
 // does not. Other tables still apply: a packet this table accepts can be dropped by the system's
 // firewall.
+//
+// A network the device joined besides the first (networks.go) has its own table on its interface,
+// ento-filter-<interface>, and every network's forward chain then also drops what would pass
+// between its interface and another network's, in both directions:
+//
+//	chain forward { ...
+//	              iifname "ento0" oifname "ento1" drop
+//	              iifname "ento1" oifname "ento0" drop }
 const inboundFilterTable = "ento-filter"
 
+// filterTable is the table of the inbound filter on interface ifName: ento-filter for the first
+// network's (and in a linked network's namespace), ento-filter-<name> for a joined network's
+// interfaces (ento1, ento2, ...), which share the device's namespace with the first.
+func filterTable(ifName string) string {
+	if memberInterface(ifName) {
+		return inboundFilterTable + "-" + ifName
+	}
+	return inboundFilterTable
+}
+
 // SetFilter applies the network map's inbound filter (nil removes it). It is called with every
-// application of the map (every few seconds): an unchanged filter is left alone, but once a minute
-// the table is looked for and put back if something removed it (`nft flush ruleset`).
+// application of the map (every few seconds): an unchanged filter is left alone, but its table is
+// looked for each time and put back if something removed it (`nft flush ruleset`, which Debian's
+// /etc/nftables.conf starts with; before 0.51 once a minute, so up to a minute without a filter:
+// 2026-11-03 review, D2).
 func (i *Iface) SetFilter(f *inboundFilter) error {
 	if i.filter.sameAs(f) && i.filterSet {
-		if f == nil || time.Since(i.filterChecked) < time.Minute {
+		if f == nil {
 			return nil
 		}
-		i.filterChecked = time.Now()
-		if present, err := filterTablePresent(i.ns); err != nil || present {
+		if present, err := filterTablePresent(i.ns, filterTable(i.Name)); err != nil || present {
 			return err
 		}
 	}
@@ -78,7 +96,7 @@ func (i *Iface) SetFilter(f *inboundFilter) error {
 			return fmt.Errorf("enable forwarding for the routes this device serves: %w", err)
 		}
 	}
-	i.filter, i.filterSet, i.filterChecked = f, true, time.Now()
+	i.filter, i.filterSet = f, true
 	return nil
 }
 
@@ -89,7 +107,7 @@ func nftIn(ns netns.NsHandle) (*nftables.Conn, error) {
 	return nftables.New()
 }
 
-func filterTablePresent(ns netns.NsHandle) (bool, error) {
+func filterTablePresent(ns netns.NsHandle, table string) (bool, error) {
 	c, err := nftIn(ns)
 	if err != nil {
 		return false, err
@@ -99,7 +117,7 @@ func filterTablePresent(ns netns.NsHandle) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return slices.ContainsFunc(tables, func(t *nftables.Table) bool { return t.Name == inboundFilterTable }), nil
+	return slices.ContainsFunc(tables, func(t *nftables.Table) bool { return t.Name == table }), nil
 }
 
 func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) error {
@@ -112,15 +130,16 @@ func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) erro
 	if err != nil {
 		return err
 	}
+	table := filterTable(ifName)
 	for _, t := range tables {
-		if t.Name == inboundFilterTable {
+		if t.Name == table {
 			c.DelTable(t)
 		}
 	}
 	if f == nil {
 		return c.Flush()
 	}
-	t := c.AddTable(&nftables.Table{Family: nftables.TableFamilyINet, Name: inboundFilterTable})
+	t := c.AddTable(&nftables.Table{Family: nftables.TableFamilyINet, Name: table})
 	accept := nftables.ChainPolicyAccept
 	pre := c.AddChain(&nftables.Chain{Name: "prerouting", Table: t, Type: nftables.ChainTypeFilter,
 		Hooknum: nftables.ChainHookPrerouting, Priority: nftables.ChainPriorityMangle, Policy: &accept})
@@ -237,6 +256,23 @@ func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) erro
 	if f.person != nil {
 		addPersonChain(c, t, ifName, f, to)
 	}
+	var fwd *nftables.Chain
+	forward := func() *nftables.Chain {
+		if fwd == nil {
+			fwd = c.AddChain(&nftables.Chain{Name: "forward", Table: t, Type: nftables.ChainTypeFilter,
+				Hooknum: nftables.ChainHookForward, Priority: nftables.ChainPriorityFilter, Policy: &accept})
+		}
+		return fwd
+	}
+	// Nothing passes between this network and the device's others, before anything else.
+	for _, other := range f.isolate {
+		for _, dir := range [][2]string{{ifName, other}, {other, ifName}} {
+			c.AddRule(&nftables.Rule{Table: t, Chain: forward(), Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(dir[0])},
+				&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(dir[1])},
+				&expr.Counter{}, &expr.Verdict{Kind: expr.VerdictDrop}}})
+		}
+	}
 	if (len(f.serves) > 0 || len(exiting) > 0) && f.overlay.IsValid() {
 		// Forwarded traffic leaves with the gateway's own LAN address, so the LAN needs no route back;
 		// the LAN only answers, it opens nothing into the network.
@@ -259,18 +295,17 @@ func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) erro
 				&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: ifname(ifName)}, &expr.Masq{})
 			c.AddRule(&nftables.Rule{Table: t, Chain: nat, Exprs: exprs})
 		}
-		fwd := c.AddChain(&nftables.Chain{Name: "forward", Table: t, Type: nftables.ChainTypeFilter,
-			Hooknum: nftables.ChainHookForward, Priority: nftables.ChainPriorityFilter, Policy: &accept})
+		fw := forward()
 		out := func() []expr.Any {
 			return []expr.Any{&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(ifName)}}
 		}
-		c.AddRule(&nftables.Rule{Table: t, Chain: fwd, Exprs: append(out(),
+		c.AddRule(&nftables.Rule{Table: t, Chain: fw, Exprs: append(out(),
 			&expr.Ct{Register: 1, Key: expr.CtKeySTATE},
 			&expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4,
 				Mask: binaryutil.NativeEndian.PutUint32(expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED),
 				Xor:  binaryutil.NativeEndian.PutUint32(0)},
 			&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: binaryutil.NativeEndian.PutUint32(0)}, ok)})
-		c.AddRule(&nftables.Rule{Table: t, Chain: fwd, Exprs: append(out(), &expr.Verdict{Kind: expr.VerdictDrop})})
+		c.AddRule(&nftables.Rule{Table: t, Chain: fw, Exprs: append(out(), &expr.Verdict{Kind: expr.VerdictDrop})})
 	}
 	return c.Flush()
 }
@@ -393,7 +428,7 @@ func (i *Iface) PersonTraffic() (uint64, error) {
 		return 0, err
 	}
 	defer c.CloseLasting()
-	t := &nftables.Table{Family: nftables.TableFamilyINet, Name: inboundFilterTable}
+	t := &nftables.Table{Family: nftables.TableFamilyINet, Name: filterTable(i.Name)}
 	rules, err := c.GetRules(t, &nftables.Chain{Name: personChain, Table: t})
 	if err != nil {
 		return 0, err

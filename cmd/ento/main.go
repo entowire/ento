@@ -152,7 +152,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 	// What changes the network's database without a control node in between leaves an audit line in
 	// the system log (cliaudit), like the control nodes' own.
 	switch cmd {
-	case "token", "authority", "allow", "admin", "groups", "person":
+	case "token", "authority", "allow", "admin", "groups", "person", "sso-forget":
 		all := append([]string{cmd}, args...)
 		defer func() { cliAudit(all, err) }()
 	}
@@ -511,6 +511,34 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		}
 		fmt.Printf("device %d %s: groups=%s (approved=%v)\n", p.ID, p.Hostname, strings.Join(p.Machine.Groups, ","), p.Approved)
 		return nil
+	case "sso-forget":
+		// For a change of ENTO_OIDC_TOKEN_KEY on purpose: the stored refresh tokens cannot be read
+		// with the new key, so they go, with the key's canary, and so do the rights of the people
+		// they were for (signed out: they sign in again), rather than staying unchecked.
+		fs := flag.NewFlagSet("control sso-forget", flag.ExitOnError)
+		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16)")
+		_ = fs.Parse(args)
+		if fs.NArg() != 0 {
+			return errors.New("usage: ento control sso-forget [--network N] (before starting control nodes with a new ENTO_OIDC_TOKEN_KEY)")
+		}
+		st, _, err := openStore(ctx, *network)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		ids, err := st.ForgetSSOTokens(ctx)
+		if err != nil {
+			return err
+		}
+		off, none := false, []string{}
+		for _, id := range ids {
+			if _, err := st.UpdatePeer(ctx, id, store.PeerUpdate{PersonApproved: &off, PersonAdmin: &off, PersonOperator: &off,
+				PersonGroups: &none, PersonActive: &off}); err != nil && !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("sign out device %d: %w", id, err)
+			}
+		}
+		fmt.Printf("refresh tokens forgotten: %d (those people are signed out); the token key's check starts again with the next control node\n", len(ids))
+		return nil
 	case "person":
 		fs := flag.NewFlagSet("control person", flag.ExitOnError)
 		_ = fs.String("network", "", "ignored (the command uses only the identity provider)")
@@ -747,18 +775,30 @@ func (j joinFlags) set() bool { return *j.domain != "" || *j.record != "" }
 // joinToken builds the token that words stand for: it reads the network record (DNS, or --record),
 // shows the network's fingerprint, asks for the words and stretches them (see token.WordsSecret).
 func joinToken(ctx context.Context, j joinFlags) (string, error) {
+	tok, _, err := joinTokenChecked(ctx, j, nil)
+	return tok, err
+}
+
+// joinTokenChecked is joinToken that also returns the network record, and with check refuses the
+// network before the words are asked for.
+func joinTokenChecked(ctx context.Context, j joinFlags, check func(token.Record) error) (string, token.Record, error) {
 	text, name := *j.record, *j.domain
 	if text == "" {
 		var err error
 		if text, err = agent.LookupRecord(ctx, name, nil); err != nil {
-			return "", err
+			return "", token.Record{}, err
 		}
 	} else if name == "" {
 		name = "(from --record)"
 	}
 	rec, err := token.ParseRecord(text)
 	if err != nil {
-		return "", err
+		return "", token.Record{}, err
+	}
+	if check != nil {
+		if err := check(rec); err != nil {
+			return "", token.Record{}, err
+		}
 	}
 	eps := make([]string, 0, len(rec.Controls))
 	for _, c := range rec.Controls {
@@ -768,14 +808,15 @@ func joinToken(ctx context.Context, j joinFlags) (string, error) {
 		name, rec.Network, strings.Join(eps, " "), rec.Fingerprint())
 	w, err := readWords()
 	if err != nil {
-		return "", err
+		return "", token.Record{}, err
 	}
 	fmt.Fprintln(os.Stderr, "deriving the enrollment key from the words (a second or two)...")
 	tok, err := rec.Token(w)
 	if err != nil {
-		return "", err
+		return "", token.Record{}, err
 	}
-	return tok.Encode()
+	enc, err := tok.Encode()
+	return enc, rec, err
 }
 
 // readWords reads the words from the terminal, asking again when one is misspelled, or as one line
@@ -923,8 +964,16 @@ func agentCmd(ctx context.Context, args []string) error {
 	case "login":
 		fs := flag.NewFlagSet("agent login", flag.ExitOnError)
 		cfg := agentFlags(fs)
+		network := networkFlag(fs)
 		noQR := fs.Bool("no-qr", false, "do not draw the sign-in link as a QR code")
 		_ = fs.Parse(args)
+		baseDir := cfg.StateDir
+		if err := useNetwork(cfg, *network); err != nil {
+			return err
+		}
+		if severalNetworks(baseDir) {
+			fmt.Printf("Signing in to %s (this device is in several networks: --network chooses)\n\n", networkName(&agent.Config{StateDir: baseDir}, *network))
+		}
 		var showQR func(string)
 		if !*noQR && isTerminal(os.Stdout) {
 			showQR = func(link string) {
@@ -936,6 +985,12 @@ func agentCmd(ctx context.Context, args []string) error {
 			return agent.LoginViaAgent(ctx, os.Stdout, showQR)
 		}
 		return agent.Login(ctx, *cfg, os.Stdout, showQR)
+
+	case "join":
+		return joinCmd(ctx, args)
+
+	case "leave":
+		return leaveCmd(ctx, args)
 
 	case "link", "unlink":
 		fs := flag.NewFlagSet("agent "+cmd, flag.ExitOnError)
@@ -969,6 +1024,7 @@ func agentCmd(ctx context.Context, args []string) error {
 	case "approve":
 		fs := flag.NewFlagSet("agent approve", flag.ContinueOnError)
 		cfg := agentFlags(fs)
+		network := networkFlag(fs)
 		user := fs.String("user", os.Getenv("PAM_USER"), "the account to sign in to (default $PAM_USER)")
 		service := fs.String("service", os.Getenv("PAM_SERVICE"), "what is signed in to (default $PAM_SERVICE)")
 		timeout := fs.Duration("timeout", 60*time.Second, "how long to wait for the answer (10s to 2m)")
@@ -978,7 +1034,15 @@ func agentCmd(ctx context.Context, args []string) error {
 		if t := os.Getenv("PAM_TYPE"); t != "" && t != "auth" {
 			return exitCode{64, "a sign-in approval belongs in the auth stack, not " + t}
 		}
-		return agentApprove(ctx, cfg, *user, *service, *timeout)
+		baseDir := cfg.StateDir
+		if err := useNetwork(cfg, *network); err != nil {
+			return exitCode{64, err.Error()}
+		}
+		label := ""
+		if severalNetworks(baseDir) {
+			label = " (" + networkName(&agent.Config{StateDir: baseDir}, *network) + ")"
+		}
+		return agentApprove(ctx, cfg, *user, *service, *timeout, label)
 
 	case "approvals":
 		return approvalsCmd(ctx, args)
@@ -1011,8 +1075,12 @@ func agentCmd(ctx context.Context, args []string) error {
 	case "whoami":
 		fs := flag.NewFlagSet("agent whoami", flag.ExitOnError)
 		cfg := agentFlags(fs)
+		network := networkFlag(fs)
 		asJSON := fs.Bool("json", false, "print user, user_name and session_active as JSON")
 		_ = fs.Parse(args)
+		if err := useNetwork(cfg, *network); err != nil {
+			return exitCode{1, err.Error()}
+		}
 		r, running := agent.RunningAgent(cfg.StateDir)
 		var active bool
 		if !running && personChannel(cfg.StateDir) {
@@ -1043,8 +1111,12 @@ func agentCmd(ctx context.Context, args []string) error {
 	case "logout":
 		fs := flag.NewFlagSet("agent logout", flag.ExitOnError)
 		cfg := agentFlags(fs)
+		network := networkFlag(fs)
 		timeout := fs.Duration("timeout", 5*time.Second, "how long to try telling the control plane before leaving it to the agent")
 		_ = fs.Parse(args)
+		if err := useNetwork(cfg, *network); err != nil {
+			return err
+		}
 		var delivered bool
 		var err error
 		if personChannel(cfg.StateDir) {
@@ -1082,7 +1154,16 @@ func agentCmd(ctx context.Context, args []string) error {
 	case "status":
 		fs := flag.NewFlagSet("agent status", flag.ExitOnError)
 		cfg := agentFlags(fs)
+		network := networkFlag(fs)
 		_ = fs.Parse(args)
+		baseDir := cfg.StateDir
+		if err := useNetwork(cfg, *network); err != nil {
+			return err
+		}
+		several := severalNetworks(baseDir)
+		if several {
+			fmt.Printf("network:    %s\n", networkName(&agent.Config{StateDir: baseDir}, *network))
+		}
 		st, err := agent.LoadState(cfg.StateDir)
 		if err != nil && personChannel(cfg.StateDir) {
 			return personStatus(ctx)
@@ -1102,6 +1183,9 @@ func agentCmd(ctx context.Context, args []string) error {
 			fmt.Println("agent:      not running")
 		case r.LoginRequired:
 			fmt.Println("session:    ENDED - run `" + loginCommand + "` to reconnect")
+		}
+		if running && r.FilterFailed != "" {
+			fmt.Printf("WARNING:    the inbound filter could not be applied (%s): only the control nodes are peers until it can\n", r.FilterFailed)
 		}
 		if running && len(r.Routes) > 0 {
 			fmt.Printf("routes:     %s (through gateways)\n", strings.Join(r.Routes, ", "))
@@ -1175,7 +1259,12 @@ func agentCmd(ctx context.Context, args []string) error {
 		if err := w.Flush(); err != nil {
 			return err
 		}
-		return linkStatus(cfg.StateDir)
+		if several {
+			if err := networksStatus(baseDir, networkName(&agent.Config{StateDir: baseDir}, *network)); err != nil {
+				return err
+			}
+		}
+		return linkStatus(baseDir)
 	}
 	return errors.New("usage: ento agent install|uninstall|up|down|run|login|status|link|unlink [flags]")
 }
@@ -1312,6 +1401,15 @@ func adminCmd(ctx context.Context, args []string) error {
 	link := ""
 	if len(args) >= 2 && args[0] == "--link" {
 		link, args = args[1], args[2:]
+	}
+	// --network DOMAIN: administer another network the device joined (ento agent join), with its key
+	// there.
+	if len(args) >= 2 && (args[0] == "--network" || args[0] == "-network") && link == "" {
+		dir, err := agent.NetworkStateDir(stateDir, args[1])
+		if err != nil {
+			return err
+		}
+		stateDir, args = dir, args[2:]
 	}
 	cmd, rest := sub(args)
 	var c *agent.AdminClient
@@ -2228,7 +2326,7 @@ func parseHosts(s string) []api.Host {
 // agentApprove asks for a sign-in approval and waits for it: exit 0 approved, 1 denied, 2 expired,
 // 3 unavailable (anything that keeps it from being asked or answered). The number goes to stdout
 // at once, for pam_exec to show.
-func agentApprove(ctx context.Context, cfg *agent.Config, user, service string, timeout time.Duration) error {
+func agentApprove(ctx context.Context, cfg *agent.Config, user, service string, timeout time.Duration, network string) error {
 	timeout = min(max(timeout, 10*time.Second), 2*time.Minute)
 	// A control plane that does not answer within seconds will not: fall through at once rather
 	// than hold up every sudo (pam_exec waits for this step).
@@ -2238,7 +2336,7 @@ func agentApprove(ctx context.Context, cfg *agent.Config, user, service string, 
 	if err != nil {
 		return exitCode{3, "sign-in approval unavailable: " + err.Error()}
 	}
-	fmt.Printf("Approve this sign-in on your phone or other device: pick %d\n", res.Number)
+	fmt.Printf("Approve this sign-in%s on your phone or other device: pick %d\n", network, res.Number)
 	_ = os.Stdout.Sync()
 	waitCtx, cancel := context.WithTimeout(ctx, timeout+10*time.Second)
 	defer cancel()
@@ -2264,6 +2362,7 @@ func approvalsCmd(ctx context.Context, args []string) error {
 	op, rest := sub(args)
 	fs := flag.NewFlagSet("agent approvals", flag.ExitOnError)
 	cfg := agentFlags(fs)
+	network := networkFlag(fs)
 	deny := fs.Bool("deny", false, "answer: deny the sign-in")
 	wait := fs.Duration("wait", 0, "list: wait up to this long for one (at most 25s)")
 	if op != "" && op != "answer" {
@@ -2271,6 +2370,13 @@ func approvalsCmd(ctx context.Context, args []string) error {
 		op = ""
 	}
 	_ = fs.Parse(rest)
+	baseDir := cfg.StateDir
+	if err := useNetwork(cfg, *network); err != nil {
+		return err
+	}
+	if op == "" && *network == "" && severalNetworks(baseDir) {
+		return approvalsEveryNetwork(ctx, *cfg, *wait)
+	}
 	switch op {
 	case "":
 		list, err := agent.PendingApprovals(ctx, *cfg, *wait)

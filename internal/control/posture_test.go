@@ -407,7 +407,35 @@ func TestPostureChecks(t *testing.T) {
 	if code := op.do(t, "POST", api.PathPolicies, api.Policy{Source: "*", Destination: "servers"}, nil); code != http.StatusForbidden {
 		t.Fatalf("operator bypasses a policy's checks with *: HTTP %d", code)
 	}
-	if logs.countAll("action=policy_added", "z-op", fmt.Sprintf("would bypass policy %d", pol.ID), "result=denied") != 2 {
+	// Nor with the same groups written as device groups (A4; the API stores device groups with their
+	// prefix, so these are the guarded policy itself, 409, or its reverse, 403).
+	refused := 2
+	for _, alias := range []api.Policy{{Source: "device:laptops", Destination: "servers"}, {Source: "laptops", Destination: "device:servers"},
+		{Source: "device:servers", Destination: "device:laptops"}} {
+		code := op.do(t, "POST", api.PathPolicies, alias, nil)
+		if code != http.StatusForbidden && code != http.StatusConflict {
+			t.Fatalf("operator bypasses a policy's checks with %s -> %s: HTTP %d", alias.Source, alias.Destination, code)
+		}
+		if code == http.StatusForbidden {
+			refused++
+		}
+	}
+	// A guarded policy stored with plain names (`ento control allow`, networks older than 0.44): the
+	// operator's policy, stored with the prefix, still counts as the same groups (A4).
+	plain, err := st.AddPolicy(ctx, store.Policy{Source: "phones", Destination: "servers", Posture: []string{"enc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := op.do(t, "POST", api.PathPolicies, api.Policy{Source: "phones", Destination: "servers"}, nil); code != http.StatusForbidden {
+		t.Fatalf("operator bypasses a plain-named policy's checks: HTTP %d", code)
+	}
+	if logs.countAll("action=policy_added", "z-op", fmt.Sprintf("would bypass policy %d", plain.ID), "result=denied") != 1 {
+		t.Error("refused bypass of a plain-named policy not audited")
+	}
+	if err := st.DeletePolicy(ctx, plain.ID); err != nil {
+		t.Fatal(err)
+	}
+	if logs.countAll("action=policy_added", "z-op", fmt.Sprintf("would bypass policy %d", pol.ID), "result=denied") != refused {
 		t.Error("refused bypass not audited")
 	}
 	var reverse api.Policy
@@ -478,6 +506,13 @@ func TestBypasses(t *testing.T) {
 		{"laptops among themselves", pol("laptops", "laptops"), false},
 		{"laptops to servers via a wider check set", pol("laptops", "*", "enc", "fw"), false},
 		{"laptops to everyone with another check", pol("laptops", "*", "fw"), true},
+		// The same groups written the other way (A4): a plain name matches its device group.
+		{"device:laptops to servers, no checks", pol("device:laptops", "servers"), true},
+		{"laptops to device:servers, no checks", pol("laptops", "device:servers"), true},
+		{"device: both, no checks", pol("device:laptops", "device:servers"), true},
+		{"device:servers to device:laptops, no checks", pol("device:servers", "device:laptops"), true},
+		{"device:laptops to servers, the same checks", pol("device:laptops", "servers", "enc"), false},
+		{"another kind of group of that name", pol("msp:laptops", "servers"), false},
 	} {
 		if got := bypasses(c.o, guarded); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
@@ -485,6 +520,10 @@ func TestBypasses(t *testing.T) {
 	}
 	if bypasses(pol("laptops", "servers"), pol("servers", "laptops")) {
 		t.Error("a policy without checks has nothing to bypass")
+	}
+	// And a guarded policy written with device: is bypassed by its plain names.
+	if !bypasses(pol("laptops", "servers"), pol("device:laptops", "device:servers", "enc")) {
+		t.Error("plain names past checks on device: names")
 	}
 }
 

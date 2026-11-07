@@ -1106,6 +1106,27 @@ func testSSOTokens(t *testing.T, s Store) {
 		t.Fatalf("tokens left: %+v", got)
 	}
 
+	// The token key's canary: kept by the first, learnt by every later one; forgotten with the
+	// tokens, which name their devices.
+	if v, err := s.KeepSetting(ctx, SettingSSOTokenCanary, "c1"); err != nil || v != "c1" {
+		t.Fatalf("first canary: %q %v", v, err)
+	}
+	if v, _ := s.KeepSetting(ctx, SettingSSOTokenCanary, "c2"); v != "c1" {
+		t.Fatalf("a second canary replaced the first: %q", v)
+	}
+	if err := s.SetSSOToken(ctx, SSOToken{PeerID: a.ID, Subject: "u5", Encrypted: "x5", NextCheck: now}); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := s.ForgetSSOTokens(ctx); err != nil || len(ids) != 1 || ids[0] != a.ID {
+		t.Fatalf("forget: %v %v", ids, err)
+	}
+	if got, _ := s.ClaimSSOTokens(ctx, now.Add(24*time.Hour), now.Add(25*time.Hour), 10); len(got) != 0 {
+		t.Fatalf("tokens left after forgetting: %+v", got)
+	}
+	if v, _ := s.KeepSetting(ctx, SettingSSOTokenCanary, "c3"); v != "c3" {
+		t.Fatalf("the canary was not forgotten: %q", v)
+	}
+
 	// Updates conditional on the sign-in they were decided for.
 	login := now.Add(-time.Hour).Truncate(time.Microsecond)
 	if _, err := s.UpdatePeer(ctx, a.ID, PeerUpdate{LoginAt: &login}); err != nil {

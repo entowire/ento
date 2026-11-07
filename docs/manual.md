@@ -64,7 +64,8 @@ Phones and Windows take words only (0.23.3): they are people's devices, and a to
 lingers; tokens are for Linux and macOS machines that automation enrolls (servers, prepared
 images). An enrollment only takes on a device that is not enrolled yet: on an enrolled device
 `install` refuses it (0.10.1), and `install --force` forgets the old enrollment (as
-`uninstall --purge`) and enrolls anew. State: `/var/lib/ento` (Linux), `/Library/Application Support/ento`
+`uninstall --purge`) and enrolls anew; to be in another network as well, `ento agent join DOMAIN`
+(Linux, see [Several networks on one device](#several-networks-on-one-device-051-linux)). State: `/var/lib/ento` (Linux), `/Library/Application Support/ento`
 (macOS), `C:\ProgramData\ento` (Windows, SYSTEM and Administrators only). Logs: the journal (Linux,
 `journalctl -u ento-agent`), `/Library/Logs/ento-agent.log` (macOS), `C:\ProgramData\ento\agent.log`
 (Windows, since 0.32.1, `Get-Content C:\ProgramData\ento\agent.log -Tail 50` as administrator; the
@@ -569,7 +570,8 @@ the devices that would be refused now).
 A device left out of a guarded policy can still be connected by another policy, so **any other
 policy that connects the same devices without the checks makes them moot**, whoever added it: the
 same groups in the other order (`allow servers laptops` beside `allow laptops servers --posture
-enc`), or `*` on either side. Adding or changing a policy answers with a warning for each such pair
+enc`), or `*` on either side, also when written the other way (`device:laptops` for `laptops`: a
+plain name matches the device group of that name, 0.51). Adding or changing a policy answers with a warning for each such pair
 (the CLI prints it, the admin interface shows it), going by group names: a device that is in
 several groups can still be let through by a policy of another of its groups. The warning counts
 every policy as two-way and allowing every port (agents older than 0.19 enforce neither).
@@ -1250,7 +1252,13 @@ every `--oidc-refresh-interval` (2 minutes) one of them asks the provider with i
 - the user's groups changed: the person layer's groups and role follow at once, open or not
   (`sso_changed`), and leaving every approve group leaves it nothing;
 - the provider unreachable or failing: nothing changes (`sso_refresh_unavailable` when it starts,
-  every 10 minutes while it lasts and once when it is over); the idle limit still applies.
+  every 10 minutes while it lasts and once when it is over); the idle limit still applies;
+- the stored token does not open with this node's key: it is kept and tried again an hour later
+  (`sso_token_unreadable`, failed; before 0.51 it was deleted, and that person was never checked
+  again). A control node whose `ENTO_OIDC_TOKEN_KEY` does not open the network's canary (a value
+  sealed with the key of the first node that kept tokens) does not start. To change the key on
+  purpose, stop the control nodes, run `ento control sso-forget` (it forgets the tokens and the
+  canary, and signs those people out: they sign in again), then start them with the new key.
 
 The check runs while the device is bound to the person, also with their layer closed, which keeps
 the offline token alive for the next time it opens.
@@ -1341,6 +1349,56 @@ nothing: it asks the agent every 15 seconds over the same channel. A device nobo
 (a shared or new one) shows a grey icon and is not nagged. `install.ps1` starts it for the person
 who ran it, through Explorer, so it does not run elevated.
 
+## Several networks on one device (0.51, Linux)
+
+A device can be in more than one network at once, each joined with its own invitation, as equals:
+a laptop in its company's network and in a personal one, or in two companies'. The network it was
+installed with stays the first; each other one is joined with the words an administrator of that
+network reads out:
+
+    sudo ento agent join md.entowire.net        # asks for the words, like the installer
+    ento agent status                           # the first network, then every network: interface, address, state
+    sudo ento agent status --network md.entowire.net
+    sudo ento agent login --network md.entowire.net
+    sudo ento admin --network md.entowire.net peers   # where that network made the device an administrator
+    sudo ento agent leave md.entowire.net
+
+Each joined network gets an interface of its own (`ento1`, `ento2`, ...) and WireGuard port (51831
+and up, free ones) in the device's own namespace, so every program on the device reaches every
+network. It has its own key and hardware key (a TPM key of its own), rights, inbound filter
+(nftables table `ento-filter-ento1`, ...), posture reports and check-ins, person and sign-in, and
+internal DNS (its resolver on its own address; systemd-resolved sends its names to it). Its state
+is `/var/lib/ento/networks/<domain>/`. The running agent acts on `join` and `leave` without a
+restart; an agent started before 0.51 is restarted first (`sudo systemctl restart ento-agent`).
+Commands for one network take `--network DOMAIN`: `status`, `login`, `logout`, `whoami`, `approve`
+and `approvals` (and `ento admin --network DOMAIN ...`); without it they are the first network's.
+`ento agent approvals` lists every network's waiting sign-ins, each under its network's name, and a
+sign-in started for another network than the first says which. `down`, `up` and `uninstall` act on
+all of them.
+
+
+- **Ranges.** A network whose range overlaps one the device is in (the first, a joined or a linked
+  network, or a route in use) is refused before the words are asked for. Networks hosted by
+  entowire have distinct ranges; a self-hosted network on the default `100.64.0.0/16` collides with
+  another such.
+- **Routes.** A route a network offers that overlaps another network's range or a route another
+  network already uses is left out, whichever is more specific (the log says so): one network cannot
+  take another's traffic with a narrower route. The first to use a route keeps it.
+- **Names.** A network's internal domain, forwarded zones and fixed names that overlap another
+  network's record domain (the one it was joined with), or names another network already answers,
+  are left out of its resolver; a network's record domain is always its own.
+- **Forwarding.** Nothing is forwarded between the networks' interfaces, in either direction, even
+  where the device is a gateway (each network's nftables table drops it, and counts it).
+- **Exits and releases** come from the first network only: a joined network's exits are not used,
+  and its release offers are not taken. While the first network's exit is in use, the joined
+  networks' own WireGuard packets leave by the device's connection, as the first's do (marked).
+
+Leaving forgets the network on the device (its interface, filter table and state); the network
+keeps the device in its list until an administrator there deletes it. Each network learns what
+the device reports to it (host name, posture), as any network it is in does. macOS, Windows and
+the apps join one network for now (`ento agent join` says so); linked networks remain for keeping
+a network apart from the device's other programs (a namespace of its own).
+
 ## Linked networks
 
 A device can also belong to other, independent ento deployments, each in a network namespace
@@ -1368,8 +1426,9 @@ See [docs/linked-networks.md](linked-networks.md).
     ENTO_TEST_POSTGRES=postgres://... go test ./internal/store/
     ENTO_DATABASE_URL=postgres://... test/e2e-netns.sh dist/ento-linux-amd64   # root, kernel WireGuard
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-linked.sh dist/ento-linux-amd64
+    ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-networks.sh dist/ento-linux-amd64   # several networks on one device
 
-Both end-to-end tests accept `E2E_BLOCK_DIRECT=1` to force traffic through the relay.
+The first two end-to-end tests accept `E2E_BLOCK_DIRECT=1` to force traffic through the relay.
 
 ## Independence
 

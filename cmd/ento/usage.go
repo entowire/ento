@@ -12,6 +12,7 @@ const shortUsage = `ento: a private WireGuard network.
 
 This device:
   ento agent install --join DOMAIN   join a network (asks for the words an administrator reads out)
+  ento agent join DOMAIN             join another network too (Linux; leave DOMAIN forgets it)
   ento agent status                  the connection, peers and this device's checks
   ento agent login | logout          sign in or out as yourself
   ento agent up | down               turn the tunnel on or off
@@ -71,6 +72,16 @@ const usageAgent = `Agent:
                          used by default; without an argument shows the choice (Linux; Android: the app)
   ento agent approvals  sign-ins waiting for your approval on this device; approvals answer [--deny]
                          ID NUMBER answers one (the person's own devices, bound by sign-in)
+  ento agent join DOMAIN
+                         join another network besides the first, with the words an administrator
+                         there reads out (Linux): its own interface (ento1, ...), key and rights,
+                         reached by every program; status, login, logout, whoami, approve and
+                         approvals then take --network DOMAIN (default: the first network), and
+                         ento admin --network DOMAIN administers it; exits and releases stay the
+                         first network's
+  ento agent leave DOMAIN
+                         forget a network joined so (that network keeps the device until an
+                         administrator there deletes it)
   ento agent link NAME  join linked network NAME (in network namespace ento-NAME)
                          --proxy 127.0.0.1:PORT also serves an HTTP proxy into it (before NAME),
                          --proxy-ports P,P only to those ports
@@ -82,7 +93,8 @@ const usageAgent = `Agent:
 
 const usageAdmin = `Administration (from an enrolled admin or operator peer, as root or administrator: calls are signed
 with the device's key; ENTO_STATE_DIR selects the agent state, --link NAME first administers linked
-network NAME as this device's membership there; operators: ordinary devices, tokens and policies only):
+network NAME as this device's membership there, --network DOMAIN first a network joined with ento
+agent join; operators: ordinary devices, tokens and policies only):
   ento admin ui [CODE]  open the admin interface in a browser of this device: the page shows a code,
                          which this approves (typed in, or given as CODE); --no-browser
   ento admin token      create an enrollment token; --name NAME names the device it enrolls (else

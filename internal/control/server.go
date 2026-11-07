@@ -215,6 +215,11 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, errors.New("device sign-in needs a client ID, its secret, redirect URIs and a signing key")
 		}
 	}
+	if o := cfg.OIDC; o != nil && len(o.TokenKey) == 32 {
+		if err := checkTokenKey(ctx, cfg.Store, o.TokenKey); err != nil {
+			return nil, err
+		}
+	}
 	cfg.NoGateways = deviceGroups(cfg.NoGateways)
 	self, err := cfg.Store.RegisterControlNode(ctx, store.ControlNode{
 		Name: cfg.Name, PublicKey: cfg.PrivateKey.PublicKey(), Endpoint: cfg.Endpoint, LastSeen: time.Now(),

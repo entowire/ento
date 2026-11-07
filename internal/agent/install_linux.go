@@ -194,10 +194,14 @@ func Up(cfg Config) error {
 	return systemctl("enable", "--now", unitName)
 }
 
-// removeInterfaces deletes the WireGuard interfaces of the home network and of every linked
-// network. The namespaces of linked networks stay, empty, for the agent's next start.
+// removeInterfaces deletes the WireGuard interfaces of the home network, of the networks joined
+// besides it and of every linked network. The namespaces of linked networks stay, empty, for the
+// agent's next start.
 func removeInterfaces(stateDir, ifname string) error {
 	errs := []error{deleteWireGuard(netns.None(), ifname)}
+	for _, i := range memberInterfaces(stateDir) {
+		errs = append(errs, deleteWireGuard(netns.None(), i))
+	}
 	for _, name := range Links(stateDir) {
 		ns, err := netns.GetFromName(NamespaceName(name))
 		if err != nil {
@@ -286,6 +290,10 @@ func Uninstall(cfg Config, purge bool) error {
 		_ = exec.Command("systemctl", "try-reload-or-restart", "NetworkManager").Run()
 	}
 	_ = deleteWireGuard(netns.None(), cfg.Interface)
+	for _, i := range memberInterfaces(cfg.StateDir) {
+		_ = deleteWireGuard(netns.None(), i)
+		_ = applyInboundFilter(netns.None(), i, nil)
+	}
 	if purge {
 		return os.RemoveAll(cfg.StateDir)
 	}

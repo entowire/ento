@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,5 +152,41 @@ func TestCheckIns(t *testing.T) {
 	}
 	if _, code := checkIn(server, s3, "fp-rebuilt"); code != 200 || logs.count("action=reported") != before+1 {
 		t.Fatalf("a second suspicion within the hour: HTTP %d, %d lines", code, logs.count("action=reported"))
+	}
+}
+
+// A device whose inbound filter could not be applied says so at its check-ins, and the control node
+// audits it (D2): it has only its control nodes as peers meanwhile.
+func TestCheckInFilterFailed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	space, _ := ipam.New(netip.MustParsePrefix("100.64.0.0/16"))
+	st := store.NewMemory(space)
+	key, _ := wgtypes.GeneratePrivateKey()
+	port := freeUDPPort(t)
+	logs := &logLines{t: t}
+	srv, err := Start(ctx, Config{Name: "c1", PrivateKey: key, ListenPort: port, Endpoint: fmt.Sprintf("127.0.0.1:%d", port),
+		Space: space, Store: st, Logf: logs.logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	tok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true, Groups: []string{"servers"}, Name: "db1"})
+	srv.checkVersion(ctx)
+	c, _ := enroll(t, tok, "db1")
+	var res api.CheckInResponse
+	long := "nft: Error: Could not process rule: No such file or directory\x1b[2J" + strings.Repeat("x", 150)
+	if code := c.do(t, "POST", api.PathCheckIn, api.CheckInRequest{FilterFailed: long}, &res); code != http.StatusOK {
+		t.Fatalf("check-in: HTTP %d", code)
+	}
+	if logs.countAll("action=filter_failed", "db1", "Could not process rule", "only the control nodes are its peers", "result=failed") != 1 {
+		t.Fatal("a failed filter was not audited")
+	}
+	if logs.count("\x1b") != 0 {
+		t.Fatal("the device's text reached the log unfiltered")
+	}
+	if code := c.do(t, "POST", api.PathCheckIn, api.CheckInRequest{Token: res.Token}, &res); code != http.StatusOK ||
+		logs.count("action=filter_failed") != 1 {
+		t.Fatal("a check-in without a failure was audited as one")
 	}
 }

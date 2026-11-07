@@ -112,6 +112,12 @@ func (a *runner) checkIns(ctx context.Context) {
 		a.bindHardwareKey(ctx)
 		req := api.CheckInRequest{Token: readCheckInToken(dir), Fingerprint: fingerprint(ctx, a.key().PublicKey()),
 			PersonIdle: &idle, BootID: bootID()}
+		a.mu.Lock()
+		req.FilterFailed = a.filterErr
+		a.mu.Unlock()
+		if len(req.FilterFailed) > 200 {
+			req.FilterFailed = req.FilterFailed[:200]
+		}
 		a.signCheckIn(&req)
 		c := &AdminClient{Controls: a.controls(), Key: a.key(), HTTP: a.env.http}
 		var res api.CheckInResponse

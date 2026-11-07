@@ -488,3 +488,71 @@ func TestLoginRateLimit(t *testing.T) {
 		t.Fatal("a start after the interval was refused")
 	}
 }
+
+// A token this node's key does not open is kept (another node, or this one with the right key, may
+// still open it), audited, and tried again an hour later; before 0.51 it was deleted, and that
+// person was never checked again (2026-11-03 review, I8).
+func TestSSOTokenUnreadableKept(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	idp := fakeIdP(t, "alice@example.com", []string{"/staff"})
+	srv, st, logs := ssoNode(t, ctx, idp)
+	tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"laptops"}})
+	srv.checkVersion(ctx)
+	dev, res := enroll(t, tok, "laptop")
+	ssoLogin(t, dev)
+	p := peerAt(t, st, res.Address)
+
+	other := make([]byte, 32)
+	other[0] = 1
+	sealed, _ := sealToken(other, p.ID, "refresh-from-another-key")
+	if err := st.SetSSOToken(ctx, store.SSOToken{PeerID: p.ID, Subject: p.User, Encrypted: sealed, NextCheck: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	check(ctx, srv)
+	if n := logs.count("sso_token_unreadable"); n != 1 {
+		t.Fatalf("%d sso_token_unreadable lines", n)
+	}
+	// Still there, due in about an hour, and not asked about again before that.
+	due, err := st.ClaimSSOTokens(ctx, time.Now().Add(unreadableRetry+time.Minute), time.Now().Add(2*unreadableRetry), 10)
+	if err != nil || len(due) != 1 || due[0].Encrypted != sealed || time.Until(due[0].NextCheck) < unreadableRetry-time.Minute {
+		t.Fatalf("the unreadable token was not kept for later: %+v, %v", due, err)
+	}
+	if n := idp.refreshCount(); n != 0 {
+		t.Fatalf("the provider was asked %d times with a token that did not open", n)
+	}
+}
+
+// A control node whose token key differs from the network's (its canary) does not start; after
+// ForgetSSOTokens (`ento control sso-forget`), a new key is the network's.
+func TestTokenKeyCanary(t *testing.T) {
+	ctx := context.Background()
+	space, _ := ipam.New(netip.MustParsePrefix("100.64.0.0/16"))
+	st := store.NewMemory(space)
+	a, b := make([]byte, 32), make([]byte, 32)
+	b[0] = 1
+	if err := checkTokenKey(ctx, st, a); err != nil {
+		t.Fatalf("first key: %v", err)
+	}
+	if err := checkTokenKey(ctx, st, a); err != nil {
+		t.Fatalf("the same key again: %v", err)
+	}
+	if err := checkTokenKey(ctx, st, b); err != errTokenKey {
+		t.Fatalf("another key: %v", err)
+	}
+	// Start refuses it before anything listens.
+	key, _ := wgtypes.GeneratePrivateKey()
+	port := freeUDPPort(t)
+	_, err := Start(ctx, Config{Name: "c2", PrivateKey: key, ListenPort: port, Endpoint: fmt.Sprintf("127.0.0.1:%d", port),
+		Space: space, Store: st, Logf: t.Logf, OIDC: &OIDCConfig{Issuer: "https://id.example.com", ClientID: "ento",
+			ClientSecret: "s", TokenKey: b}})
+	if err != errTokenKey {
+		t.Fatalf("Start with another key: %v", err)
+	}
+	if _, err := st.ForgetSSOTokens(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkTokenKey(ctx, st, b); err != nil {
+		t.Fatalf("the new key after forgetting: %v", err)
+	}
+}

@@ -22,6 +22,8 @@ the tunnel. One binary, `ento`, is the control node, the agent and the administr
   the tunnel.
 - **High availability**: as many control nodes as you like on one PostgreSQL database; agents fail
   over between them, and find them again through a DNS record if they all move.
+- **Several networks on one device**: a laptop in its company's network and a personal one at
+  once, each joined with its own invitation and kept apart from the others (Linux).
 - **Linked networks**: give the people of one network access to another, independent one, which
   stays in charge (Linux).
 

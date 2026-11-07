@@ -852,6 +852,10 @@ type CheckInRequest struct {
 	// its WireGuard key, Token and HWTime), from a device with a bound hardware key (0.31).
 	HWSignature string `json:"hw_signature,omitempty"`
 	HWTime      int64  `json:"hw_time,omitempty"`
+	// FilterFailed says why the device's inbound filter could not be applied (0.51; up to 200
+	// characters): until it can, its only peers are its control nodes, which audit it
+	// (filter_failed) at each check-in.
+	FilterFailed string `json:"filter_failed,omitempty"`
 }
 
 // HWKeyRequest binds a device's hardware-held key (0.31): its public key (PKIX DER, base64) and

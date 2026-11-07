@@ -592,6 +592,10 @@ type UISession struct {
 // belongs to; NextCheck when it is due. Previous, when set, makes SetSSOToken conditional: the token
 // is replaced only if the stored one is still Previous (else ErrChanged), so that a check that took
 // a while cannot overwrite the token of a sign-in that happened meanwhile.
+// SettingSSOTokenCanary is the setting that holds a value sealed with the control nodes' token key:
+// a control node whose key does not open it refuses to start (it could read none of the tokens).
+const SettingSSOTokenCanary = "sso_token_canary"
+
 type SSOToken struct {
 	PeerID    int64
 	Subject   string
@@ -812,6 +816,12 @@ type Store interface {
 	// DeleteSSOToken forgets the device's token; with a token other than "", only if it is still that
 	// one (else ErrChanged).
 	DeleteSSOToken(ctx context.Context, peerID int64, token string) error
+	// ForgetSSOTokens forgets every device's token, and the token key's canary
+	// (SettingSSOTokenCanary), and returns the devices whose tokens they were.
+	ForgetSSOTokens(ctx context.Context) ([]int64, error)
+	// KeepSetting stores value under key unless the key has one, and returns the stored value: the
+	// first control node to ask sets it, every later one learns it.
+	KeepSetting(ctx context.Context, key, value string) (string, error)
 
 	// Sessions of the admin interface. CreateUISession fails with ErrExists when the hash, or the
 	// code among the device's pending sessions, is taken. UISession returns an unexpired session;
