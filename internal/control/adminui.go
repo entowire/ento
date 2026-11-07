@@ -139,7 +139,7 @@ func (s *Server) dispatch443(ctx context.Context, c net.Conn, idpTargets []strin
 			c.Close()
 		}
 	case len(targets) > 0:
-		s.passThrough(ctx, replay, targets, "forward_connection", name, name)
+		s.passThrough(ctx, replay, targets, "forward_connection", name, name, s.cfg.ForwardPeople[strings.ToLower(name)])
 	case len(idpTargets) > 0:
 		s.forwardIdentity(ctx, replay, idpTargets)
 	default:
@@ -307,6 +307,19 @@ func (s *Server) adminUIHandler() http.Handler {
 				return
 			}
 		}
+		if r.URL.Path == uiSignInPath || r.URL.Path == uiCallbackPath {
+			h.Set("Cache-Control", "no-store")
+			if r.Method != http.MethodGet {
+				writeErr(w, http.StatusMethodNotAllowed, "GET")
+				return
+			}
+			if r.URL.Path == uiSignInPath {
+				s.uiSignIn(w, r, device)
+			} else {
+				s.uiCallback(w, r, device)
+			}
+			return
+		}
 		if r.URL.Path == "/ui/session" {
 			h.Set("Cache-Control", "no-store")
 			switch r.Method {
@@ -323,11 +336,12 @@ func (s *Server) adminUIHandler() http.Handler {
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/") {
 			h.Set("Cache-Control", "no-store")
-			if !s.uiSession(r, device) {
+			u, ok := s.uiSession(r, device)
+			if !ok {
 				writeErr(w, http.StatusUnauthorized, "no session: approve this page from this device (ento admin ui CODE)")
 				return
 			}
-			routes.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), uiSessionKey{}, device.ID)))
+			routes.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), uiSessionKey{}, uiCaller{device: device.ID, person: u.Person})))
 			return
 		}
 		// Browsers ask again every time (an open page from an older control plane kept its old
@@ -423,6 +437,10 @@ type uiState struct {
 	State     string `json:"state"` // "none", "pending" (show Code until ExpiresAt), "open"
 	Code      string `json:"code,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"`
+	// SignIn: the page can also open its session by signing in (/ui/signin, 0.49); Person, who is
+	// signed in on the device in ento (the one who may).
+	SignIn bool   `json:"sign_in,omitempty"`
+	Person string `json:"person,omitempty"`
 }
 
 // uiCurrent returns the session the request's cookie names, if it is this device's and alive.
@@ -433,6 +451,10 @@ func (s *Server) uiCurrent(r *http.Request, device store.Peer, now time.Time) (s
 	}
 	u, err := s.cfg.Store.UISession(r.Context(), uiHash(c.Value), now)
 	if err != nil || u.PeerID != device.ID || (u.Approved && now.Sub(u.LastUsed) > uiSessionIdle) {
+		return store.UISession{}, false
+	}
+	// Opened by signing in: it lasts only while that person is signed in on the device in ento.
+	if u.Person != "" && !personSignedIn(device, u.Person) {
 		return store.UISession{}, false
 	}
 	return u, true
@@ -451,7 +473,7 @@ func uiStateOf(u store.UISession) uiState {
 func (s *Server) uiPair(w http.ResponseWriter, r *http.Request, device store.Peer) {
 	now := time.Now()
 	if u, ok := s.uiCurrent(r, device, now); ok {
-		writeJSON(w, http.StatusOK, uiStateOf(u))
+		writeJSON(w, http.StatusOK, s.withSignIn(uiStateOf(u), device))
 		return
 	}
 	if n, err := s.cfg.Store.PendingUISessions(r.Context(), device.ID, now); err != nil {
@@ -483,7 +505,7 @@ func (s *Server) uiPair(w http.ResponseWriter, r *http.Request, device store.Pee
 	// A browser session cookie: gone when the browser closes, never readable by scripts.
 	http.SetCookie(w, &http.Cookie{Name: uiCookie, Value: secret, Path: "/", Secure: true, HttpOnly: true,
 		SameSite: http.SameSiteStrictMode})
-	writeJSON(w, http.StatusOK, uiStateOf(u))
+	writeJSON(w, http.StatusOK, s.withSignIn(uiStateOf(u), device))
 }
 
 // browserName keeps a User-Agent to printable ASCII, short enough for a terminal line.
@@ -504,10 +526,10 @@ func browserName(ua string) string {
 func (s *Server) uiSessionState(w http.ResponseWriter, r *http.Request, device store.Peer) {
 	u, ok := s.uiCurrent(r, device, time.Now())
 	if !ok {
-		writeJSON(w, http.StatusOK, uiState{State: "none"})
+		writeJSON(w, http.StatusOK, s.withSignIn(uiState{State: "none"}, device))
 		return
 	}
-	writeJSON(w, http.StatusOK, uiStateOf(u))
+	writeJSON(w, http.StatusOK, s.withSignIn(uiStateOf(u), device))
 }
 
 // uiSignOut ends the session.
@@ -527,18 +549,18 @@ func (s *Server) uiSignOut(w http.ResponseWriter, r *http.Request, device store.
 // uiSession reports whether the request carries an open session of the device it comes from, and
 // records its use (at most once a minute: the idle limit counts from there). The page's own
 // periodic refresh (uiAutoHeader) is not use: an open tab nobody looks at still goes idle.
-func (s *Server) uiSession(r *http.Request, device store.Peer) bool {
+func (s *Server) uiSession(r *http.Request, device store.Peer) (store.UISession, bool) {
 	now := time.Now()
 	u, ok := s.uiCurrent(r, device, now)
 	if !ok || !u.Approved {
-		return false
+		return u, false
 	}
 	if r.Header.Get(uiAutoHeader) == "" && now.Sub(u.LastUsed) > time.Minute {
 		if err := s.cfg.Store.TouchUISession(r.Context(), u.Hash, now); err != nil {
 			s.cfg.Logf("admin interface session: %v", err)
 		}
 	}
-	return true
+	return u, true
 }
 
 // handleAdminUI (signed): the admin interface's address, for the command line and the apps to open.

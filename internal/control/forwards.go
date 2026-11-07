@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 
 	"entowire.com/ento/internal/api"
+	"entowire.com/ento/internal/store"
 )
 
 // ParseLinkForwards parses --link-forwards: comma-separated entries NAME:PORT=TARGET[+TARGET...],
@@ -101,4 +103,57 @@ func ParseForwards(s string) (map[string][]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// Roles a forwarded service can ask of the person signed in on the device (--forward-people).
+var forwardRoles = []string{"admin", "operator", "viewer"}
+
+// ParseForwardPeople reads --forward-people: comma-separated NAME=ROLE[+ROLE...], forwarded services
+// (names of forwards) that only devices with a person signed in in one of those roles reach: admin,
+// operator or viewer, the person's own role (their people groups), never the device's.
+func ParseForwardPeople(s string, forwards map[string][]string) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		name, list, ok := strings.Cut(entry, "=")
+		name = strings.ToLower(strings.TrimSpace(name))
+		if !ok || name == "" || strings.TrimSpace(list) == "" {
+			return nil, fmt.Errorf("--forward-people %q: want NAME=ROLE[+ROLE...]", entry)
+		}
+		if _, fwd := forwards[name]; !fwd {
+			return nil, fmt.Errorf("--forward-people %q: %s is not forwarded (--forward)", entry, name)
+		}
+		if _, dup := out[name]; dup {
+			return nil, fmt.Errorf("--forward-people: %s twice", name)
+		}
+		for _, r := range strings.Split(list, "+") {
+			r = strings.ToLower(strings.TrimSpace(r))
+			if !slices.Contains(forwardRoles, r) {
+				return nil, fmt.Errorf("--forward-people %q: %q is not admin, operator or viewer", entry, r)
+			}
+			out[name] = append(out[name], r)
+		}
+	}
+	return out, nil
+}
+
+// personIn reports whether a person signed in on p (their session open now) has one of roles,
+// by their own groups: what the device may do by itself does not count.
+func (s *Server) personIn(p store.Peer, roles []string) bool {
+	pl := p.Person
+	if p.ID == 0 || p.User == "" || !pl.Active || !pl.Approved || p.Suspended || isolated(p) {
+		return false
+	}
+	for _, r := range roles {
+		switch {
+		case r == "admin" && pl.Admin,
+			r == "operator" && pl.Operator,
+			r == "viewer" && intersects(pl.Groups, s.viewerGroups()):
+			return true
+		}
+	}
+	return false
 }

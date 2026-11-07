@@ -100,6 +100,10 @@ type Config struct {
 	// an installer the device fetches before anything else (0.33). Same rules as the identity
 	// provider's forward: enrolled, not suspended devices; audited per connection (forward_connection).
 	Forwards map[string][]string
+	// ForwardPeople limits forwarded services (name → roles: admin, operator, viewer) to devices with a
+	// person signed in in one of those roles, by their own groups (0.48): checked when a connection
+	// opens and every forwardRecheck while it lasts, so it ends soon after their session does.
+	ForwardPeople map[string][]string
 	// SignIn, if set, makes the control nodes a sign-in provider for the person of the calling device
 	// (signin.go), at https://<AdminUI>/device; it needs AdminUI.
 	SignIn *SignInConfig

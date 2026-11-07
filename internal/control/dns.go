@@ -124,9 +124,15 @@ func (s *Server) dnsConfig(ctx context.Context, nm api.NetMap) (*api.DNSConfig, 
 	}
 	reach := dnsReachable(nm, s.cfg.Space.Prefix, routes)
 	out := &api.DNSConfig{Domain: s.cfg.DNSDomain, Fixed: fixed}
+	// An administrator's record wins over a device's name (A2): a device renamed to it never takes
+	// the name over.
+	recorded := map[string]bool{}
+	for _, r := range records {
+		recorded[r.Name] = true
+	}
 	devices := map[string]bool{}
 	device := func(name, addr string) {
-		if name != "" && !devices[name] {
+		if name != "" && !devices[name] && !recorded[name] {
 			devices[name] = true
 			out.Records = append(out.Records, api.Host{Name: name, Address: addr})
 		}
@@ -136,7 +142,7 @@ func (s *Server) dnsConfig(ctx context.Context, nm api.NetMap) (*api.DNSConfig, 
 		device(p.Hostname, p.Address)
 	}
 	for _, r := range records {
-		if !devices[r.Name] && reach(r.Address) {
+		if reach(r.Address) {
 			out.Records = append(out.Records, api.Host{Name: r.Name, Address: r.Address.String()})
 		}
 	}
@@ -229,7 +235,7 @@ func (s *Server) handleListDNS(w http.ResponseWriter, r *http.Request, _ store.P
 	for _, rec := range records {
 		a := api.DNSRecord{Name: rec.Name, Address: rec.Address.String(), CreatedAt: stamp(rec.CreatedAt), CreatedBy: rec.CreatedBy}
 		if slices.ContainsFunc(peers, func(p store.Peer) bool { return p.Hostname == rec.Name }) {
-			a.Warnings = []string{"a device has this name: it answers for it"}
+			a.Warnings = []string{"a device has this name: this record answers for it, not the device"}
 		}
 		out.Records = append(out.Records, a)
 	}

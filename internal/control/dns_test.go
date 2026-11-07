@@ -29,7 +29,7 @@ func TestDNS(t *testing.T) {
 		return c, p
 	}
 	_, gp := device("office-gw", "gateways")
-	staff, sp := device("laptop-1", "staff")
+	staff, _ := device("laptop-1", "staff")
 	other, op := device("laptop-2", "guests")
 	netmap := func(c *testClient) api.NetMap {
 		var nm api.NetMap
@@ -106,7 +106,8 @@ func TestDNS(t *testing.T) {
 		t.Fatalf("the staff laptop's DNS: %+v", nm.DNS)
 	}
 	got := names(nm.DNS)
-	want := map[string]string{"laptop-1": sp.Address.String(), "office-gw": gp.Address.String(), "nas.office": "192.168.10.5", "web": "203.0.113.10"}
+	// The record named like a device answers for the name (0.50, A2: before, the device did).
+	want := map[string]string{"laptop-1": "192.168.10.9", "office-gw": gp.Address.String(), "nas.office": "192.168.10.5", "web": "203.0.113.10"}
 	for n, a := range want {
 		if got[n] != a {
 			t.Errorf("staff: %s is %q, want %q (%v)", n, got[n], a, got)

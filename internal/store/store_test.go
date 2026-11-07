@@ -82,6 +82,7 @@ func TestStore(t *testing.T) {
 			t.Run("memberships", func(t *testing.T) { testMemberships(t, open(t)) })
 			t.Run("link keys", func(t *testing.T) { testLinkKeys(t, open(t)) })
 			t.Run("admin interface", func(t *testing.T) { testUISessions(t, open(t)) })
+			t.Run("isolation", func(t *testing.T) { testIsolation(t, open(t)) })
 			t.Run("device sign-in", func(t *testing.T) { testSignIn(t, open(t)) })
 			t.Run("sso tokens", func(t *testing.T) { testSSOTokens(t, open(t)) })
 			t.Run("posture", func(t *testing.T) { testPosture(t, open(t)) })
@@ -961,6 +962,17 @@ func testUISessions(t *testing.T, s Store) {
 	if err := s.CreateUISession(ctx, pending("h1", "AAAA-BBBB", p.ID, now.Add(5*time.Minute))); err != nil {
 		t.Fatal(err)
 	}
+	// A session opened by signing in (0.49): approved at once, with its person.
+	signed := UISession{Hash: "hs", PeerID: p.ID, Browser: "test", Approved: true, CreatedAt: now, ExpiresAt: now.Add(time.Hour), LastUsed: now, Person: "sub-1"}
+	if err := s.CreateUISession(ctx, signed); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := s.UISession(ctx, "hs", now); err != nil || !u.Approved || u.Person != "sub-1" {
+		t.Fatalf("signed-in session: %+v %v", u, err)
+	}
+	if err := s.DeleteUISession(ctx, "hs"); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CreateUISession(ctx, pending("h1", "CCCC-DDDD", p.ID, now.Add(5*time.Minute))); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate hash: %v", err)
 	}
@@ -1624,5 +1636,34 @@ func TestUpdatePolicy(t *testing.T) {
 				t.Fatalf("the first offer must win: %v", at)
 			}
 		})
+	}
+}
+
+// An isolated device has no rights, whoever is signed in on it (constitution 4.3, A3): not approved,
+// no role, none of its person's groups; isolating it ends the person's session there.
+func testIsolation(t *testing.T, s Store) {
+	ctx := context.Background()
+	p := enrolled(t, s, "laptop")
+	on, sub := true, "sub-1"
+	p, err := s.UpdatePeer(ctx, p.ID, PeerUpdate{User: &sub, PersonActive: &on, PersonApproved: &on, PersonAdmin: &on,
+		PersonGroups: &[]string{"admins"}})
+	if err != nil || !p.Admin || !p.Approved {
+		t.Fatalf("an admin person signed in: %+v %v", p, err)
+	}
+	// Isolated with the person signed in (an old row, or the layer opened again afterwards).
+	off := false
+	if p, err = s.UpdatePeer(ctx, p.ID, PeerUpdate{Groups: &[]string{"device:isolated"}, Approved: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if p.Person.Active {
+		t.Fatal("isolating the device left its person's session open")
+	}
+	if p, err = s.UpdatePeer(ctx, p.ID, PeerUpdate{PersonActive: &on}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []Peer{p, func() Peer { q, _ := s.PeerByAddress(ctx, p.Address); return q }()} {
+		if q.Approved || q.Admin || q.Operator || slices.Contains(q.Groups, "admins") {
+			t.Fatalf("isolated with an admin person: approved %v admin %v operator %v groups %v", q.Approved, q.Admin, q.Operator, q.Groups)
+		}
 	}
 }

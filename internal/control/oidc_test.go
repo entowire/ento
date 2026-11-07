@@ -2,12 +2,16 @@ package control
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,6 +44,58 @@ type fakeProvider struct {
 	valid       map[string]bool
 	next        int
 	refreshes   int
+	challenge   string // PKCE, of the last browser sign-in
+	key         ed25519.PrivateKey
+	nonce       string // of the last browser sign-in, put into its ID token
+	fresh       bool   // the last browser sign-in asked for a new sign-in (prompt=login, max_age=0)
+	// token: how ID tokens are made: "" signed and valid; "forged" (another key), "expired",
+	// "otheraud" (another client), "unsigned" (alg none).
+	token string
+}
+
+func (f *fakeProvider) setToken(mode string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.token = mode
+}
+
+// codeTokens answers a browser sign-in: its nonce, and auth_time now when it asked for a fresh
+// sign-in, else an hour ago (the provider's open session). "stale" leaves the session's time. Locked.
+func (f *fakeProvider) codeTokens(w http.ResponseWriter) {
+	auth := time.Now().Add(-time.Hour).Unix()
+	if f.fresh && f.token != "stale" {
+		auth = time.Now().Unix()
+	}
+	c := map[string]any{"iss": f.URL, "sub": "user-42", "aud": "ento", "email": f.email, "groups": f.groups,
+		"nonce": f.nonce, "auth_time": auth}
+	if f.token == "othernonce" {
+		c["nonce"] = "another"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at", "token_type": "Bearer", "id_token": f.idToken(c)})
+}
+
+// idToken signs claims as the provider does (EdDSA, its published key), or as mode says. Locked.
+func (f *fakeProvider) idToken(c map[string]any) string {
+	now := time.Now().Unix()
+	c["iat"], c["exp"] = now, now+300
+	alg, key := "EdDSA", f.key
+	switch f.token {
+	case "expired":
+		c["iat"], c["exp"] = now-3600, now-1800
+	case "otheraud":
+		c["aud"] = "someone-else"
+	case "forged":
+		_, key, _ = ed25519.GenerateKey(nil)
+	case "unsigned":
+		alg = "none"
+	}
+	h, _ := json.Marshal(map[string]string{"alg": alg, "kid": "k1"})
+	b, _ := json.Marshal(c)
+	signed := base64.RawURLEncoding.EncodeToString(h) + "." + base64.RawURLEncoding.EncodeToString(b)
+	if alg == "none" {
+		return signed + "."
+	}
+	return signed + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(signed)))
 }
 
 func (f *fakeProvider) set(mode string, groups []string) {
@@ -81,21 +137,34 @@ func (f *fakeProvider) tokens(w http.ResponseWriter, withID bool) {
 		if f.mode == "nogroups" {
 			delete(c, "groups")
 		}
-		claims, _ := json.Marshal(c)
-		out["id_token"] = "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".sig"
+		out["id_token"] = f.idToken(c)
 	}
 	_ = json.NewEncoder(w).Encode(out)
 }
 
 func fakeIdP(t *testing.T, email string, groups []string) *fakeProvider {
 	var polls atomic.Int32
-	f := &fakeProvider{email: email, groups: groups, mode: "ok", valid: map[string]bool{}}
+	_, key, _ := ed25519.GenerateKey(nil)
+	f := &fakeProvider{email: email, groups: groups, mode: "ok", valid: map[string]bool{}, key: key}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "OKP", "crv": "Ed25519", "kid": "k1",
+			"alg": "EdDSA", "use": "sig", "x": base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))}}})
+	})
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"issuer": f.URL, "token_endpoint": f.URL + "/token", "device_authorization_endpoint": f.URL + "/device",
+			"authorization_endpoint": f.URL + "/authorize", "jwks_uri": f.URL + "/jwks",
 			"scopes_supported": f.scopesSupported(),
 		})
+	})
+	// The browser sign-in (authorization code with PKCE): the person is signed in at once.
+	mux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		f.mu.Lock()
+		f.challenge, f.nonce, f.fresh = q.Get("code_challenge"), q.Get("nonce"), q.Get("prompt") == "login" && q.Get("max_age") == "0"
+		f.mu.Unlock()
+		http.Redirect(w, r, q.Get("redirect_uri")+"?code=code-1&state="+url.QueryEscape(q.Get("state")), http.StatusFound)
 	})
 	mux.HandleFunc("/device", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -126,6 +195,16 @@ func fakeIdP(t *testing.T, email string, groups []string) *fakeProvider {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if r.Form.Get("grant_type") == "authorization_code" {
+			sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
+			if r.Form.Get("client_secret") != "s3cret" || r.Form.Get("code") != "code-1" ||
+				base64.RawURLEncoding.EncodeToString(sum[:]) != f.challenge {
+				refused("bad code or verifier")
+				return
+			}
+			f.codeTokens(w)
+			return
+		}
 		if r.Form.Get("grant_type") == "refresh_token" {
 			if r.Form.Get("client_secret") != "s3cret" {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -222,7 +301,8 @@ func TestSSOLogin(t *testing.T) {
 			if code := dev.do(t, "POST", api.PathLogin, nil, &start); code != 200 {
 				t.Fatalf("login start: HTTP %d", code)
 			}
-			if start.UserCode != "ABCD-EFGH" || start.VerificationURIComplete == "" {
+			// The bare address and the code, never the link with the code in it (I3).
+			if start.UserCode != "ABCD-EFGH" || start.VerificationURI == "" || start.VerificationURIComplete != "" {
 				t.Fatalf("unexpected login start %+v", start)
 			}
 			deadline := time.Now().Add(20 * time.Second)
@@ -247,5 +327,54 @@ func TestSSOLogin(t *testing.T) {
 				t.Fatalf("peer not bound to the user: %+v", peer)
 			}
 		})
+	}
+}
+
+// ID tokens are verified against the provider's keys (I2): forged, unsigned, expired and other
+// clients' tokens give nothing, at login, at refresh and at the dashboard's sign-in.
+func TestIDTokenVerification(t *testing.T) {
+	idp := fakeIdP(t, "alice@example.com", []string{"staff"})
+	o := newOIDCProvider(OIDCConfig{Issuer: idp.URL, ClientID: "ento", ClientSecret: "s3cret"})
+	ctx := context.Background()
+	claims := func() map[string]any {
+		return map[string]any{"iss": idp.URL, "sub": "user-42", "aud": "ento", "email": "alice@example.com", "nonce": "n1"}
+	}
+	idp.mu.Lock()
+	good := idp.idToken(claims())
+	idp.mu.Unlock()
+	if c, err := o.verifyIDToken(ctx, good, "n1"); err != nil || c.Subject != "user-42" {
+		t.Fatalf("a valid token: %+v %v", c, err)
+	}
+	if _, err := o.verifyIDToken(ctx, good, "n2"); err == nil {
+		t.Error("another sign-in's nonce: accepted")
+	}
+	for _, mode := range []string{"forged", "expired", "otheraud", "unsigned"} {
+		idp.setToken(mode)
+		idp.mu.Lock()
+		bad := idp.idToken(claims())
+		idp.mu.Unlock()
+		if _, err := o.verifyIDToken(ctx, bad, ""); err == nil {
+			t.Errorf("%s token: accepted", mode)
+		}
+	}
+	other := claims()
+	other["iss"] = "https://elsewhere.example"
+	idp.setToken("")
+	idp.mu.Lock()
+	bad := idp.idToken(other)
+	idp.mu.Unlock()
+	if _, err := o.verifyIDToken(ctx, bad, ""); err == nil {
+		t.Error("another issuer's token: accepted")
+	}
+
+	// A refresh answered with a forged token changes nothing: an ordinary error, not a withdrawal.
+	idp.setToken("forged")
+	idp.mu.Lock()
+	idp.valid["rt-x"] = true
+	idp.mu.Unlock()
+	c, _, err := o.refresh(ctx, "rt-x")
+	var w *withdrawnError
+	if err == nil || c != nil || errors.As(err, &w) {
+		t.Fatalf("refresh with a forged token: %v %v", c, err)
 	}
 }

@@ -81,6 +81,7 @@ type LoginFlow struct {
 	Link     string
 	UserCode string
 	c        *AdminClient
+	stateDir string
 	deadline time.Time
 }
 
@@ -102,11 +103,12 @@ func StartLogin(ctx context.Context, cfg Config) (*LoginFlow, error) {
 	if err := c.Do(ctx, "POST", api.PathLogin, nil, &start); err != nil {
 		return nil, err
 	}
-	link := start.VerificationURIComplete
+	// The bare address, never a link with the code in it (an older control node still sends one).
+	link := start.VerificationURI
 	if link == "" {
-		link = start.VerificationURI
+		link = start.VerificationURIComplete
 	}
-	return &LoginFlow{Link: link, UserCode: start.UserCode, c: c,
+	return &LoginFlow{Link: link, UserCode: start.UserCode, c: c, stateDir: cfg.StateDir,
 		deadline: time.Now().Add(time.Duration(start.ExpiresIn) * time.Second)}, nil
 }
 
@@ -120,6 +122,7 @@ func (f *LoginFlow) Wait(ctx context.Context, tick func(ok bool)) (LoginResult, 
 		}
 		var s api.LoginStatus
 		if err := f.c.Do(ctx, "GET", api.PathLogin, nil, &s); err != nil {
+			f.refreshKey()
 			if tick != nil {
 				tick(false)
 			}
@@ -138,6 +141,18 @@ func (f *LoginFlow) Wait(ctx context.Context, tick func(ok bool)) (LoginResult, 
 	return LoginResult{}, fmt.Errorf("login expired")
 }
 
+// refreshKey takes the device's key and control nodes from its state again: the agent changes its
+// key daily, and a sign-in that spans the change would otherwise sign every poll with the old key,
+// be refused, and wait until it expired although the person had signed in.
+func (f *LoginFlow) refreshKey() {
+	if f.stateDir == "" {
+		return
+	}
+	if st, err := LoadState(f.stateDir); err == nil && st.PrivateKey != (Key{}) {
+		f.c.Key, f.c.Controls = wgtypes.Key(st.PrivateKey), st.Controls
+	}
+}
+
 // Login starts an SSO device login and waits until the user has completed it in a browser. showQR,
 // if set, draws the link for a phone to scan, so the sign-in can be finished on another device (one
 // that has the person's security key or passkey); it is called only with a safe link.
@@ -151,9 +166,9 @@ func Login(ctx context.Context, cfg Config, out io.Writer, showQR func(link stri
 	case !SafeLink(f.Link):
 		fmt.Fprintf(out, "The control node sent a sign-in link that is not a plain https link; it was not opened:\n\n    %s\n\nCode: %s", link, code)
 	case openBrowser(f.Link):
-		fmt.Fprintf(out, "Sign in in the browser window that just opened (or open this link):\n\n    %s\n\nCode: %s", link, code)
+		fmt.Fprintf(out, "In the browser window that just opened (or at this link), type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
 	default:
-		fmt.Fprintf(out, "Open this link in a browser and sign in:\n\n    %s\n\nCode: %s", link, code)
+		fmt.Fprintf(out, "Open this link in a browser, type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
 	}
 	if showQR != nil && SafeLink(f.Link) {
 		showQR(f.Link)

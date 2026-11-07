@@ -177,7 +177,21 @@ func (a *runner) selfUpdate(ctx context.Context, ctl api.Control, v string) erro
 		return err
 	}
 	next := exe + ".new"
-	if err := os.WriteFile(next, bin, 0o755); err != nil {
+	// A new file, never one that is there already (a link someone left would be followed).
+	_ = os.Remove(next)
+	nf, err := os.OpenFile(next, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	if err == nil {
+		_, err = nf.Write(bin)
+		if cerr := nf.Close(); err == nil {
+			err = cerr
+		}
+	}
+	if err != nil {
+		os.Remove(next)
+		if errors.Is(err, syscall.EROFS) {
+			// A unit of ento older than 0.50 keeps the binary's directory read-only.
+			return fmt.Errorf("write %s: %w (update once by hand: sudo ento agent install with the new release, which also updates the service)", next, err)
+		}
 		return fmt.Errorf("write %s: %w", next, err)
 	}
 	if err := os.Chmod(next, 0o755); err != nil { // whatever the umask

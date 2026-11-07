@@ -3,7 +3,7 @@
 Everything ento does and how to run it: installing agents, running control nodes, enrolling devices,
 policies, routes, exits, DNS, device posture, the admin web interface, single sign-on, operators and
 linked networks. The overview is the [README](../README.md); the architecture and security model,
-[design.md](design.md).
+"Not yet" lists where ento does not follow it yet).
 
 ## Install
 
@@ -50,7 +50,12 @@ checks it with the keys built into the installed binary, never with keys fetched
 never takes an older version as an update (`internal/update`; `ento update keys` prints the keys'
 fingerprints). From 0.37 on, control nodes with `--updates-dir` offer their own release to the
 network's devices (`ento admin updates`), and Linux and macOS agents install it themselves, checked
-the same way, with a rollback if it does not come up. It then installs `/usr/local/bin/ento` (Windows: `C:\Program Files\ento`, with
+the same way, with a rollback if it does not come up. On Linux that takes the service of 0.50 or
+later: `ento agent install` keeps the binary in `/usr/local/lib/ento/` (root's alone, which the
+service may write) with `/usr/local/bin/ento` a link to it; older services kept it read-only, so
+their agents could never update themselves. A device installed before 0.50 updates once by hand
+(the installer below, or `sudo ento agent install` from the new release), which also updates its
+service. It then installs `/usr/local/bin/ento` (Windows: `C:\Program Files\ento`, with
 `wintun.dll` and `ento-tray.exe`, see [Signing in on Windows](#signing-in-on-windows)). With `ENTO_JOIN=<domain>` they also install the agent service and enroll with the
 words an administrator reads out (see Enrollment by words); `install.sh` also takes
 `ENTO_TOKEN_FILE=/path/to/token`. Then `ento agent install --join <domain>` or, Linux and macOS
@@ -156,13 +161,16 @@ only accepts updates signed with the same key. The published APK's certificate S
 
 ## Build and release
 
-    scripts/build.sh linux/amd64 linux/arm64 darwin/arm64 windows/amd64   # dist/, static and reproducible
+    scripts/build.sh linux/amd64 linux/arm64 darwin/arm64 windows/amd64   # dist/, static, with the pinned toolchain
 
 Windows builds are zips (`ento.exe`, `wintun.dll` and Wintun's licence); the DLL is the official,
 signed build pinned by version and SHA-256 in `scripts/wintun.env`.
 
-Releases are tags `ento-vX.Y.Z` on a clean tree. The entowire repository publishes them with
-`scripts/publish-site.sh`, which builds, signs (the key never touches the disk: it is loaded into
+Releases are tags `ento-vX.Y.Z` on a clean tree, annotated and signed. The entowire repository
+publishes them with `scripts/publish-site.sh ento-vX.Y.Z`, which refuses a tag that is lightweight,
+not signed by a key it allows or not on its main branch, asks for confirmation, then builds with
+no key loaded (the APK unsigned: `ENTO_ANDROID_RELEASE=1 scripts/build-android.sh`), then loads the
+keys and signs (the APK with apksigner, its keystore only in /dev/shm), signs (the key never touches the disk: it is loaded into
 ssh-agent from SOPS; the P-256 key only in /dev/shm while signing), checks both signatures with the keys embedded in the installer, and deploys
 `https://entowire.com/releases/<version>/`. The release includes the Android APK, signed with the app
 key and, like every other file, with the release key (`.sig`) and a `.sha256`.
@@ -228,7 +236,7 @@ deployments that are set up by automation before any administrator has a device:
     ento control authority add msp --key entoa1:... --groups operators > msp.token
     ento control admin ops-laptop          # make a device an administrator (--off takes it back)
 
-Each of these (`token`, `allow`, `authority`, `admin`) logs what it changed to the system log, as the
+Each of these (`token`, `allow`, `authority`, `admin`, and `groups` and `person`) logs what it changed to the system log, as the
 control nodes log theirs (0.35): `audit: action=control_cli by="<user behind sudo> (cli)" from=local
 target="ento control ..." result=ok|failed`, so a change made around the control nodes is recorded
 too. A device refused a linked network's credential because the person who may join is no longer
@@ -239,6 +247,19 @@ signed in on this device (their session ended)"`; a device whose groups may neve
 On the administrator's machine (root):
 
     ento agent install --token-file admin.token   # enrolls, then runs as a service
+
+With an identity provider, the first administrator also needs their account there, which the
+command line makes too (0.49; Rauthy, with entowire's build for the setup link):
+
+    ENTO_PEOPLE_API_KEY='NAME$SECRET' ento control person --people-api https://id.example.com/auth/v1 \
+      [--people-connect-to HOST:PORT] --groups admins admin@example.com
+
+It prints a one-time link to set up the account's passkey (open it on the administrator's device,
+once it has joined: the provider is reached through the tunnel); then `sudo ento agent login`
+signs them in on that device, and the dashboard opens with **Sign in** (Admin web interface). Run
+again for a person who has not set up their account yet, it gives a new link (the first lapsed); for
+one who has, it refuses, so it never takes over an account. Logged like the commands above (`ento
+control person`).
 
 ## Add devices
 
@@ -481,8 +502,11 @@ the names administrators add:
 Each device resolves what it can reach: itself, the devices in its network map, and an added name
 when it reaches the address (a device it reaches, a network behind a route it reaches, or an
 address outside the network and its routes); a forwarded zone when it reaches one of its servers
-(an office DNS server takes a policy to its route that allows `udp/53`). A device name wins over an
-added name. Names under `.internal` (reserved for private use) never collide with public ones.
+(an office DNS server takes a policy to its route that allows `udp/53`). An added name wins over a
+device's name (0.50; before, the device's won, so renaming a device took the name over), and only
+admins rename a device to or from a name that an added name or a route's gateway uses, or name a
+new device so (operators get 403, audited as `peer_renamed` or `token_created`, denied); a rename
+that changes a route's gateway is audited as `route_gateway_changed`. Names under `.internal` (reserved for private use) never collide with public ones.
 
 Every agent answers them itself, on its overlay address, port 53: names in the domain from its
 network map, forwarded zones from their servers through the tunnel, the names the control nodes
@@ -740,7 +764,23 @@ the session opens when the device approves it with a call signed with its key:
     sudo ento admin ui        # opens the page in your browser, then asks for the code it shows
     sudo ento admin ui CODE   # approves a page you opened yourself
 
-(Windows: in a PowerShell run as administrator; Android: **Open the admin page**, then **Approve** with
+Where the network has an identity provider (`--oidc-issuer`), the page can also be opened by signing
+in (0.49): **Sign in as NAME** on the page goes to the provider's sign-in (authorization code with
+PKCE, the control nodes' own client, which needs the redirect address
+`https://<admin-ui>/ui/callback` and the authorization code flow besides the device flow), and the
+session opens only for the person signed in on that device in ento right now (the page names them;
+with nobody signed in there it says to sign in first), when that person is an admin, an operator or
+a viewer by their own groups, on a device that may administer; anyone else is refused (audited as
+`admin_ui_signin`, denied). The session acts with that person's rights alone, never the device's
+(0.50: before, a person without a role on an admin device administered as the device). Each time it
+asks the provider for a new sign-in (`prompt=login`, `max_age=0`), not its open session, and checks
+the ID token's signature, its nonce and that its `auth_time` is not older than the page's request;
+a provider that does not honour them is refused. It lasts as the approved one does (8 hours, 30
+minutes unused) and also ends as soon as that person is no longer signed in on the device in ento.
+A program on the device that reaches the page from its address lacks the browser's sign-in, and a
+new one takes the person's passkey.
+
+(Code approval: Windows: in a PowerShell run as administrator; Android: **Open the admin page**, then **Approve** with
 the code, in the app, for admin and operator devices; opened on an Android phone, the page shows these steps first
 and the commands for computers below them. While it waits for the approval it shows only the code.) Nothing secret goes to the browser, so a
 program on the device without its key can neither get its own page approved nor race the browser
@@ -771,7 +811,9 @@ With `--people`, the network's groups are one kind, kept in the identity provide
 named for a device, an invitation or a rule is made there too, and the **Groups** page lists the
 provider's groups with their devices and their people, adds and removes either, makes a group (empty,
 if need be) and deletes one that nothing uses (no rule, device, invitation, link or person; audited
-as `group_added` and `group_deleted`). Inviting a person preselects `users` where the network has it.
+as `group_added` and `group_deleted`), never a built-in one (`admin`, `operator`, `isolated`,
+`admins`, `operators`, `viewers`, and the groups the control nodes' flags name for roles, viewing and
+approval: 409, 0.50). Inviting a person preselects `users` where the network has it.
 
 ### Device groups and people groups (0.44)
 
@@ -803,7 +845,9 @@ A device's own groups decide whether it is in and what role it has; there is no 
 or role to set:
 
 - **isolated**: a device in it reaches nothing and nothing reaches it, whoever signs in on it (it
-  counts as not approved). A new device whose invitation names no groups lands in it; giving it groups
+  counts as not approved, with no role and none of its person's groups, and isolating a device ends
+  its person's session there: 0.50; before, a person signed in on it gave it their rights back, so
+  it could still administer, get linked networks' credentials and relay). A new device whose invitation names no groups lands in it; giving it groups
   (**Let in…** on the dashboard) lets it in, **Isolate** puts it back. `PATCH approved` does the
   same for older clients.
 - the device groups **admin** and **operator** (`--admin-groups`, `--operator-groups`) make a device
@@ -825,9 +869,17 @@ or role to set:
   for people signed in on them.
 
 Where people are managed here (`--people`), the dashboard refuses to disable, delete or take the
-admin group from the only enabled admin, or from your own account, and asks twice (a confirmation,
+admin group from the only admin who can sign in (enabled, and their account set up), or from your
+own account (known by the provider's subject), and asks twice (a confirmation,
 then the e-mail address typed) before disabling, deleting or suspending every device of a person.
 **Made by** on invitations names the person who made it, or the device when nobody was signed in.
+No admin takes another person's account over (0.50): a setup link is made only for an account with
+no way to sign in yet (no password, passkey or authenticator app; 409 otherwise), an admin's
+passkeys are removed only by an admin signed in on their device (not by a device with nobody signed
+in), nobody removes their own, and the last passkey of the only admin who can sign in stays; each
+refusal is audited (`person_setup_link`, `person_passkey_deleted`, denied). A person who lost their
+passkey: an admin removes their passkeys, then makes the setup link (an account with a password
+needs it removed at the identity provider first).
 
 ### Sign-in policies (0.46)
 
@@ -855,6 +907,11 @@ nodes act as a confidential client using the device authorization grant (RFC 862
 On an enrolled device:
 
     ento agent login        # opens the sign-in page in your browser (or prints the link and a code)
+
+The person types the code the device shows on that page (0.50): control nodes no longer pass on
+the provider's link with the code in it, and entowire's Rauthy approves at once only a code typed
+on its page; one that came in a link (anyone can send a person a link with their own device's
+code) gets a page saying a device asks to sign in as them, to accept or decline.
 
 Run with sudo from a desktop session, the agent opens the page as the user who ran sudo, in that
 user's graphical session; without one (SSH, servers) it only prints the link.
@@ -925,6 +982,20 @@ device resolves the name to the control nodes' overlay addresses itself, like th
 of 0.30.1 or later), so no DNS record is needed inside the network; one pointing there helps tools
 outside it. Several services: comma-separated entries, each name once. The service decides who may
 do what: the control nodes only keep devices that are not the network's out.
+
+A forwarded service can be kept to people instead (0.48): only devices with a person signed in on
+them in one of the given roles reach it, by the person's own people groups: admin, operator or
+viewer (`--viewer-groups`). The device's own role never counts, so an admin device with nobody
+signed in is refused like any other:
+
+    ento control run ... --forward console.example.com=10.0.0.1:8481+10.0.0.2:8481 \
+      --forward-people console.example.com=admin+operator
+
+A device without such a person gets no answer from the service, not even its certificate: the
+connection ends before TLS (audited `forward_connection`, denied, "no person signed in as ...").
+An open connection is checked every 15 seconds and ends once the person signs out, their session
+closes or their role goes (audited with "ended: the person is no longer signed in as ...").
+The roles are listed, not ranked: `operator` alone does not let admins in.
 
 ### Sign-in approvals
 
@@ -1093,7 +1164,9 @@ agent does while it has the machine.
 An operator device administers the network within limits that keep every change reversible:
 it may list everything, approve and unapprove, suspend and resume, rename and regroup devices that
 are neither admins nor operators (its own excluded), create ordinary tokens (neither admin nor
-replacing a device) and revoke tokens, and add and remove policies (except where posture checks
+replacing a device, and into no role group: an invitation into `admin`, `operator` or their
+`--admin-groups`/`--operator-groups` gives the device that role, so it is an admin's, 0.50;
+admins' are audited as `admin_token_created` or `operator_token_created`) and revoke tokens, and add and remove policies (except where posture checks
 are involved: see Device posture). Deleting devices, changing
 anyone's role (`ento admin role`), links and authorities stay with admins. Operators use the same
 commands and the same admin interface, which shows them only what they may do; refused requests
@@ -1131,7 +1204,9 @@ The person layer closes when:
   kernel and is not a new boot; a restart is;
 - the identity provider withdraws them (below), or the device is suspended.
 
-It opens again with `ento agent login`, or, within 7 days of their last full sign-in on the device,
+It opens again with `ento agent login` (which waits for the browser; a sign-in across the device's
+daily key change finishes too since 0.50: before, the command kept waiting with `?` after the person
+had signed in, the sign-in itself done), or, within 7 days of their last full sign-in on the device,
 when the person approves a sign-in to its desktop from another of their devices (an approved sign-in
 approval, service `gdm-password` by default, `--reopen-services`, asked by that device: the PAM
 step at the login screen). After 7 days the next login needs `ento agent login`. Sign-in approvals
@@ -1147,8 +1222,13 @@ last only while the person layer is open (they come from the person's groups), s
 networks ends with it. Devices without a person (servers) are not affected. Until 0.27, a device
 approved without SSO could not sign in, and a session lasted at most 12 hours (an hour unseen);
 signing in replaced the device's own groups. The ID token is
-fetched by the control node directly from the token endpoint over TLS, which OpenID Connect allows
-in place of a signature check. `--oidc-connect-to` dials a different address for the issuer (e.g. a
+fetched by the control node directly from the token endpoint over TLS, and verified all the same
+(0.50; before, TLS stood in for the check, which OpenID Connect allows, and a local process that
+took the provider's port could answer as it): its signature against the provider's published keys
+(`jwks_uri`, fetched again for a key it does not know yet), with EdDSA, ES256/384 or RS256/384/512
+only, and its issuer, audience, authorized party, expiry and issue time; at sign-in, at every
+refresh and on the dashboard. A token that fails gives nothing: the sign-in fails, and a refresh
+changes nothing (as when the provider does not answer). `--oidc-connect-to` dials a different address for the issuer (e.g. a
 private one) while TLS still verifies the issuer's name.
 
 Scopes: ento asks for `openid profile email`, the groups claim's scope where the provider lists it

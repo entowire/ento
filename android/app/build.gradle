@@ -32,7 +32,9 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.release
+            // Unsigned unless a keystore is given: releases are signed afterwards by apksigner
+            // (scripts/publish-site.sh), never inside the build.
+            signingConfig env.ENTO_ANDROID_KEYSTORE ? signingConfigs.release : null
         }
     }
 

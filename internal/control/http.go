@@ -146,18 +146,34 @@ func (s *Server) peerOnly(h peerHandler) http.HandlerFunc {
 const maxSignedBody = 64 << 10
 
 // uiSessionKey marks a request that came through a session of the admin interface (adminui.go):
-// its value is the device the session belongs to. Only that handler sets it, never the plain API.
+// its value (a uiCaller) is the device the session belongs to, and the person who opened it by
+// signing in, if they did. Only that handler sets it, never the plain API.
 type uiSessionKey struct{}
+
+type uiCaller struct {
+	device int64
+	person string // the identity provider's subject; "": opened with the device's key
+}
 
 // keyHolder admits a call only when it proves possession of the device's private key, not just its
 // address: every process on a device shares the address, but only the agent, root or an
 // administrator reads the key. The proof is a signature over the request (package reqsig), or, for
-// administration only (sessions), a session of the admin interface, which only such a signature
-// opens. Sign-in and credentials for linked networks always need the signature.
+// administration only (sessions), a session of the admin interface, which such a signature opens,
+// or the person signed in on the device by signing in on the page again; that one acts with the
+// person's rights alone. Sign-in and credentials for linked networks always need the signature.
 func (s *Server) keyHolder(sessions bool, h peerHandler) http.HandlerFunc {
 	return s.peerOnly(func(w http.ResponseWriter, r *http.Request, self store.Peer) {
-		if id, ok := r.Context().Value(uiSessionKey{}).(int64); ok {
-			if sessions && id == self.ID {
+		if c, ok := r.Context().Value(uiSessionKey{}).(uiCaller); ok {
+			if sessions && c.device == self.ID {
+				// A session the person opened by signing in acts with their rights alone, never the
+				// device's (0.50): the device's key did not approve it.
+				if c.person != "" {
+					if !personSignedIn(self, c.person) {
+						writeErr(w, http.StatusUnauthorized, "no session: sign in again")
+						return
+					}
+					self = self.PersonOnly()
+				}
 				h(w, r, self)
 				return
 			}
@@ -455,13 +471,26 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request, self 
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if !self.Admin {
+			if used, err := s.namesInUse(r.Context()); err != nil {
+				s.respondStoreErr(w, err)
+				return
+			} else if why := used[req.Name]; why != "" {
+				s.audit(r, &self, "token_created", fmt.Sprintf("name %s: %s", req.Name, why), "denied")
+				writeErr(w, http.StatusForbidden, "only admins name a new device after a route's gateway or a DNS record ("+why+")")
+				return
+			}
+		}
 	} else if req.Replace {
 		writeErr(w, http.StatusBadRequest, "replacing a device needs its name")
 		return
 	}
-	if !self.Admin && (req.Admin || req.Replace) {
-		s.audit(r, &self, "token_created", fmt.Sprintf("admin=%v replace=%v", req.Admin, req.Replace), "denied")
-		writeErr(w, http.StatusForbidden, "only admins create admin tokens or tokens that replace a device")
+	// A role group in an invitation gives the joining device that role (placeNewDevice): only
+	// admins give roles, by the flag or by the groups (constitution 4.7).
+	roles := s.roleSet(req.Groups)
+	if !self.Admin && (req.Admin || req.Replace || len(roles) > 0) {
+		s.audit(r, &self, "token_created", fmt.Sprintf("admin=%v replace=%v role groups=%s", req.Admin, req.Replace, strings.Join(roles, ",")), "denied")
+		writeErr(w, http.StatusForbidden, "only admins create tokens that give a role (admin, operator or their groups) or replace a device")
 		return
 	}
 	if req.Words && time.Duration(req.TTLSeconds)*time.Second > maxWordsTTL {
@@ -493,8 +522,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request, self 
 	}
 	s.checkVersion(r.Context()) // register the temporary peer right away
 	action := "token_created"
-	if req.Admin {
+	switch {
+	case req.Admin || intersects(roles, s.adminGroups()):
 		action = "admin_token_created"
+	case len(roles) > 0:
+		action = "operator_token_created"
 	}
 	target := fmt.Sprintf("approve=%v groups=%s ttl=%ds", req.Approve, strings.Join(req.Groups, ","), req.TTLSeconds)
 	if req.Name != "" {
@@ -755,6 +787,19 @@ func (s *Server) handleUpdatePeer(w http.ResponseWriter, r *http.Request, self s
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// A route's gateway and a DNS record are found by name: renaming a device to or from such a
+		// name moves a network's traffic or a name others use, which only admins do (A2,
+		// constitution 4.7).
+		if !self.Admin && *req.Hostname != current.Hostname {
+			if used, err := s.namesInUse(r.Context()); err != nil {
+				s.respondStoreErr(w, err)
+				return
+			} else if why := used[*req.Hostname] + used[current.Hostname]; why != "" {
+				s.audit(r, &self, "peer_renamed", fmt.Sprintf("%s to %s: %s", peerLabel(current), *req.Hostname, why), "denied")
+				writeErr(w, http.StatusForbidden, "only admins rename a device to or from a name a route or a DNS record uses ("+why+")")
+				return
+			}
+		}
 	}
 	// Approving a device takes it out of isolated; withdrawing its approval puts it there.
 	if req.Groups == nil && req.Approved != nil && current.Authority == "" {
@@ -872,6 +917,14 @@ func (s *Server) handleUpdatePeer(w http.ResponseWriter, r *http.Request, self s
 	}
 	if p.Hostname != current.Hostname {
 		s.audit(r, &self, "peer_renamed", fmt.Sprintf("%s (was %s)", peerLabel(p), current.Hostname), "ok")
+		// A route's gateway is found by name: a rename to or from one changes where its traffic goes.
+		if used, err := s.namesInUse(r.Context()); err == nil {
+			for _, n := range []string{current.Hostname, p.Hostname} {
+				if why := used[n]; strings.HasPrefix(why, "the gateway of route ") {
+					s.audit(r, &self, "route_gateway_changed", fmt.Sprintf("%s: %s renamed to %s", why, current.Hostname, p.Hostname), "ok")
+				}
+			}
+		}
 	}
 	if req.Suspended != nil {
 		action := "peer_suspended"
@@ -1209,7 +1262,8 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 			p.Approved, p.Admin, p.Operator, p.Groups)
 		// Whose device it was: a sign-in that binds a device to a person for the first time, or to
 		// another person, and makes it an admin or operator device is how a phished sign-in (someone
-		// signing in with a link another device asked for) shows; the SIEM raises it.
+		// signing in with a code another device asked for) shows: binding=new or changed in the
+		// audit, for whoever reads it (nothing raises it yet).
 		binding := "same"
 		switch {
 		case self.User == "":
@@ -1217,7 +1271,7 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 		case self.User != c.Subject:
 			binding = "changed"
 		}
-		// The format is read by the SIEM (binding=... ends the line).
+		// binding=... ends the line, for tools that read it.
 		s.audit(nil, &p, "login", fmt.Sprintf("%s approved=%v admin=%v operator=%v groups=%s binding=%s", peerLabel(p), p.Approved, p.Admin,
 			p.Operator, strings.Join(p.Groups, ","), binding), "ok")
 		s.checkVersion(ctx)

@@ -7,7 +7,9 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"entowire.com/ento/internal/store"
@@ -26,6 +28,9 @@ var (
 	idpIdle      = 10 * time.Minute
 	idpTotal     = time.Hour
 	idpPerDevice = 32
+	// forwardRecheck: how often a connection to a service limited to people (Config.ForwardPeople)
+	// checks that the person is still signed in in one of its roles.
+	forwardRecheck = 15 * time.Second
 )
 
 // The identity provider is made reachable on this node's overlay address, port 443, by passing TCP
@@ -36,13 +41,14 @@ var (
 // addresses) and suspended devices are refused: they have nothing to sign in for.
 
 func (s *Server) forwardIdentity(ctx context.Context, c net.Conn, targets []string) {
-	s.passThrough(ctx, c, targets, "idp_connection", "identity provider", "")
+	s.passThrough(ctx, c, targets, "idp_connection", "identity provider", "", nil)
 }
 
 // passThrough passes a TCP connection through to the first of targets that answers, as the
 // identity provider's forward does (who may connect, limits, one audit line per connection under
-// action, what naming the service, name the TLS server name asked for when not the provider).
-func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, action, what, name string) {
+// action, what naming the service, name the TLS server name asked for when not the provider). With
+// people, only devices whose signed-in person has one of those roles connect, and only while they do.
+func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, action, what, name string, people []string) {
 	defer c.Close()
 	via := ""
 	if name != "" {
@@ -73,6 +79,9 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 		return
 	case dev.Suspended:
 		s.audit(nil, dev, action, via+"suspended device: refused", "denied")
+		return
+	case len(people) > 0 && !s.personIn(*dev, people):
+		s.audit(nil, dev, action, via+"no person signed in as "+strings.Join(people, " or ")+": refused", "denied")
 		return
 	case !s.idpAcquire(dev.Address):
 		s.audit(nil, dev, action, via+fmt.Sprintf("more than %d connections at once: refused", idpPerDevice), "denied")
@@ -111,13 +120,45 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 	done := make(chan struct{}, 2)
 	go func() { in, _ = io.Copy(up, c); done <- struct{}{} }()
 	go func() { out, _ = io.Copy(c, up); done <- struct{}{} }()
+	var ended atomic.Bool // the person's session ended while the connection was open
+	if len(people) > 0 {
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			t := time.NewTicker(forwardRecheck)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ctx.Done():
+					return
+				case <-t.C:
+				}
+				p, err := s.cfg.Store.PeerByAddress(ctx, dev.Address)
+				if err != nil && !errors.Is(err, store.ErrNotFound) {
+					continue // the database did not answer (a failover): ask again next time
+				}
+				if err != nil || !s.personIn(p, people) {
+					ended.Store(true)
+					c.Close()
+					up.Close()
+					return
+				}
+			}
+		}()
+	}
 	<-done
 	// Closing both ends ends the other copy too; wait for it to count its bytes.
 	c.Close()
 	up.Close()
 	<-done
-	s.audit(nil, dev, action, fmt.Sprintf("%sdevice %s via %s, %s, %d bytes in, %d bytes out",
-		via, state(dev), used, time.Since(start).Round(time.Second), in, out), "ok")
+	how := ""
+	if ended.Load() {
+		how = ", ended: the person is no longer signed in as " + strings.Join(people, " or ")
+	}
+	s.audit(nil, dev, action, fmt.Sprintf("%sdevice %s via %s, %s, %d bytes in, %d bytes out%s",
+		via, state(dev), used, time.Since(start).Round(time.Second), in, out, how), "ok")
 }
 
 func (s *Server) idpAcquire(a netip.Addr) bool {

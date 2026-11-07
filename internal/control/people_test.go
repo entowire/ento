@@ -3,23 +3,27 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"entowire.com/ento/internal/ipam"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"entowire.com/ento/internal/api"
+	"entowire.com/ento/internal/store"
 )
 
 // fakeRauthy answers the calls the people API makes, as Rauthy's API does.
 type fakeRauthy struct {
-	mu       sync.Mutex
-	users    map[string]*rauthyUser
-	groups   []string
-	passkeys map[string][]string
-	calls    []string
+	mu        sync.Mutex
+	users     map[string]*rauthyUser
+	groups    []string
+	passkeys  map[string][]string
+	passwords map[string]bool
+	calls     []string
 }
 
 func (f *fakeRauthy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +108,8 @@ func (f *fakeRauthy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 5 && parts[2] == "webauthn" && parts[3] == "delete" && r.Method == "DELETE":
 		f.passkeys[parts[1]] = slices.DeleteFunc(f.passkeys[parts[1]], func(n string) bool { return n == parts[4] })
 		w.WriteHeader(http.StatusOK)
+	case len(parts) == 3 && parts[2] == "signin" && r.Method == "GET":
+		json.NewEncoder(w).Encode(map[string]any{"password": f.passwords[parts[1]], "passkeys": len(f.passkeys[parts[1]]), "totp": false})
 	case len(parts) == 3 && parts[2] == "setup_link" && r.Method == "POST":
 		json.NewEncoder(w).Encode(map[string]any{"link": "https://id.example.test/auth/v1/users/" + parts[1] + "/reset/abc?type=new_user", "expires": 1793600000})
 	default:
@@ -227,5 +233,113 @@ func TestEffectiveSignin(t *testing.T) {
 	}
 	if checkMethods(nil) == nil || checkMethods([]string{"password"}) == nil || checkMethods([]string{"passkey", "passkey"}) == nil || checkMethods([]string{"passkey"}) != nil {
 		t.Error("checkMethods")
+	}
+}
+
+// `ento control person` (a network's first administrator): made with a setup link; again while not
+// set up, a new link for the same person; once set up, refused.
+func TestInvitePerson(t *testing.T) {
+	fake := &fakeRauthy{users: map[string]*rauthyUser{
+		"u1": {ID: "u1", Email: "maria@example.test", Groups: []string{"admins"}, Enabled: true, AccountType: "passkey"},
+	}, groups: []string{"staff"}, passkeys: map[string][]string{}}
+	srv := httptest.NewTLSServer(fake)
+	defer srv.Close()
+	p := newPeople(PeopleConfig{Kind: "rauthy", API: srv.URL + "/auth/v1", Key: "ento$secret"})
+	p.client = srv.Client()
+	ctx := context.Background()
+	got, link, created, err := invitePerson(ctx, p, " ana@example.test ", []string{"admins"})
+	if err != nil || !created || got.Email != "ana@example.test" || !slices.Equal(got.Groups, []string{"admins"}) || link.Link == "" {
+		t.Fatalf("new: %+v %+v %v %v", got, link, created, err)
+	}
+	again, link, created, err := invitePerson(ctx, p, "ANA@example.test", []string{"admins"})
+	if err != nil || created || again.ID != got.ID || link.Link == "" {
+		t.Fatalf("again: %+v %+v %v %v", again, link, created, err)
+	}
+	if _, _, _, err := invitePerson(ctx, p, "maria@example.test", []string{"admins"}); err == nil || !strings.Contains(err.Error(), "set up") {
+		t.Fatalf("set up already: %v", err)
+	}
+	if _, _, _, err := invitePerson(ctx, p, "nobody", nil); err == nil {
+		t.Fatal("no address: accepted")
+	}
+}
+
+// No admin takes another person's account over (I6, constitution 4.5): a setup link only for an
+// account with no way to sign in, no admin's passkey removed from a device with nobody signed in,
+// none of one's own, and not the last one of the only admin who can sign in.
+func TestAccountTakeoverGuards(t *testing.T) {
+	fake := &fakeRauthy{
+		users: map[string]*rauthyUser{
+			"u1": {ID: "u1", Email: "maria@example.test", Groups: []string{"admins"}, Enabled: true, AccountType: "passkey"},
+			"u2": {ID: "u2", Email: "tom@example.test", Groups: []string{"admins"}, Enabled: true, AccountType: "passkey"},
+			"u3": {ID: "u3", Email: "eve@example.test", Groups: []string{"staff"}, Enabled: true, AccountType: "password"},
+			"u4": {ID: "u4", Email: "new@example.test", Groups: []string{"staff"}, Enabled: true, AccountType: "new"},
+		},
+		groups:    []string{"admins", "staff"},
+		passkeys:  map[string][]string{"u1": {"Key"}, "u2": {"A", "B"}},
+		passwords: map[string]bool{"u3": true},
+	}
+	srv := httptest.NewTLSServer(fake)
+	defer srv.Close()
+	p := newPeople(PeopleConfig{Kind: "rauthy", API: srv.URL + "/auth/v1", Key: "ento$secret"})
+	p.client = srv.Client()
+	s := &Server{cfg: Config{Logf: t.Logf}, people: p}
+	device := store.Peer{Hostname: "admin-laptop"}                                                                               // nobody signed in
+	tom := store.Peer{Hostname: "tom-laptop", User: "u2", UserName: "tom@example.test", Person: store.PersonLayer{Active: true}} // an admin signed in
+	call := func(self store.Peer, method, id, name string) int {
+		r := httptest.NewRequest(method, "/x", nil)
+		r.SetPathValue("id", id)
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		if method == "DELETE" {
+			s.handleDeletePasskey(w, r, self)
+		} else {
+			s.handlePersonSetup(w, r, self)
+		}
+		return w.Code
+	}
+	for _, c := range []struct {
+		what       string
+		self       store.Peer
+		method, id string
+		want       int
+	}{
+		{"a device alone removes an admin's passkey", device, "DELETE", "u1", http.StatusConflict},
+		{"a setup link for an account with a password", tom, "POST", "u3", http.StatusConflict},
+		{"a setup link for an account with passkeys", tom, "POST", "u1", http.StatusConflict},
+		{"an admin removes their own passkey", tom, "DELETE", "u2", http.StatusConflict},
+		{"a setup link for an account not set up", tom, "POST", "u4", http.StatusOK},
+	} {
+		if got := call(c.self, c.method, c.id, "Key"); got != c.want {
+			t.Errorf("%s: HTTP %d, want %d", c.what, got, c.want)
+		}
+	}
+	// Maria is the only admin who can sign in once Tom is disabled: her last passkey stays.
+	fake.mu.Lock()
+	fake.users["u2"].Enabled = false
+	fake.mu.Unlock()
+	if got := call(tom, "DELETE", "u1", "Key"); got != http.StatusConflict {
+		t.Errorf("the only admin's last passkey: HTTP %d, want 409", got)
+	}
+}
+
+// The built-in groups are never deleted, empty or not (A7, constitution 3.3).
+func TestBuiltinGroupsStay(t *testing.T) {
+	fake := &fakeRauthy{users: map[string]*rauthyUser{}, groups: []string{"admins", "operators", "viewers", "device:admin", "device:isolated", "lab"},
+		passkeys: map[string][]string{}}
+	srv := httptest.NewTLSServer(fake)
+	defer srv.Close()
+	p := newPeople(PeopleConfig{Kind: "rauthy", API: srv.URL + "/auth/v1", Key: "ento$secret"})
+	p.client = srv.Client()
+	space, _ := ipam.New(netip.MustParsePrefix("100.64.0.0/16"))
+	s := &Server{cfg: Config{Logf: t.Logf, Store: store.NewMemory(space)}, people: p}
+	for name, want := range map[string]int{"admins": 409, "operators": 409, "viewers": 409, "device:admin": 409,
+		"device:operator": 409, "device:isolated": 409, "lab": http.StatusNoContent} {
+		r := httptest.NewRequest("DELETE", "/x", nil)
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		s.handleDeleteGroup(w, r, store.Peer{Hostname: "admin"})
+		if w.Code != want {
+			t.Errorf("delete %s: HTTP %d, want %d (%s)", name, w.Code, want, w.Body.String())
+		}
 	}
 }

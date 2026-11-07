@@ -2,14 +2,18 @@
 # Builds the Android app (android/) into dist/ento-android-<version>.apk: the agent as an AAR
 # (gomobile bind of ./mobile, gomobile pinned in go.mod), then the app with Gradle.
 #
-# Signing: the release APK is signed with the keystore in ENTO_ANDROID_KEYSTORE_B64 (base64 of a
-# PKCS#12 keystore holding key "ento") and ENTO_ANDROID_KEYSTORE_PASSWORD, both from the
-# environment. Without them, a debug-signed APK is built (for testing only).
+# Signing: none. With ENTO_ANDROID_RELEASE=1 the release APK is built unsigned, and signed afterwards
+# with apksigner (scripts/publish-site.sh does, with the keystore in /dev/shm): no build step,
+# Gradle plugin or Go module ever runs with the key in its environment (2026-11-03 review, R3).
+# Without it, a debug-signed APK is built (for testing only). A key in the environment stops it.
 #
 # Needs the toolchain of scripts/android-toolchain.sh ($ANDROID_TOOLCHAIN, default ~/opt/android).
 # Usage: scripts/build-android.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+for k in ENTO_ANDROID_KEYSTORE_B64 ENTO_ANDROID_KEYSTORE_PASSWORD ENTO_RELEASE_SIGNING_KEY ENTO_RELEASE_SIGNING_KEY_P256; do
+  [[ -z "${!k:-}" ]] || { echo "$k is in the environment: the build runs without keys (sign afterwards)" >&2; exit 1; }
+done
 # shellcheck source=android.env
 . scripts/android.env
 dir="${ANDROID_TOOLCHAIN:-$HOME/opt/android}"
@@ -36,10 +40,8 @@ PATH="$work/bin:$PATH" gomobile bind -target=android/arm64,android/amd64 -androi
   -o android/app/libs/ento.aar ./mobile
 
 task=assembleDebug apk=android/app/build/outputs/apk/debug/app-debug.apk
-if [[ -n "${ENTO_ANDROID_KEYSTORE_B64:-}" ]]; then
-  printf '%s' "$ENTO_ANDROID_KEYSTORE_B64" | base64 -d > "$work/release.p12"
-  export ENTO_ANDROID_KEYSTORE="$work/release.p12"
-  task=assembleRelease apk=android/app/build/outputs/apk/release/app-release.apk
+if [[ "${ENTO_ANDROID_RELEASE:-}" == 1 ]]; then
+  task=assembleRelease apk=android/app/build/outputs/apk/release/app-release-unsigned.apk
 fi
 (cd android && ENTO_VERSION="$version" ENTO_VERSION_CODE="$code" \
   "$dir/gradle-$GRADLE_VERSION/bin/gradle" --no-daemon --quiet "$task")

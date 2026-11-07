@@ -636,7 +636,8 @@ type PostureCheckResult struct {
 }
 
 // LoginStart is returned when a device starts an SSO login (OAuth 2.0 device authorization grant).
-// The user opens VerificationURIComplete (or VerificationURI and types UserCode) in a browser.
+// The user opens VerificationURI and types UserCode in a browser. VerificationURIComplete (the
+// link with the code in it) stays empty since 0.50: control nodes no longer pass it on.
 type LoginStart struct {
 	VerificationURI         string `json:"verification_uri"`
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`

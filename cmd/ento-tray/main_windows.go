@@ -434,7 +434,7 @@ func (t *tray) signIn() {
 				if agent.OpenBrowser(r.Link) {
 					t.say(balloon{title: "ento: sign in in your browser", text: "Confirm the code " + agent.Printable(r.Code) + " and sign in with your password and security key or passkey."})
 				} else {
-					t.say(balloon{title: "ento: sign in", text: "Open " + agent.Printable(r.Link) + " in a browser and confirm the code " + agent.Printable(r.Code) + "."})
+					t.say(balloon{title: "ento: sign in", text: "Open " + agent.Printable(r.Link) + " in a browser and type the code " + agent.Printable(r.Code) + "."})
 				}
 			case "done":
 				text := "Signed in as " + agent.Printable(r.User) + "."

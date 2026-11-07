@@ -247,6 +247,18 @@ let pairing = null; // the timer that asks whether the code was approved
 // that first and keeps the commands for computers below; only the wording changes, not what counts.
 const onPhone = /Android/i.test(navigator.userAgent);
 
+// The network's sign-in opens the page too (0.49), for the person signed in on this device in ento.
+function showSignIn(st) {
+  $("signin-sso").hidden = !st.sign_in;
+  if (!st.sign_in) return;
+  const go = $("signin-sso-go");
+  go.hidden = !st.person;
+  go.textContent = st.person ? `Sign in as ${st.person}` : "Sign in";
+  $("signin-sso-hint").textContent = st.person
+    ? "With your passkey, at this network's sign-in. The page then stays open while you are signed in on this device."
+    : "Nobody is signed in on this device. Sign in on it first (sudo ento agent login, or the app), then reload this page.";
+}
+
 function showCode(code) {
   $("signin-phone").hidden = !onPhone;
   const [a, b] = (code || "····-····").split("-");
@@ -261,6 +273,7 @@ async function pair() {
   try {
     const st = await call("POST", "/ui/session");
     if (st.state === "open") { opened(); return; }
+    showSignIn(st);
     showCode(st.code);
   } catch (e) {
     notice("Could not get a code: " + e.message);
@@ -274,7 +287,7 @@ async function waitApproval() {
   try { st = await call("GET", "/ui/session"); } catch (e) { return; }
   if (st.state === "open") opened();
   else if (st.state === "none") { clearInterval(pairing); pair(); } // the code expired: a new one
-  else showCode(st.code);
+  else { showSignIn(st); showCode(st.code); }
 }
 
 function opened() {
@@ -1008,8 +1021,10 @@ async function revoke(t) {
 const tokenGroups = new Set();
 function drawTokenGroups() {
   // Every device group, isolated too (the device then joins kept apart until let in); authority
-  // groups are the authority's to give.
-  const all = deviceGroupList().filter((g) => g.startsWith(DEV));
+  // groups are the authority's to give. A role group gives the device that role: admins only
+  // (the control plane refuses it from operators).
+  const roles = [DEV + "admin", DEV + "operator"];
+  const all = deviceGroupList().filter((g) => g.startsWith(DEV) && (isAdmin() || !roles.includes(g)));
   [...tokenGroups].forEach((g) => { if (!all.includes(g)) tokenGroups.delete(g); });
   put($("token-groups"), ...(all.length ? all.map((g) => el("button", { type: "button", class: "chip", "aria-pressed": String(tokenGroups.has(g)),
     onclick: () => { tokenGroups.has(g) ? tokenGroups.delete(g) : tokenGroups.add(g); drawTokenGroups(); } }, gname(g)))

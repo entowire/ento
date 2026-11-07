@@ -110,9 +110,9 @@ func LoginViaAgent(ctx context.Context, out io.Writer, showQR func(link string))
 			case !SafeLink(r.Link):
 				fmt.Fprintf(out, "The control node sent a sign-in link that is not a plain https link; it was not opened:\n\n    %s\n\nCode: %s", link, code)
 			case openBrowser(r.Link):
-				fmt.Fprintf(out, "Sign in in the browser window that just opened (or open this link):\n\n    %s\n\nCode: %s", link, code)
+				fmt.Fprintf(out, "In the browser window that just opened (or at this link), type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
 			default:
-				fmt.Fprintf(out, "Open this link in a browser and sign in:\n\n    %s\n\nCode: %s", link, code)
+				fmt.Fprintf(out, "Open this link in a browser, type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
 			}
 			if showQR != nil && SafeLink(r.Link) {
 				showQR(r.Link)

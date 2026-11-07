@@ -16,7 +16,8 @@ import (
 //     groups (and taking it out of isolated) lets it in.
 //   - The admin and operator groups (Config.AdminGroups, Config.OperatorGroups; the identity
 //     provider's role groups when single sign-on is on) give a device those roles, as a person's
-//     groups give theirs. Only admins put devices in them or take them out.
+//     groups give theirs. Only admins put devices in them or take them out, and only admins make
+//     invitations into them (handleCreateToken).
 //   - The viewer groups (Config.ViewerGroups) open the dashboard and the admin API read-only.
 
 // Device groups and people groups are kept apart (0.44): a device group's name carries

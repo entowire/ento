@@ -393,6 +393,8 @@ type runner struct {
 	exitSet   bool
 	exitAt    time.Time
 	exitNoted string
+	// filterFailed: the last inbound filter could not be applied, so only the control nodes are peers.
+	filterFailed bool
 	// resolver: the agent's resolver (dns.go), nil when nothing needs it; dnsApplied: the system's
 	// DNS settings made for it (dnsSettings.key, "" for none), dnsAt when; dnsNoted the last thing
 	// logged about it.
@@ -678,6 +680,37 @@ func (a *runner) apply(nm api.NetMap) error {
 			delete(a.paths, k)
 		}
 	}
+	// What each peer may open on this device (a map of control nodes before 0.19 has no filter, and
+	// everything passes as before), applied before any peer is (0.50, D2): a filter that cannot be
+	// applied leaves only the control nodes as peers, so nothing reaches the device unfiltered.
+	filter := filterFromMap(nm)
+	if filter != nil && a.cfg.LogDrops {
+		if a.dropLog == nil {
+			a.dropLog = &dropLog{logf: a.cfg.Logf, iface: a.ifc.IfName()}
+		}
+		filter.logDrops = a.dropLog
+		filter.key += "\nlog drops"
+	}
+	switch {
+	case filter == nil:
+	case !a.home(): // a linked network: everything the device sends there is its person's work
+		filter.countPerson(&personRules{all: true, controls: filter.controls})
+	case filter.person != nil:
+		r := *filter.person
+		r.exit = exit != nil && !exitForMachine(nm, *exit)
+		filter.countPerson(&r)
+	}
+	filterErr := a.ifc.SetFilter(filter)
+	if filterErr != nil {
+		if !a.filterFailed {
+			a.cfg.Logf("inbound filter: %v: only the control nodes are peers until it applies", filterErr)
+		}
+		desired = controlPeersOnly(desired, controls)
+		wantRoutes, exit = map[netip.Prefix]bool{}, nil
+	} else if a.filterFailed {
+		a.cfg.Logf("inbound filter applied: the network's peers are back")
+	}
+	a.filterFailed = filterErr != nil
 	a.relay.SetPeers(seen)
 	if err := a.ifc.Configure(wgtypes.Key(a.st.PrivateKey), desired); err != nil {
 		return err
@@ -696,28 +729,6 @@ func (a *runner) apply(nm api.NetMap) error {
 			what = strings.TrimPrefix(what+", an exit", ", ")
 		}
 		a.cfg.Logf("this device is the gateway of %s, but it forwards only with the kernel's WireGuard (Linux, without --userspace)", what)
-	}
-	// What each peer may open on this device (a map of control nodes before 0.19 has no filter, and
-	// everything passes as before). A filter that cannot be applied is logged; the peers stay.
-	filter := filterFromMap(nm)
-	if filter != nil && a.cfg.LogDrops {
-		if a.dropLog == nil {
-			a.dropLog = &dropLog{logf: a.cfg.Logf, iface: a.ifc.IfName()}
-		}
-		filter.logDrops = a.dropLog
-		filter.key += "\nlog drops"
-	}
-	switch {
-	case filter == nil:
-	case !a.home(): // a linked network: everything the device sends there is its person's work
-		filter.countPerson(&personRules{all: true, controls: filter.controls})
-	case filter.person != nil:
-		r := *filter.person
-		r.exit = exit != nil && !exitForMachine(nm, *exit)
-		filter.countPerson(&r)
-	}
-	if err := a.ifc.SetFilter(filter); err != nil {
-		a.cfg.Logf("inbound filter: %v", err)
 	}
 	if a.home() {
 		a.syncResolver(nm, filter)
@@ -1073,4 +1084,16 @@ func (a *runner) routesKey() string {
 		dns = a.last.DNS.Domain
 	}
 	return strings.Join(r, ",") + "|" + strings.Join(a.last.Self.Routes, ",") + "|" + exit + "|" + fmt.Sprint(a.last.Self.Exit, a.runningExits()) + "|" + dns
+}
+
+// controlPeersOnly keeps the control nodes' peers alone: what a device configures while its inbound
+// filter cannot be applied (it fails closed, D2).
+func controlPeersOnly(desired []PeerConfig, controls map[wgtypes.Key]bool) []PeerConfig {
+	var out []PeerConfig
+	for _, pc := range desired {
+		if controls[pc.PublicKey] {
+			out = append(out, pc)
+		}
+	}
+	return out
 }

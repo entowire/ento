@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS ento_sso_tokens (
 	next_check timestamptz NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ento_admin_sessions_pending ON ento_admin_sessions (peer_id, code) WHERE NOT approved;
+-- 0.49: the person of a session opened by signing in on the page.
+ALTER TABLE ento_admin_sessions ADD COLUMN IF NOT EXISTS person text NOT NULL DEFAULT '';
 ALTER TABLE ento_policies ADD COLUMN IF NOT EXISTS posture text[] NOT NULL DEFAULT '{}';
 ALTER TABLE ento_policies ADD COLUMN IF NOT EXISTS one_way boolean NOT NULL DEFAULT false;
 ALTER TABLE ento_policies ADD COLUMN IF NOT EXISTS ports text[] NOT NULL DEFAULT '{}';
@@ -723,7 +725,7 @@ func (p *Postgres) Redeem(ctx context.Context, temp netip.Addr, key wgtypes.Key,
 const peerColumns = `id, public_key, address, hostname, reported_hostname, os, approved, admin, groups, endpoint, user_id, user_name, created_at, last_seen, authority, approved_until, login_at, suspended, operator, authority_device, user_login, person_approved, person_admin, person_operator, person_groups, person_active, person_since, person_activity_at, person_reports, boot_id`
 
 // effectiveApproved is a device's approval in SQL (Peer.derive).
-const effectiveApproved = `(NOT suspended AND (approved OR (person_active AND person_approved)))`
+const effectiveApproved = `(NOT suspended AND NOT (groups && ARRAY['device:isolated','isolated']::text[]) AND (approved OR (person_active AND person_approved)))`
 
 func scanPeer(row pgx.Row) (Peer, error) {
 	var p Peer
@@ -1601,19 +1603,19 @@ func (p *Postgres) DeleteSSOToken(ctx context.Context, peerID int64, token strin
 // Sessions of the admin interface are not part of the network map either.
 
 func (p *Postgres) CreateUISession(ctx context.Context, u UISession) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO ento_admin_sessions (hash, peer_id, code, browser, approved, created_at, expires_at, last_used)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, u.Hash, u.PeerID, u.Code, u.Browser, u.Approved, u.CreatedAt, u.ExpiresAt, u.LastUsed)
+	_, err := p.pool.Exec(ctx, `INSERT INTO ento_admin_sessions (hash, peer_id, code, browser, approved, created_at, expires_at, last_used, person)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, u.Hash, u.PeerID, u.Code, u.Browser, u.Approved, u.CreatedAt, u.ExpiresAt, u.LastUsed, u.Person)
 	if isUniqueViolation(err) {
 		return ErrExists
 	}
 	return err
 }
 
-const uiSessionColumns = `hash, peer_id, code, browser, approved, created_at, expires_at, last_used`
+const uiSessionColumns = `hash, peer_id, code, browser, approved, created_at, expires_at, last_used, person`
 
 func scanUISession(row pgx.Row) (UISession, error) {
 	var u UISession
-	err := row.Scan(&u.Hash, &u.PeerID, &u.Code, &u.Browser, &u.Approved, &u.CreatedAt, &u.ExpiresAt, &u.LastUsed)
+	err := row.Scan(&u.Hash, &u.PeerID, &u.Code, &u.Browser, &u.Approved, &u.CreatedAt, &u.ExpiresAt, &u.LastUsed, &u.Person)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UISession{}, ErrNotFound
 	}

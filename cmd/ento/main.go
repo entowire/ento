@@ -152,7 +152,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 	// What changes the network's database without a control node in between leaves an audit line in
 	// the system log (cliaudit), like the control nodes' own.
 	switch cmd {
-	case "token", "authority", "allow", "admin", "groups":
+	case "token", "authority", "allow", "admin", "groups", "person":
 		all := append([]string{cmd}, args...)
 		defer func() { cliAudit(all, err) }()
 	}
@@ -179,6 +179,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		androidApps := fs.String("android-apps", "", "comma-separated PACKAGE:SHA256 (the signing certificate's): the only apps whose attestations count (default: any app; the attestation must still be made for the device's key)")
 		serviceNames := fs.String("service-names", "", "comma-separated names of the network's services that point at addresses inside it (e.g. chat.example.com): the node resolves them and every device answers them itself, so DNS that drops answers pointing at private or shared addresses does not hide them")
 		forwardList := fs.String("forward", "", "services passed through on the node's overlay port 443 by TLS server name, for every enrolled device (its policies need open nothing): comma-separated NAME=HOST:PORT[+HOST:PORT...], tried in order; devices resolve NAME to the control nodes")
+		forwardPeopleList := fs.String("forward-people", "", "forwarded services (--forward) that only devices with a person signed in in one of these roles reach, by the person's own groups (not the device's), checked while each connection lasts: comma-separated NAME=ROLE[+ROLE...], roles admin, operator, viewer")
 		recordDomain := fs.String("record-domain", "", "the domain whose network record (TXT _ento.<domain>, what ento admin record prints) names the control nodes: devices that reach none of them look there for their new endpoints; the node checks hourly that it is named")
 		dnsDomain := fs.String("dns-domain", "", "internal DNS: devices answer names in this domain (e.g. example.internal): each other's names, and those administrators add (ento admin dns); the same on every control node")
 		sessionIdle := fs.Duration("session-idle", 8*time.Hour, "with SSO: a device's person layer closes after this long without the person's traffic over the tunnel (0: never); its machine layer stays")
@@ -308,6 +309,10 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		if err != nil {
 			return err
 		}
+		forwardPeople, err := control.ParseForwardPeople(*forwardPeopleList, named)
+		if err != nil {
+			return err
+		}
 		recDomain := ""
 		if *recordDomain != "" {
 			if recDomain, err = control.CheckDNSDomain(*recordDomain); err != nil {
@@ -329,7 +334,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		if *attestRevocations != "" && *attestRevocations != "off" && !strings.HasPrefix(*attestRevocations, "https://") {
 			return errors.New("--attestation-revocations: an https:// address, or off")
 		}
-		srv, err := control.Start(ctx, control.Config{Name: *name, PrivateKey: key, ListenPort: *port, DNSDomain: domain, RecordDomain: recDomain, Forwards: named,
+		srv, err := control.Start(ctx, control.Config{Name: *name, PrivateKey: key, ListenPort: *port, DNSDomain: domain, RecordDomain: recDomain, Forwards: named, ForwardPeople: forwardPeople,
 			AttestationRevocations: *attestRevocations, AndroidApps: apps, ServiceNames: services,
 			Endpoint: *endpoint, Space: space, Store: st, Changes: changes, OIDC: oidc, People: peopleCfg, NoGateways: splitList(*noGateways), AdminGroups: splitList(*adminGroups), OperatorGroups: splitList(*operatorGroups), ViewerGroups: splitList(*viewerGroups),
 			SessionIdle: *sessionIdle, SessionMax: *sessionMax, ReopenServices: splitList(*reopenServices), Hosts: parseHosts(*hosts), LinkForwards: forwards,
@@ -506,8 +511,29 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		}
 		fmt.Printf("device %d %s: groups=%s (approved=%v)\n", p.ID, p.Hostname, strings.Join(p.Machine.Groups, ","), p.Approved)
 		return nil
+	case "person":
+		fs := flag.NewFlagSet("control person", flag.ExitOnError)
+		_ = fs.String("network", "", "ignored (the command uses only the identity provider)")
+		groups := fs.String("groups", "", "comma-separated people groups, e.g. admins")
+		apiURL := fs.String("people-api", "", "the identity provider's API (Rauthy: https://id.example.com/auth/v1), its key in ENTO_PEOPLE_API_KEY")
+		connect := fs.String("people-connect-to", "", "comma-separated host:port to dial instead of the API's host")
+		_ = fs.Parse(args)
+		if fs.NArg() != 1 || *apiURL == "" || os.Getenv("ENTO_PEOPLE_API_KEY") == "" {
+			return errors.New("usage: ento control person --people-api URL [--people-connect-to HOST:PORT] [--groups G,...] EMAIL (key in ENTO_PEOPLE_API_KEY)")
+		}
+		p, link, created, err := control.InvitePerson(ctx, control.PeopleConfig{Kind: "rauthy", API: *apiURL,
+			Key: os.Getenv("ENTO_PEOPLE_API_KEY"), ConnectTo: splitList(*connect)}, fs.Arg(0), splitList(*groups))
+		if err != nil {
+			return err
+		}
+		how := "made"
+		if !created {
+			how = "not set up yet, a new link"
+		}
+		fmt.Printf("person %s (%s), groups %s\nsetup link (once, until %s): %s\n", p.Email, how, strings.Join(p.Groups, ","), link.ExpiresAt, link.Link)
+		return nil
 	}
-	return errors.New("usage: ento control run|token|authority|allow|admin|groups [flags]")
+	return errors.New("usage: ento control run|token|authority|allow|admin|groups|person [flags]")
 }
 
 // setAdmin gives the device named name administrator rights, or takes them away (bootstrap, straight

@@ -6,6 +6,8 @@ ento is a self-hostable mesh VPN built on WireGuard. It follows the architecture
 > **Everything runs through WireGuard.** The only thing a deployment exposes to the internet is a
 > WireGuard UDP port. Enrollment, control, signalling and relaying all happen inside the tunnel.
 
+they are met.
+
 It is a product of its own: it must not depend on anything in any platform that deploys it, and anyone must be
 able to deploy it on their own infrastructure.
 
@@ -71,6 +73,10 @@ A single binary, `ento`:
   hours, end after 30 minutes unused or when the device loses its role, are stored by the hash of
   their cookie in the shared database (any control node honours them) and go with the device. A
   program able to read the browser's cookies on the device can use an open session from there.
+  With an identity provider, a session also opens when the person signed in on the device in ento
+  signs in on the page again (0.49; a fresh sign-in, nonce and `auth_time` checked, 0.50): only for
+  a person with a role of their own, and it acts with that person's rights alone (`Peer.PersonOnly`),
+  so neither the device's role nor the provider's open session counts.
 - Authorization levels:
   - *enrolling*: a temporary key from an enrollment token; may only call the redeem endpoint;
   - *pending*: enrolled, not approved; receives an empty network map;
@@ -99,7 +105,8 @@ A single binary, `ento`:
   each sign-in's refresh token is kept encrypted (AES-256-GCM, the device's ID as associated data)
   in the store, and every 2 minutes a control node claims the devices that are due
   (`FOR UPDATE SKIP LOCKED`, so each is checked by one node) and refreshes them. `invalid_grant`
-  withdraws the approval; new groups in the ID token apply (in any order; an ID token without the
+  withdraws the approval; new groups in the ID token apply (ID tokens are verified against the
+  provider's published keys, 0.50, and one that fails changes nothing; in any order; an ID token without the
   groups claim, or none at all, leaves them as they are); anything else (unreachable, 5xx, an
   unexpected answer) changes nothing, so an outage of the provider never locks people out. Every
   write is conditional on the token and the sign-in it was decided for (`SSOToken.Previous`,
@@ -302,7 +309,11 @@ it may open on the receiving device (`accept`: the union of the rules of every p
 empty when it may only answer), and the map says the device must enforce that (`filter`).
 
 The receiving device's agent enforces it, never the sender's: a modified agent on the opening side
-gains nothing. Answers to the device's own connections and everything from control nodes pass.
+gains nothing. Answers to the device's own connections and everything from control nodes pass. The
+filter is applied before the peers are, and one that cannot be applied leaves the control nodes as
+the only peers until it can (0.50; before, it was only logged and every peer reached every port).
+Still open: the table is looked for once a minute after a removal (`nft flush ruleset`), and
+`ento agent status` does not say the filter failed.
 With the Linux kernel's WireGuard the agent keeps an nftables table of its own (`inet
 ento-filter`: a prerouting chain after conntrack, for answers, and before the system's DNAT, so it
 sees the port the peer connected to; re-created if removed; not at the input hook, where it would

@@ -96,6 +96,27 @@ func usableRoutes(routes []store.Route, peers []store.Peer, noGateways []string)
 	return out
 }
 
+// namesInUse are the device names that something else finds a device by: routes' gateways and DNS
+// records, each with why (A2: renaming to or from one is an admin's).
+func (s *Server) namesInUse(ctx context.Context) (map[string]string, error) {
+	routes, err := s.cfg.Store.Routes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	records, err := s.cfg.Store.DNSRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, r := range routes {
+		out[r.Via] = "the gateway of route " + r.Name
+	}
+	for _, r := range records {
+		out[r.Name] = "a DNS record"
+	}
+	return out, nil
+}
+
 func routeGateways(routes []store.Route, peers []store.Peer) map[string]store.Peer {
 	byName := map[string]store.Peer{}
 	for _, p := range peers {

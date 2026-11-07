@@ -37,8 +37,13 @@
   <main class="signin-card">
     <div>
       <h1 id="signin-title">Open the dashboard</h1>
-      <p class="lead">This page opens only after you approve it from this device, with the key only ento holds. It must be an
-        administrator or operator device.</p>
+      <p class="lead">This page opens only after you approve it from this device, with the key only ento holds, or sign in as
+        the person signed in on it. It must be an administrator or operator device.</p>
+    </div>
+    <div class="step" id="signin-sso" hidden>
+      <a class="btn primary" id="signin-sso-go" href="/ui/signin">Sign in</a>
+      <p class="hint" id="signin-sso-hint"></p>
+      <div class="or">or approve it from this device</div>
     </div>
     <div class="code" id="signin-code" aria-live="polite"><span>····</span><i aria-hidden="true">·</i><span>····</span></div>
     <div class="step" id="signin-phone" hidden>

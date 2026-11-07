@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds static ento binaries into dist/. Reproducible: no cgo, trimmed paths, no build IDs.
+# Builds static ento binaries into dist/, with flags for reproducible builds (no cgo, trimmed paths,
+# no build IDs; no second build is compared yet), with the toolchain go.mod pins.
 # Windows builds are packaged as ento-windows-<arch>.zip: ento.exe, ento-tray.exe (the person's
 # sign-in in the notification area, a GUI program), the pinned, verified wintun.dll for that
 # architecture (scripts/wintun.env) and Wintun's licence, with fixed timestamps.
@@ -9,6 +10,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# Only the toolchain go.mod pins, a patched one (with GOTOOLCHAIN=auto, go fetches it): never
+# whatever go is on PATH.
+want="$(sed -n 's/^toolchain //p' go.mod)"
+have="$(go env GOVERSION)"
+[[ -n "$want" && "$have" == "$want" ]] || { echo "Go is $have, but go.mod pins ${want:-no toolchain} (GOTOOLCHAIN=local?)" >&2; exit 1; }
 # Releases are tagged ento-vX.Y.Z; anything else builds as a development version.
 version="$(git describe --tags --match 'ento-v*' --dirty 2>/dev/null | sed 's/^ento-v//' || true)"
 version="${version:-dev-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"

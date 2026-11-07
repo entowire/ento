@@ -62,13 +62,15 @@ Then enroll the first administrator and add devices: [the manual](docs/manual.md
 
 ## Documentation
 
+  administration, a new network, plain WireGuard peers)
 - [docs/manual.md](docs/manual.md): everything ento does and how to run it
 - [docs/design.md](docs/design.md): architecture and security model
 - [docs/linked-networks.md](docs/linked-networks.md): operating other people's networks from yours
 
 ## Build
 
-Go, no cgo; static and reproducible builds:
+Go, no cgo; static builds with the toolchain `go.mod` pins, and flags for reproducible ones (no
+second build is compared yet):
 
     scripts/build.sh linux/amd64 linux/arm64 darwin/arm64 windows/amd64   # dist/
     go test ./...                                                          # PostgreSQL tests with ENTO_TEST_POSTGRES

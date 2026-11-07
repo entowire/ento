@@ -177,7 +177,19 @@ type Peer struct {
 	BootID string
 }
 
-// derive sets Approved, Admin, Operator and Groups from the layers.
+// IsolatedGroups are the names of the built-in device group isolated (the second from networks
+// older than 0.44, before device groups had their prefix).
+var IsolatedGroups = []string{"device:isolated", "isolated"}
+
+// Isolated reports whether the device is in the isolated group: it then has no rights at all,
+// whoever is signed in on it (constitution 4.3).
+func (p Peer) Isolated() bool {
+	return slices.ContainsFunc(p.Machine.Groups, func(g string) bool { return slices.Contains(IsolatedGroups, g) })
+}
+
+// derive sets Approved, Admin, Operator and Groups from the layers. Isolation and suspension come
+// before both: an isolated device is not approved, has no role and none of its person's groups
+// (0.50; before, an open person layer gave them back).
 func (p *Peer) derive() {
 	m := p.Machine
 	p.Approved, p.Admin, p.Operator, p.Groups = m.Approved, m.Admin, m.Operator, slices.Clone(m.Groups)
@@ -194,12 +206,24 @@ func (p *Peer) derive() {
 			}
 		}
 	}
+	if p.Isolated() {
+		p.Approved, p.Admin, p.Operator, p.Groups = false, false, false, slices.Clone(m.Groups)
+	}
 	if p.Admin {
 		p.Operator = false
 	}
 	if p.Suspended {
 		p.Approved = false
 	}
+}
+
+// PersonOnly returns the device as its person layer alone sees it: the person's approval, role and
+// groups, without the machine's approval and role (its device groups stay, for isolation and rules).
+// A dashboard session opened by signing in acts with these (0.50).
+func (p Peer) PersonOnly() Peer {
+	p.Machine.Approved, p.Machine.Admin, p.Machine.Operator = false, false, false
+	p.derive()
+	return p
 }
 
 // MachineOnly returns the device as its machine layer alone sees it.
@@ -235,6 +259,9 @@ func (p *Peer) apply(u PeerUpdate) {
 	}
 	if u.Groups != nil {
 		p.Machine.Groups = slices.Clone(*u.Groups)
+		if p.Isolated() { // isolating a device ends its person's session there
+			p.Person.Active = false
+		}
 	}
 	if u.PersonApproved != nil {
 		p.Person.Approved = *u.PersonApproved
@@ -546,11 +573,14 @@ type Link struct {
 // starts pending, showing Code on the page, and opens when that device approves the code with a
 // call signed with its key.
 type UISession struct {
-	Hash      string
-	PeerID    int64
-	Code      string
-	Browser   string // the page's User-Agent, shown when it is approved
-	Approved  bool
+	Hash     string
+	PeerID   int64
+	Code     string
+	Browser  string // the page's User-Agent, shown when it is approved
+	Approved bool
+	// Person, for a session opened by signing in on the page (0.49): the identity provider's subject
+	// of the person, who must stay signed in on the device in ento for it to last.
+	Person    string
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	LastUsed  time.Time

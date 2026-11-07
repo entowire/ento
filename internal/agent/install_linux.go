@@ -19,7 +19,12 @@ import (
 )
 
 const (
+	// installBinary is the command; since 0.50 a symbolic link to installReal, in a directory of
+	// its own that the unit lets the agent write, so that it can replace itself (selfupdate.go):
+	// /usr/local/bin is read-only in its sandbox (ProtectSystem=strict).
 	installBinary = "/usr/local/bin/ento"
+	installDir    = "/usr/local/lib/ento"
+	installReal   = installDir + "/ento"
 	unitName      = "ento-agent.service"
 	unitPath      = "/etc/systemd/system/" + unitName
 	netnsUnitPath = "/etc/systemd/system/ento-netns@.service"
@@ -56,7 +61,7 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=%[2]s /etc/netns
+ReadWritePaths=%[2]s /etc/netns /usr/local/lib/ento
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelModules=yes
@@ -89,7 +94,16 @@ func Install(cfg Config, token string, force bool) error {
 			return fmt.Errorf("remove the old enrollment: %w", err)
 		}
 	}
-	if err := prepareInstall(cfg, token, installBinary); err != nil {
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(installDir, 0o755); err != nil { // root's alone, whatever the umask
+		return err
+	}
+	if err := prepareInstall(cfg, token, installReal); err != nil {
+		return err
+	}
+	if err := linkCommand(installBinary, installReal); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(netnsEtcDir, 0o755); err != nil {
@@ -233,6 +247,24 @@ func agentProcess(pid int) bool {
 
 // Uninstall stops the agent, removes the unit and the interface. With purge, the state (and so the
 // device's identity) is deleted too.
+// linkCommand makes path a symbolic link to target, replacing what is there (an older install's
+// binary, or the installer's) in one rename.
+func linkCommand(path, target string) error {
+	if dest, err := os.Readlink(path); err == nil && dest == target {
+		return nil
+	}
+	tmp := path + ".link"
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 func Uninstall(cfg Config, purge bool) error {
 	cfg.defaults()
 	if os.Geteuid() != 0 {

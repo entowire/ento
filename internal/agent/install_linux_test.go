@@ -3,10 +3,38 @@ package agent
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
+
+// The unit lets the agent write the directory of its binary, so that it can update itself (D1),
+// and starts it through the command's link.
+func TestUnitAllowsSelfUpdate(t *testing.T) {
+	u := fmt.Sprintf(unit, installBinary, "/var/lib/ento", "ento0", 51830, 1380, "", "")
+	var rw []string
+	for _, l := range strings.Split(u, "\n") {
+		if v, ok := strings.CutPrefix(l, "ReadWritePaths="); ok {
+			rw = strings.Fields(v)
+		}
+	}
+	if !slices.Contains(rw, installDir) || filepath.Dir(installReal) != installDir || !strings.Contains(u, "ExecStart="+installBinary+" ") {
+		t.Fatalf("the unit does not let the agent replace %s: ReadWritePaths %v", installReal, rw)
+	}
+	dir := t.TempDir()
+	cmd, real := filepath.Join(dir, "ento"), filepath.Join(dir, "lib-ento")
+	os.WriteFile(cmd, []byte("old binary"), 0o755)
+	if err := linkCommand(cmd, real); err != nil {
+		t.Fatal(err)
+	}
+	if dest, err := os.Readlink(cmd); err != nil || dest != real {
+		t.Fatalf("the command is not a link to the binary: %q %v", dest, err)
+	}
+	if err := linkCommand(cmd, real); err != nil {
+		t.Fatalf("again: %v", err)
+	}
+}
 
 func TestUnitArgs(t *testing.T) {
 	installed := fmt.Sprintf(unit, installBinary, "/var/lib/ento", "ento0", 51830, 1380, "", "")

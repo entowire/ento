@@ -353,7 +353,7 @@ func (s *Server) guardLastAdmin(ctx context.Context, self store.Peer, target rau
 	if !losesAdmin {
 		return nil
 	}
-	if self.UserName != "" && strings.EqualFold(self.UserName, target.Email) {
+	if isSelf(self, target) {
 		return errors.New("not on your own account: another admin does that")
 	}
 	if !intersects(target.Groups, s.personAdminGroups()) || !target.Enabled {
@@ -363,12 +363,63 @@ func (s *Server) guardLastAdmin(ctx context.Context, self store.Peer, target rau
 	if err != nil {
 		return err
 	}
+	// Another admin who can sign in: enabled, and their account set up (one who never opened their
+	// setup link cannot).
 	for _, p := range people {
-		if p.ID != target.ID && p.Enabled && intersects(p.Groups, s.personAdminGroups()) {
+		if p.ID != target.ID && p.Enabled && !p.Setup && intersects(p.Groups, s.personAdminGroups()) {
 			return nil
 		}
 	}
 	return errors.New(target.Email + " is the only enabled admin: make another admin first")
+}
+
+// keptGroup: a group that is never deleted: the built-in device groups, the people groups that give
+// a role or viewing, and those the configuration names for roles, viewing and approval.
+func (s *Server) keptGroup(name string) bool {
+	kept := append(slices.Clone(builtinDeviceGroups), s.adminGroups()...)
+	kept = append(kept, s.operatorGroups()...)
+	kept = append(kept, s.personAdminGroups()...)
+	kept = append(kept, s.viewerGroups()...)
+	kept = append(kept, "admins", "operators", "viewers")
+	if s.cfg.OIDC != nil {
+		kept = append(kept, s.cfg.OIDC.OperatorGroups...)
+		kept = append(kept, s.cfg.OIDC.ApproveGroups...)
+	}
+	return slices.Contains(kept, name)
+}
+
+// isSelf: the caller's own account, by the provider's subject (the e-mail address only for an older
+// session without one).
+func isSelf(self store.Peer, target rauthyUser) bool {
+	if self.User != "" {
+		return self.User == target.ID
+	}
+	return self.UserName != "" && strings.EqualFold(self.UserName, target.Email)
+}
+
+// guardPasskey refuses removing a passkey that is someone's way in when that cannot be undone
+// safely (I6): one's own (another admin does that), another admin's from a device with nobody
+// signed in (whose root would then take the account over with a setup link), and the last one of
+// the only admin who can sign in.
+func (s *Server) guardPasskey(ctx context.Context, self store.Peer, target rauthyUser) error {
+	if isSelf(self, target) {
+		return errors.New("not on your own account: another admin does that")
+	}
+	admin := intersects(target.Groups, s.personAdminGroups())
+	if !admin {
+		return nil
+	}
+	if self.User == "" || !self.Person.Active {
+		return errors.New("an admin's passkeys are removed by an admin signed in on their device, not by a device alone")
+	}
+	keys, err := s.people.passkeys(ctx, target.ID)
+	if err != nil {
+		return err
+	}
+	if len(keys) > 1 {
+		return nil
+	}
+	return s.guardLastAdmin(ctx, self, target, true)
 }
 
 func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request, self store.Peer) {
@@ -525,6 +576,11 @@ func (s *Server) handleDeletePasskey(w http.ResponseWriter, r *http.Request, sel
 		return
 	}
 	name := r.PathValue("name")
+	if err := s.guardPasskey(r.Context(), self, u); err != nil {
+		s.audit(r, &self, "person_passkey_deleted", fmt.Sprintf("person %s passkey %q: %v", u.Email, name, err), "denied")
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err := s.people.deletePasskey(r.Context(), u.ID, name); err != nil {
 		respondPeopleErr(w, err)
 		return
@@ -540,6 +596,19 @@ func (s *Server) handlePersonSetup(w http.ResponseWriter, r *http.Request, self 
 	u, err := s.people.user(r.Context(), r.PathValue("id"))
 	if err != nil {
 		respondPeopleErr(w, err)
+		return
+	}
+	// A setup link sets up an account that has no way to sign in yet, never one that has: whoever
+	// opens it would take the account over (I6). A person who lost their passkey gets one once
+	// their passkeys are removed and they have neither a password nor an authenticator app.
+	si, err := s.people.personSignin(r.Context(), u.ID)
+	if err != nil {
+		respondPeopleErr(w, err)
+		return
+	}
+	if si.Password || si.Passkeys > 0 || si.TOTP {
+		s.audit(r, &self, "person_setup_link", "person "+u.Email+": the account has a way to sign in", "denied")
+		writeErr(w, http.StatusConflict, u.Email+" can still sign in (a password, a passkey or an authenticator app): a setup link would take the account over")
 		return
 	}
 	link, err := s.people.setupLink(r.Context(), u.ID)
@@ -607,6 +676,12 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request, self 
 	}
 	name := r.PathValue("name")
 	ctx := r.Context()
+	// The built-in groups and the groups that give roles stay, empty or not (constitution 3.3, A7).
+	if s.keptGroup(name) {
+		s.audit(r, &self, "group_deleted", "group "+name+": built in", "denied")
+		writeErr(w, http.StatusConflict, name+" is built in (a role, isolation or viewing): it is never deleted")
+		return
+	}
 	var users []string
 	policies, err := s.cfg.Store.Policies(ctx)
 	if err != nil {

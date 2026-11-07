@@ -101,6 +101,7 @@ type oidcProvider struct {
 	cfg    OIDCConfig
 	client *http.Client
 
+	keys      jwksCache // the provider's signing keys (oidc_jwt.go)
 	mu        sync.Mutex
 	discovery *oidcDiscovery
 	logins    map[int64]*deviceLogin // by peer ID
@@ -108,6 +109,8 @@ type oidcProvider struct {
 
 type oidcDiscovery struct {
 	Issuer                      string   `json:"issuer"`
+	AuthorizationEndpoint       string   `json:"authorization_endpoint"`
+	JWKSURI                     string   `json:"jwks_uri"`
 	TokenEndpoint               string   `json:"token_endpoint"`
 	DeviceAuthorizationEndpoint string   `json:"device_authorization_endpoint"`
 	ScopesSupported             []string `json:"scopes_supported"`
@@ -244,7 +247,10 @@ func (o *oidcProvider) start(ctx context.Context, peerID int64, onDone func(clai
 	o.logins[peerID] = login
 	o.mu.Unlock()
 	go o.poll(d, peerID, login, auth.DeviceCode, time.Duration(auth.Interval)*time.Second, onDone)
-	return api.LoginStart{VerificationURI: auth.VerificationURI, VerificationURIComplete: auth.VerificationURIComplete,
+	// The link with the code in it is not passed on (0.50, I3): it lets anyone who has a device send
+	// a person a link that signs that device in as them. The person types the code their device
+	// shows, which proves the device is in front of them.
+	return api.LoginStart{VerificationURI: auth.VerificationURI,
 		UserCode: auth.UserCode, ExpiresIn: auth.ExpiresIn}, nil
 }
 
@@ -285,11 +291,13 @@ func (o *oidcProvider) poll(d *oidcDiscovery, peerID int64, login *deviceLogin, 
 			finish("failed", "", "login refused: "+tok.Error)
 			return
 		}
-		// The ID token comes straight from the token endpoint over a verified TLS connection, so
-		// TLS server validation stands in for the signature check (OpenID Connect Core 3.1.3.7).
-		claims, err := parseIDToken(tok.IDToken)
-		if err != nil || claims.Issuer != o.cfg.Issuer || !claims.hasAudience(o.cfg.ClientID) || claims.Subject == "" {
-			finish("failed", "", "invalid ID token")
+		// Verified against the provider's keys, although it came straight from the token endpoint
+		// (0.50: TLS alone stood in for the signature before).
+		vctx, vcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		claims, err := o.verifyIDToken(vctx, tok.IDToken, "")
+		vcancel()
+		if err != nil {
+			finish("failed", "", "invalid ID token: "+err.Error())
 			return
 		}
 		onDone(claims, tok.RefreshToken)
@@ -460,10 +468,11 @@ func (o *oidcProvider) refresh(ctx context.Context, refreshToken string) (*idCla
 	if tok.IDToken == "" {
 		return nil, tok.RefreshToken, nil
 	}
-	// As at sign-in: straight from the token endpoint over verified TLS.
-	c, err := parseIDToken(tok.IDToken)
-	if err != nil || c.Issuer != o.cfg.Issuer || !c.hasAudience(o.cfg.ClientID) || c.Subject == "" {
-		return nil, "", errors.New("token endpoint: invalid ID token")
+	// Verified as at sign-in. One that fails is an ordinary error: it changes nothing (a withdrawal
+	// comes as a refusal, which needs no token).
+	c, err := o.verifyIDToken(ctx, tok.IDToken, "")
+	if err != nil {
+		return nil, "", fmt.Errorf("token endpoint: invalid ID token: %w", err)
 	}
 	// Some providers put the groups only into the first ID token: without the claim the groups are
 	// unknown (an empty list would mean the user left them all).
