@@ -758,15 +758,17 @@ func TestPolicyRulesInMaps(t *testing.T) {
 		t.Fatalf("a bad port: HTTP %d", code)
 	}
 	var changed api.Policy
+	// Rules go one way (0.52): a request for both ways (one_way false, as an older ento admin sends
+	// it) changes the ports only.
 	if code := admin.do(t, "PUT", fmt.Sprintf("%s/%d/rules", api.PathPolicies, pol.ID), api.PolicyRulesRequest{Ports: []string{"all"}}, &changed); code != 200 ||
-		changed.OneWay || changed.Ports != nil {
+		!changed.OneWay || changed.Ports != nil {
 		t.Fatalf("rules changed: HTTP %d %+v", code, changed)
 	}
 	srv.checkVersion(ctx)
 	server.do(t, "GET", api.PathNetMap, nil, &nmServer)
 	admin.do(t, "GET", api.PathNetMap, nil, &nmAdmin)
-	if !slices.Equal(nmServer.Peers[0].Accept, []string{"all"}) || !slices.Equal(nmAdmin.Peers[0].Accept, []string{"all"}) {
-		t.Fatalf("both ways, every port: %+v / %+v", nmServer.Peers, nmAdmin.Peers)
+	if !slices.Equal(nmServer.Peers[0].Accept, []string{"all"}) || len(nmAdmin.Peers[0].Accept) != 0 {
+		t.Fatalf("one way, every port: %+v / %+v", nmServer.Peers, nmAdmin.Peers)
 	}
 	// An operator may change the rules of a policy without checks, not of one with checks.
 	opTok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true, Groups: []string{"ops"}})

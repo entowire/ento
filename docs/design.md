@@ -301,9 +301,10 @@ so agents only receive updates. Control nodes are stateless between requests; an
 
 ## Policies
 
-A policy names a source group, a destination group (`*`: every device), a direction and port rules:
-the source's devices may open connections to the destination's, and, unless the policy is one-way,
-the reverse; port rules are `all`, `tcp`, `udp`, `tcp/N`, `tcp/N-M`, `udp/...` and `icmp` (echo
+A policy names a source group, a destination group (`*`: every device) and port rules: the
+source's devices may open connections to the destination's, which answer them (one way: 0.52,
+control node starts, `internal/control/oneway.go`, except one that requires posture checks, kept
+both ways until an admin replaces it); port rules are `all`, `tcp`, `udp`, `tcp/N`, `tcp/N-M`, `udp/...` and `icmp` (echo
 requests). Two devices are in each other's network map when any policy connects them, in either
 direction (one must be able to answer the other). Since 0.19 each peer in a map also carries what
 it may open on the receiving device (`accept`: the union of the rules of every policy that lets it,
@@ -427,7 +428,8 @@ done inside the tunnel):
   minute.
 - **Bypass.** Any policy that connects two devices puts them in each other's map, so another
   policy connecting the same groups (either order, or `*`) without the checks makes them moot
-  (counted as two-way and every port: older agents enforce neither).
+  (counted both ways and every port: a connection carries data both ways whichever side opened
+  it, and older agents enforce neither).
   Adding or changing a policy reports such pairs as warnings (by group names); operators may not add
   a policy that would bypass a guarded one.
 - **Audit.** `posture_failed` (denied) for failing facts, `posture_stale` (ok) for a missing or old
@@ -665,7 +667,7 @@ the authority public key.
 | `control_nodes` | name, public key, public endpoint, overlay address, last seen |
 | `peers` | public key, overlay address, hostname, OS, approved, admin, groups, observed endpoint, last seen |
 | `enrollment_tokens` | temporary public key and preshared key, temporary address, expiry, redemption, pre-authorised groups/approval/admin |
-| `policies` | allow rules between groups: direction (two-way or one-way), port rules, and the posture checks their source devices must pass |
+| `policies` | allow rules between groups, one way (`one_way` false: an old rule both ways with posture checks), port rules, and the posture checks their source devices must pass |
 | `posture_checks` | named posture requirements: disk encryption, firewall, Secure Boot, oldest system versions, oldest security patch per system (days), oldest report |
 | `posture` | each device's latest report (facts, received at) and the stored results of the checks it must pass (and when they last changed) |
 | `authorities` | other networks whose credentials admit their devices: name, public key, groups, maximum lifetime, enrollment token |

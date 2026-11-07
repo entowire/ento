@@ -1425,16 +1425,17 @@ function renderPolicies() {
     const guarded = (p.posture || []).length > 0;
     // Operators neither change a rule's checks nor remove a rule that has some.
     const acts = [];
-    if (isAdmin() || !guarded) acts.push(button("Direction and ports", () => editRules(p), "link"));
+    if (isAdmin() || !guarded) acts.push(button(p.one_way ? "Ports" : "Make one way", () => editRules(p), "link"));
     if (isAdmin()) acts.push(button("Checks", () => editChecks(p), "link"));
     if (isAdmin() || !guarded) acts.push(button("Remove", () => disallow(p), "link danger"));
     const groupName = (x) => x === "*" ? "every device" : (x.startsWith("route:") ? "route " + x.slice(6) : [isDev(x) ? icon("laptop", 13) : icon("people", 13), " ", gname(x)]);
     return el("div", { class: "rule" },
       el("div", { class: "flow" }, el("span", { class: "from-g" }, groupName(p.source)),
-        el("span", { class: "arrow", title: p.one_way ? `only ${p.source} opens connections` : "both ways", role: "img", "aria-label": p.one_way ? "reaches, one way" : "and back, both ways" }, icon(p.one_way ? "one" : "both", 26)),
+        el("span", { class: "arrow", title: p.one_way ? `${p.source} opens connections, ${p.destination} answers` : "an old rule both ways: make it one way and add the reverse", role: "img", "aria-label": p.one_way ? "reaches" : "and back, both ways (an old rule)" }, icon(p.one_way ? "one" : "both", 26)),
         el("span", { class: "to-g" }, groupName(p.destination)),
         el("span", { class: "ports-t" }, (p.ports || []).length ? p.ports.join(", ") : "all ports"),
-        guarded ? badge("passing " + p.posture.join(", "), "warn") : null),
+        guarded ? badge("passing " + p.posture.join(", "), "warn") : null,
+        p.one_way ? null : badge("old rule, both ways", "warn")),
       el("div", { class: "row-actions" }, acts));
   }), g ? `No rule involves ${g}.` : "No rules: devices reach nothing."));
 }
@@ -1487,21 +1488,21 @@ function portList(text) {
 }
 
 async function editRules(p) {
-  const oneWay = el("input", { type: "checkbox", checked: !!p.one_way });
   const ports = el("input", { class: "input mono", value: (p.ports || []).join(", "), placeholder: "all", autocomplete: "off", "aria-label": "Ports" });
-  const body = el("div", { class: "stack" }, el("label", { class: "check" }, oneWay, el("span", {}, "One way", el("small", {}, `Only ${p.source} opens connections; ${p.destination} answers.`))),
+  const body = el("div", { class: "stack" },
+    p.one_way ? null : el("p", { class: "hint" }, `Saving makes it one way: only ${p.source} opens connections. For ${p.destination} to open them too, add the rule ${p.destination} → ${p.source}.`),
     el("label", { class: "field" }, el("span", {}, "Ports"), ports));
   if (!await ask(`${p.source} ${p.one_way ? "→" : "↔"} ${p.destination}`,
     "Ports: all, or e.g. tcp/22, tcp/443, udp/53, icmp. Enforced by the receiving device's agent (0.19 and later).", { body, ok: "Save" })) return;
   try {
-    const r = await call("PUT", `/v1/admin/policies/${p.id}/rules`, { one_way: oneWay.checked, ports: portList(ports.value) });
+    const r = await call("PUT", `/v1/admin/policies/${p.id}/rules`, { one_way: true, ports: portList(ports.value) });
     policyNotice("Rule changed.", r);
   } catch (e) { notice("Rule: " + e.message); }
   load();
 }
 
 async function disallow(p) {
-  if (!await ask(`Remove ${p.source} ${p.one_way ? "→" : "↔"} ${p.destination}?`, "Devices of these groups stop reaching each other (unless another rule allows it).", { ok: "Remove", danger: true })) return;
+  if (!await ask(`Remove ${p.source} ${p.one_way ? "→" : "↔"} ${p.destination}?`, `${p.source} stops reaching ${p.destination} (unless another rule allows it).`, { ok: "Remove", danger: true })) return;
   try {
     await call("DELETE", `/v1/admin/policies/${p.id}`);
     notice("Rule removed.", true);
@@ -1515,7 +1516,7 @@ $("policy-form").addEventListener("submit", async (ev) => {
   try {
     const posture = isAdmin() ? policyChecks : [];
     const r = await call("POST", "/v1/admin/policies", { source: f.source.value.trim(), destination: f.destination.value.trim(), posture,
-      one_way: f.one_way.checked, ports: portList(f.ports.value) });
+      one_way: true, ports: portList(f.ports.value) });
     policyNotice("Rule added.", r);
     f.reset();
     policyChecks = [];

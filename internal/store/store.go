@@ -356,8 +356,9 @@ func (t Token) Active(now time.Time) bool {
 	return t.RedeemedAt.IsZero() && now.Before(t.ExpiresAt)
 }
 
-// Policy allows connectivity between two groups, in both directions, or with OneWay only from the
-// source to the destination (the destination answers, it does not open connections). Ports limits
+// Policy lets the source group's devices open connections to the destination group's, which answer
+// them (OneWay; false: an old policy both ways, which the control nodes split into one-way ones
+// since 0.52 unless it requires posture checks). Ports limits
 // what may be opened (canonical rules of package ports; empty: everything). Posture names the
 // checks its source devices must pass (see PostureCheck).
 type Policy struct {

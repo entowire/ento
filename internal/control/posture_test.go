@@ -265,7 +265,7 @@ func TestPostureChecks(t *testing.T) {
 	if code := admin.do(t, "POST", api.PathPolicies, api.Policy{Source: "laptops", Destination: "servers"}, nil); code != http.StatusConflict {
 		t.Fatalf("the same policy without its checks: HTTP %d", code)
 	}
-	if logs.countAll("action=policy_added", fmt.Sprintf("policy %d device:laptops <-> device:servers posture=enc", pol.ID)) != 1 {
+	if logs.countAll("action=policy_added", fmt.Sprintf("policy %d device:laptops -> device:servers posture=enc", pol.ID)) != 1 {
 		t.Error("policy's checks not audited")
 	}
 
@@ -439,8 +439,10 @@ func TestPostureChecks(t *testing.T) {
 		t.Error("refused bypass not audited")
 	}
 	var reverse api.Policy
+	// One way (0.52), and still a bypass: a connection carries data both ways. Its other warning names
+	// the server, whose agent has not reported (one-way rules rely on agents that filter).
 	if code := admin.do(t, "POST", api.PathPolicies, api.Policy{Source: "servers", Destination: "laptops"}, &reverse); code != http.StatusCreated ||
-		len(reverse.Warnings) != 1 || !strings.Contains(reverse.Warnings[0], fmt.Sprintf("which policy %d requires", pol.ID)) {
+		len(reverse.Warnings) != 2 || !strings.Contains(reverse.Warnings[0], fmt.Sprintf("which policy %d requires", pol.ID)) {
 		t.Fatalf("admin adds the reverse policy: HTTP %d %+v", code, reverse)
 	}
 	if !sees(server, "z-laptop") {
@@ -475,7 +477,7 @@ func TestPostureChecks(t *testing.T) {
 	if !sees(server, "z-laptop") || len(netmap(laptop).Self.PostureFailing) != 0 {
 		t.Fatal("a policy without checks still leaves the laptop out")
 	}
-	if logs.countAll("action=policy_posture", fmt.Sprintf("policy %d device:laptops <-> device:servers (was enc)", pol.ID)) != 1 {
+	if logs.countAll("action=policy_posture", fmt.Sprintf("policy %d device:laptops -> device:servers (was enc)", pol.ID)) != 1 {
 		t.Error("policy change not audited")
 	}
 	if code := admin.do(t, "DELETE", api.PathPostureChecks+"/enc", nil, nil); code != http.StatusNoContent {

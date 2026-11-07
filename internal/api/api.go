@@ -498,8 +498,9 @@ type Policy struct {
 	Source      string   `json:"source"`
 	Destination string   `json:"destination"`
 	Posture     []string `json:"posture,omitempty"`
-	// OneWay: only the source opens connections (the destination answers them); otherwise both
-	// may. Ports limits what may be opened ("tcp/22", "tcp/8000-8100", "udp/53", "icmp"; empty:
+	// OneWay: only the source opens connections (the destination answers them). Every policy is
+	// one way since 0.52 (asked for or not); false is an old one both ways that requires posture
+	// checks, kept until an admin replaces it. Ports limits what may be opened ("tcp/22", "tcp/8000-8100", "udp/53", "icmp"; empty:
 	// everything). Enforced by the receiving device's agent (0.19 and later).
 	OneWay bool     `json:"one_way,omitempty"`
 	Ports  []string `json:"ports,omitempty"`
@@ -514,7 +515,8 @@ type UpdatePolicyRequest struct {
 	Posture []string `json:"posture"`
 }
 
-// PolicyRulesRequest sets a policy's direction and ports, at PathPolicies + "/{id}/rules" (PUT).
+// PolicyRulesRequest sets a policy's ports, at PathPolicies + "/{id}/rules" (PUT); the policy is
+// one way afterwards, whatever OneWay says (0.52).
 type PolicyRulesRequest struct {
 	OneWay bool     `json:"one_way"`
 	Ports  []string `json:"ports"`

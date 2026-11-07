@@ -119,8 +119,9 @@ agent join; operators: ordinary devices, tokens and policies only):
   ento admin groups ID GROUP[,GROUP...]
   ento admin role ID admin|operator|none   (admins only)
   ento admin policies   list policies
-  ento admin allow SOURCE DESTINATION [--one-way] [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] | disallow ID
-                         --one-way: only SOURCE opens connections (DESTINATION answers them)
+  ento admin allow SOURCE DESTINATION [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] | disallow ID
+                         SOURCE opens connections to DESTINATION, which answers them: a rule goes
+                         one way (0.52); for the other way, allow DESTINATION SOURCE as well
                          --ports: what may be opened: tcp/22, tcp/8000-8100, udp/53, tcp, udp, icmp (default: all)
                          --posture: SOURCE devices must pass these checks (admins only)
   ento admin policy ID --posture CHECK[,CHECK...]|none   change the checks a policy requires (admins)
@@ -135,7 +136,7 @@ agent join; operators: ordinary devices, tokens and policies only):
                          address; devices resolve it when they reach the address (admins)
   ento admin dns forward ZONE SERVER[,SERVER...] | dns unforward ZONE   names in ZONE are asked of
                          its name servers, e.g. an office's own DNS through its route (admins)
-  ento admin policy ID [--one-way|--two-way] [--ports RULE[,RULE...]|all]   change its direction and ports
+  ento admin policy ID --ports RULE[,RULE...]|all   change its ports
 
 Device posture (checks: admins add and delete them, operators list them):
   ento admin posture    list posture checks

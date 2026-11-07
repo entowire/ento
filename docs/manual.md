@@ -233,7 +233,7 @@ Other bootstrap operations work the same way, on a control node with `ENTO_DATAB
 deployments that are set up by automation before any administrator has a device:
 
     ento control allow servers servers
-    ento control allow --one-way --ports tcp/443 msp:operators servers   # direction and ports (0.19.1)
+    ento control allow --ports tcp/443 msp:operators servers   # one way (0.52), these ports (0.19.1)
     ento control authority add msp --key entoa1:... --groups operators > msp.token
     ento control admin ops-laptop          # make a device an administrator (--off takes it back)
 
@@ -360,12 +360,23 @@ provider, and no approval or sign-in restores it until it is resumed), `groups`,
 
 ### Direction and ports
 
-A policy lets the devices of its source open connections to the devices of its destination, and
-(two-way, the default) the reverse. From 0.19 a policy can be one-way and limited to ports:
+connections to the devices of its destination, which answer them, and nothing the other way. For
+the other way, add the reverse policy. A policy can be limited to ports (0.19):
 
-    sudo ento admin allow operators servers --one-way --ports tcp/22,tcp/443,icmp
-    sudo ento admin policy 3 --one-way --ports tcp/22        # an existing policy
-    sudo ento admin policy 3 --two-way --ports all           # back to everything, both ways
+    sudo ento admin allow operators servers --ports tcp/22,tcp/443,icmp
+    sudo ento admin allow servers monitoring --ports tcp/9100   # the other way is a policy of its own
+    sudo ento admin policy 3 --ports tcp/22                     # an existing policy
+    sudo ento admin policy 3 --ports all                        # back to every port
+
+Policies made both ways before 0.52 are split when a control node starts, so that every device
+reaches what it reached before: a group to itself is made one way (the same thing), `A <-> B`
+becomes `A -> B` and `B -> A` with its ports (merged into an existing `B -> A`), each step in the
+node's log. One that requires posture checks stays both ways (its checks apply to whichever side
+opens, which no pair of one-way policies says), and so does one whose reverse requires checks of
+its own: `ento admin policies` and the admin interface show it as an old rule both ways, and
+changing its ports (`policy ID --ports`, or **Make one way**) makes it one way. `--one-way` is
+still accepted (every policy is), `--two-way` is refused, and an older `ento admin` asking for both
+ways gets one way.
 
 Port rules are `all` (the default), `tcp`, `udp`, `tcp/22`, `tcp/8000-8100`, `udp/53` and `icmp`
 (echo requests: ping), at most 64 per policy. Several policies between the same devices add up.
@@ -384,8 +395,7 @@ redirects, as a firewall that sends 443 to a proxy's port, is judged as the 443 
 since 0.20.1, before that an input chain matching conntrack's original port, whose rules made the
 firewall fact unknown); in the agent's own WireGuard (macOS, Windows, Android, Linux with
 `--userspace`) in the packet path. The system's firewall still applies to what the filter lets
-through. Both devices of a one-way policy are still in each other's map (one has to answer the
-other).
+through. Both devices of a policy are in each other's map (one has to answer the other).
 
 What the filter refuses is dropped silently unless the agent runs with `--log-drops` (0.29; `ento
 agent install --log-drops` keeps it in the service, and on Linux later installs keep it until
@@ -403,15 +413,15 @@ is 1); with the agent's own WireGuard, the agent writes the same fields:
     ento-filter drop: IN=ento0 SRC=100.64.1.5 DST=100.64.1.3 PROTO=TCP SPT=40312 DPT=22
 
 Agents older than 0.19 do not enforce direction or ports: they accept everything from the peers in
-their map, as before. Adding or changing a policy with a direction or ports answers with a warning
-naming the devices that receive connections through it and run an older agent or have never
-reported. Control nodes older than 0.19 do not know the rules: they add the policy two-way and for
-every port, and `allow` then fails, saying so and how to remove it; `policy ID --ports` changes
-nothing and says the control plane is too old. `ento admin policies` shows `->` (one-way) or `<->`
-and the ports; in the admin interface, adding a rule has a ports field and a one-way box, and each
-rule has **Direction and ports**. Operators may change the direction and ports of a
-policy that requires no posture checks; changes are audited as `policy_rules` with what the policy
-was, and `policy_added`/`policy_deleted` lines carry the direction and ports.
+their map, as before. Adding or changing a policy answers with a warning naming the devices that
+its direction or ports rely on and that run an older agent or have never reported. Control nodes
+older than 0.19 do not know the rules: they add the policy both ways and for every port, and
+`allow` then fails, saying so and how to remove it; `policy ID --ports` changes nothing and says
+the control plane is too old. `ento admin policies` shows `->` and the ports (`<->` for an old rule
+both ways); in the admin interface, adding a rule has a ports field, and each rule has **Ports**.
+Operators may change the ports of a policy that requires no posture checks; changes are audited as
+`policy_rules` with what the policy was, and `policy_added`/`policy_deleted` lines carry the
+direction and ports.
 
 ### Routes (networks behind a gateway)
 
@@ -574,7 +584,8 @@ enc`), or `*` on either side, also when written the other way (`device:laptops` 
 plain name matches the device group of that name, 0.51). Adding or changing a policy answers with a warning for each such pair
 (the CLI prints it, the admin interface shows it), going by group names: a device that is in
 several groups can still be let through by a policy of another of its groups. The warning counts
-every policy as two-way and allowing every port (agents older than 0.19 enforce neither).
+every policy as connecting its groups both ways and on every port: a connection carries data both
+ways whichever side opened it, and agents older than 0.19 enforce neither.
 
 Checks, and attaching them to policies, are for admins: operators list checks, add and remove
 policies without checks, but neither change a policy's checks, nor remove a policy that has some,

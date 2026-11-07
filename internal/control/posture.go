@@ -694,8 +694,10 @@ func coversGroups(x, y, a, b string) bool {
 
 // bypasses reports whether policy o lets source devices of policy p reach p's destination devices
 // without the checks p requires of them: o connects the same groups (in either order, or through
-// "*") and does not require all of p's checks of them as its own source devices. Policies apply in
-// both directions and the first that allows a pair wins, so such a policy makes p's checks moot.
+// "*") and does not require all of p's checks of them as its own source devices. A connection
+// carries data both ways whichever side opened it, and the first policy that allows a pair wins, so
+// such a policy makes p's checks moot even where it goes the other way (rules go one way since
+// 0.52; this stays as strict as when they went both).
 // Going by group names: devices in several groups can still be connected by others.
 func bypasses(o, p store.Policy) bool {
 	if isRoute(o.Destination) != isRoute(p.Destination) { // a policy between groups reaches no route
@@ -714,11 +716,11 @@ func policyWarnings(p store.Policy, all []store.Policy) []string {
 	var out []string
 	for _, o := range all {
 		if bypasses(o, p) {
-			out = append(out, fmt.Sprintf("policy %d (%s <-> %s) lets devices of %s reach %s without check %s",
+			out = append(out, fmt.Sprintf("policy %d (%s -> %s) connects devices of %s and %s without check %s",
 				o.ID, o.Source, o.Destination, p.Source, p.Destination, strings.Join(p.Posture, ",")))
 		}
 		if bypasses(p, o) {
-			out = append(out, fmt.Sprintf("this policy lets devices of %s reach %s without check %s, which policy %d requires",
+			out = append(out, fmt.Sprintf("this policy connects devices of %s and %s without check %s, which policy %d requires",
 				o.Source, o.Destination, strings.Join(o.Posture, ","), o.ID))
 		}
 	}

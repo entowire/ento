@@ -1092,7 +1092,8 @@ func (s *Server) handleAddPolicy(w http.ResponseWriter, r *http.Request, self st
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	candidate := store.Policy{Source: req.Source, Destination: req.Destination, Posture: checks, OneWay: req.OneWay, Ports: rules}
+	// (false from an older ento admin) is not asked: the policy is one way whatever it says.
+	candidate := store.Policy{Source: req.Source, Destination: req.Destination, Posture: checks, OneWay: true, Ports: rules}
 	if len(checks) > 0 && !self.Admin {
 		s.audit(r, &self, "policy_added", policyLabel(candidate), "denied")
 		writeErr(w, http.StatusForbidden, "only admins attach posture checks to policies")
@@ -1127,9 +1128,13 @@ func (s *Server) handleAddPolicy(w http.ResponseWriter, r *http.Request, self st
 			p.ID, strings.Join(p.Posture, ",")))
 		return
 	}
-	if p.OneWay != candidate.OneWay || !slices.Equal(p.Ports, candidate.Ports) {
-		writeErr(w, http.StatusConflict, fmt.Sprintf("%s exists with another direction or other ports: change its rules instead",
+	if !p.OneWay {
+		writeErr(w, http.StatusConflict, fmt.Sprintf("%s exists, an old rule both ways with posture checks: delete it, then add the policy and its reverse",
 			policyLabel(p)))
+		return
+	}
+	if !slices.Equal(p.Ports, candidate.Ports) {
+		writeErr(w, http.StatusConflict, fmt.Sprintf("%s exists with other ports: change its ports instead", policyLabel(p)))
 		return
 	}
 	s.audit(r, &self, "policy_added", policyLabel(p), "ok")
@@ -1141,8 +1146,9 @@ func (s *Server) handleAddPolicy(w http.ResponseWriter, r *http.Request, self st
 	writeJSON(w, http.StatusCreated, out)
 }
 
-// handleSetPolicyRules changes a policy's direction and ports. Operators may, as they may remove the
-// policy and add it again, except for a policy that requires posture checks (as for removing it).
+// handleSetPolicyRules changes a policy's ports (and makes an old one both ways one way: rules go
+// one way, a request's one_way is not asked). Operators may, as they may remove the policy and add
+// it again, except for a policy that requires posture checks (as for removing it).
 func (s *Server) handleSetPolicyRules(w http.ResponseWriter, r *http.Request, self store.Peer) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -1168,7 +1174,7 @@ func (s *Server) handleSetPolicyRules(w http.ResponseWriter, r *http.Request, se
 		writeErr(w, http.StatusForbidden, "only admins change a policy that requires posture checks")
 		return
 	}
-	p, err := s.cfg.Store.SetPolicyRules(r.Context(), id, req.OneWay, rules)
+	p, err := s.cfg.Store.SetPolicyRules(r.Context(), id, true, rules)
 	if err != nil {
 		s.respondStoreErr(w, err)
 		return

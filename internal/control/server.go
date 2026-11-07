@@ -299,6 +299,9 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("port 443 (identity provider, admin interface): %w", err)
 		}
 	}
+	if err := s.splitTwoWay(ctx); err != nil {
+		cfg.Logf("rules both ways not split yet (they work as before): %v", err)
+	}
 	if err := s.reconcile(ctx); err != nil {
 		wg.Close()
 		return nil, err

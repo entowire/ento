@@ -175,13 +175,12 @@
               <label><span class="sr">To group or route</span><select class="input to" name="destination" required></select></label>
               <span>on</span>
               <label><span class="sr">Ports</span><input class="input ports" name="ports" autocomplete="off" placeholder="all ports" title="all, or e.g. tcp/22, tcp/443, udp/53, icmp"></label>
-              <label class="check"><input type="checkbox" name="one_way"><span>one way</span></label>
               <button type="button" class="link" id="policy-checks-btn" data-admin-only>device checks…</button>
               <button type="submit" class="btn sm primary" data-push>Allow</button>
             </form>
             <div id="policy-list"></div>
             <div class="deny"><svg width="18" height="18" aria-hidden="true"><use href="#i-block"/></svg><span><b>Everything else is blocked</b>, between people's devices too.
-              One way: only the first group opens connections; the other answers. Ports and direction are enforced by the receiving device.</span></div>
+              A rule goes one way: the first group opens connections, the second answers (for the other way, add its own rule). Ports are enforced by the receiving device.</span></div>
           </section>
           <section class="card" aria-labelledby="chk-h">
             <div class="card-head"><h2 id="chk-h">Device checks</h2><button type="button" class="link" id="check-new" data-admin-only>New check</button></div>

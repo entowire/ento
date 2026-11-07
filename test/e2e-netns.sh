@@ -7,7 +7,7 @@
 #   peer  (ns ento-b) ──┘                └── PostgreSQL (ENTO_DATABASE_URL)
 #
 # Checks: bootstrap token, enrollment (B by words and the network record), admin API, device names (named after the host name, counter,
-# confirm, rename), pending peer isolation, approval, policy, direct peer-to-peer traffic, a one-way
+# confirm, rename), pending peer isolation, approval, policies (one way: each direction its own), direct peer-to-peer traffic, a
 # policy limited to ports (enforced by the receiving agent's nftables table, put back when removed),
 # `ento agent down` (agent stopped, kernel interface removed), device posture (agents report,
 # a policy requiring a firewall leaves a device without one out until it has one), refused
@@ -163,10 +163,14 @@ agent a admin confirm-name "$id_b" | grep -q "is now $host\$" || fail "confirm-n
 if agent a admin rename "$id_b" "z-other" 2>/dev/null; then fail "an administrator gave a z- name"; fi
 agent a admin rename "$id_b" peer-b | grep -q "is now peer-b" || fail "rename"
 
-step "admin approves B and allows admins <-> servers"
+step "admin approves B and allows admins -> servers and servers -> admins (a rule goes one way)"
 agent a admin peers
 agent a admin approve "$id_b"
 agent a admin allow admins servers >/dev/null
+agent a admin allow servers admins >/dev/null
+if agent a admin allow admins servers --two-way >/dev/null 2>&1; then fail "a rule both ways was taken"; fi
+# policy_id SOURCE DESTINATION: the policy's ID (the names as given, or their device groups).
+policy_id() { agent a admin policies | awk -v s="$1" -v d="$2" '($2 == s || $2 == "device:" s) && ($4 == d || $4 == "device:" d) {print $1}'; }
 
 step "A <-> B traffic through the mesh"
 for _ in $(seq 1 60); do sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/null 2>&1 && break; sleep 1; done
@@ -207,8 +211,10 @@ for _ in $(seq 1 60); do sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/
 sudo ip netns exec ento-a ping -c2 -W2 "$addr_b" >/dev/null || { cat "$work/agent-b.log"; fail "A cannot reach B again"; }
 if agent b agent status --state-dir "$work/state-b" | grep -q "^agent: *down"; then fail "B still marked down"; fi
 
-step "one-way policy with ports: A (admins) opens tcp/8080 on B (servers), nothing else; B opens nothing on A"
-pol="$(agent a admin policies | awk '$2 == "admins" && $4 == "servers" {print $1}')"
+step "a policy with ports: A (admins) opens tcp/8080 on B (servers), nothing else; without servers -> admins, B opens nothing on A"
+pol="$(policy_id admins servers)"
+rev="$(policy_id servers admins)"
+[[ -n "$pol" && -n "$rev" ]] || { agent a admin policies; fail "no policies admins -> servers and servers -> admins"; }
 mkdir -p "$work/www" && echo ok > "$work/www/index.html"
 for p in 8080 8081; do
   sudo ip netns exec ento-b python3 -m http.server "$p" --bind "$addr_b" --directory "$work/www" > "$work/http-b-$p.log" 2>&1 &
@@ -223,8 +229,9 @@ for p in json.load(sys.stdin):
 }
 for _ in $(seq 1 20); do opens a "$addr_b" 8081 && break; sleep 1; done
 opens a "$addr_b" 8081 || fail "A cannot open B:8081 before the policy changes"
-agent a admin policy "$pol" --one-way --ports tcp/8080 >/dev/null
-agent a admin policies | grep -q "admins *-> *servers *tcp/8080" || fail "the policy does not show its direction and ports"
+agent a admin policy "$pol" --ports tcp/8080 >/dev/null
+agent a admin disallow "$rev" >/dev/null
+[[ "$(agent a admin policies)" =~ admins\ +-\>\ +(device:)?servers\ +tcp/8080 ]] || { agent a admin policies; fail "the policy does not show its direction and ports"; }
 for _ in $(seq 1 20); do opens a "$addr_b" 8081 || break; sleep 1; done
 opens a "$addr_b" 8080 || { sudo ip netns exec ento-b nft list ruleset; fail "A cannot open B:8080"; }
 if opens a "$addr_b" 8081; then fail "A opened B:8081, which the policy does not allow"; fi
@@ -237,7 +244,7 @@ else
     fail "B's filter has no log rule"
   grep -q "$drop_line" <<<"$(sudo dmesg)" || { sudo dmesg | tail -5; fail "the kernel did not log the refused connection"; }
 fi
-if opens b "$addr_a" 9090; then fail "B opened a connection to A through a one-way policy"; fi
+if opens b "$addr_a" 9090; then fail "B opened a connection to A with no policy servers -> admins"; fi
 if sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/null 2>&1; then fail "A pinged B without icmp in the policy"; fi
 if [[ -z "${E2E_USERSPACE:-}" ]]; then
   # Whole, then matched: grep -q stopping early would make nft fail on a closed pipe (pipefail).
@@ -262,9 +269,10 @@ sudo ip netns exec ento-b nft delete table ip e2e-nat
 agent a admin policy "$pol" --ports tcp/8080,icmp >/dev/null
 for _ in $(seq 1 20); do sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/null 2>&1 && break; sleep 1; done
 sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/null || fail "A cannot ping B with icmp in the policy"
-agent a admin policy "$pol" --two-way --ports all >/dev/null
+agent a admin policy "$pol" --ports all >/dev/null
+agent a admin allow servers admins >/dev/null
 for _ in $(seq 1 20); do opens b "$addr_a" 9090 && break; sleep 1; done
-opens b "$addr_a" 9090 || fail "B cannot open A:9090 once the policy is two-way again"
+opens b "$addr_a" 9090 || fail "B cannot open A:9090 once servers -> admins is allowed again"
 opens a "$addr_b" 8081 || fail "A cannot open B:8081 once the policy allows every port again"
 
 if [[ -n "${E2E_PSQL:-}" ]]; then
@@ -345,9 +353,9 @@ if sudo ip netns exec ento-b python3 "$work/resolve.py" "$addr_a" peer-b.e2e.int
 
 if [[ -n "${E2E_PSQL:-}" && -z "${E2E_USERSPACE:-}" ]]; then # the kernel's table counts (the agent's own WireGuard is unit-tested)
   step "person layer: what A sends beyond its machine's policy is its person's traffic; logout closes the layer, the machine keeps its own"
-  pol="$(agent a admin policies | awk '$2 == "admins" && $4 == "servers" {print $1}')"
-  agent a admin policy "$pol" --one-way --ports tcp/8080 >/dev/null # the machine's (A is in admins by its token)
-  agent a admin allow operators servers --one-way --ports tcp/8081 >/dev/null # the person's
+  pol="$(policy_id admins servers)"
+  agent a admin policy "$pol" --ports tcp/8080 >/dev/null # the machine's (A is in admins by its token)
+  agent a admin allow operators servers --ports tcp/8081 >/dev/null # the person's
   $E2E_PSQL -qc "UPDATE ento_peers SET user_id = 'sub-tester', user_login = 'tester', user_name = 'tester@example.com', login_at = now(),
     person_approved = true, person_groups = '{operators}', person_active = true, person_since = now(), person_activity_at = now()
     WHERE address = '$addr_a'" -c "UPDATE ento_state SET version = version + 1 WHERE id = 1" -c "SELECT pg_notify('ento_changes', '')" >/dev/null
@@ -369,8 +377,8 @@ if [[ -n "${E2E_PSQL:-}" && -z "${E2E_USERSPACE:-}" ]]; then # the kernel's tabl
   if opens a "$addr_b" 8081; then fail "A still opens its person's port after logout"; fi
   opens a "$addr_b" 8080 || fail "A lost its machine's port at logout"
   [[ "$(agent a agent logout --state-dir "$work/state-a")" == "signed out"* ]] || fail "a second logout"
-  agent a admin disallow "$(agent a admin policies | awk '$2 == "operators" {print $1}')" >/dev/null
-  agent a admin policy "$pol" --two-way --ports all >/dev/null
+  agent a admin disallow "$(policy_id operators servers)" >/dev/null
+  agent a admin policy "$pol" --ports all >/dev/null
   $E2E_PSQL -qc "UPDATE ento_peers SET user_id = '', user_login = '', user_name = '', login_at = NULL, person_approved = false,
     person_active = false, person_groups = '{}'" -c "UPDATE ento_state SET version = version + 1 WHERE id = 1" \
     -c "SELECT pg_notify('ento_changes', '')" >/dev/null
@@ -539,9 +547,9 @@ agent a admin peers
 step "posture: a policy requiring a firewall leaves A (its source) out"
 agent a admin posture add fw --firewall
 agent a admin posture | grep -q "^fw " || fail "check not listed"
-pol="$(agent a admin policies | awk '$2 == "admins" && $4 == "servers" {print $1}')"
+pol="$(policy_id admins servers)"
 agent a admin policy "$pol" --posture fw >/dev/null
-agent a admin policies | grep -q "admins *<-> *servers *all *fw" || fail "policy does not show its check"
+[[ "$(agent a admin policies)" =~ admins\ +-\>\ +(device:)?servers\ +all\ +fw ]] || { agent a admin policies; fail "policy does not show its check"; }
 for _ in $(seq 1 30); do sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/null 2>&1 || break; sleep 1; done
 if sudo ip netns exec ento-a ping -c1 -W1 "$addr_b" >/dev/null 2>&1; then fail "A reaches B without a firewall"; fi
 status_a() { agent a agent status --state-dir "$work/state-a"; } # whole, not cut short by grep -q (pipefail)

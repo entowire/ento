@@ -434,9 +434,9 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		return errors.New("usage: ento control authority add|token|delete NAME [flags]")
 
 	case "allow":
-		// A new policy is two-way on every port unless --one-way/--ports say otherwise; for an
-		// existing one, only what is given changes (so setup steps can run again).
-		oneWay, rules, rest, err := ruleFlags(args)
+		// A policy goes one way (0.52), on every port unless --ports says otherwise; for an existing
+		// one, only what is given changes (so setup steps can run again).
+		rules, rest, err := ruleFlags(args)
 		if err != nil {
 			return err
 		}
@@ -444,7 +444,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16)")
 		_ = fs.Parse(rest)
 		if fs.NArg() != 2 {
-			return errors.New("usage: ento control allow [--network N] [--one-way|--two-way] [--ports RULES|all] SOURCE DESTINATION")
+			return errors.New("usage: ento control allow [--network N] [--ports RULES|all] SOURCE DESTINATION (SOURCE opens, DESTINATION answers)")
 		}
 		if slices.Equal(rules, []string{"all"}) {
 			rules = []string{}
@@ -454,23 +454,17 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 			return err
 		}
 		defer st.Close()
-		want := store.Policy{Source: fs.Arg(0), Destination: fs.Arg(1), Ports: rules}
-		if oneWay != nil {
-			want.OneWay = *oneWay
-		}
+		want := store.Policy{Source: fs.Arg(0), Destination: fs.Arg(1), OneWay: true, Ports: rules}
 		got, err := st.AddPolicy(ctx, want)
 		if err != nil {
 			return err
 		}
-		ow, pr := got.OneWay, got.Ports
-		if oneWay != nil {
-			ow = *oneWay
-		}
+		pr := got.Ports
 		if rules != nil {
 			pr = rules
 		}
-		if ow != got.OneWay || !slices.Equal(pr, got.Ports) && len(pr)+len(got.Ports) > 0 {
-			_, err = st.SetPolicyRules(ctx, got.ID, ow, pr)
+		if !got.OneWay || !slices.Equal(pr, got.Ports) && len(pr)+len(got.Ports) > 0 {
+			_, err = st.SetPolicyRules(ctx, got.ID, true, pr)
 		}
 		return err
 
@@ -1697,7 +1691,7 @@ func adminCmd(ctx context.Context, args []string) error {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "ID\tSOURCE\t\tDESTINATION\tPORTS\tSOURCE POSTURE")
 		for _, p := range pols {
-			arrow, open := "<->", "all"
+			arrow, open := "<-> (an old rule both ways: replace it with two)", "all"
 			if p.OneWay {
 				arrow = "->"
 			}
@@ -1711,13 +1705,15 @@ func adminCmd(ctx context.Context, args []string) error {
 
 	case "allow":
 		checks, args, err := postureFlag(rest)
-		var oneWay *bool
 		var rules []string
 		if err == nil {
-			oneWay, rules, args, err = ruleFlags(args)
+			rules, args, err = ruleFlags(args)
 		}
 		if err != nil || len(args) != 2 {
-			return errors.New("usage: ento admin allow SOURCE DESTINATION [--one-way] [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]]")
+			if err != nil && strings.HasPrefix(err.Error(), "rules go one way") {
+				return err
+			}
+			return errors.New("usage: ento admin allow SOURCE DESTINATION [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] (SOURCE opens, DESTINATION answers)")
 		}
 		if len(checks) > 0 {
 			// A control node older than 0.13 would create the policy and ignore its checks: ask
@@ -1726,7 +1722,7 @@ func adminCmd(ctx context.Context, args []string) error {
 				return err
 			}
 		}
-		req := api.Policy{Source: args[0], Destination: args[1], Posture: checks, OneWay: oneWay != nil && *oneWay}
+		req := api.Policy{Source: args[0], Destination: args[1], Posture: checks, OneWay: true}
 		if rules != nil && !slices.Equal(rules, []string{"all"}) {
 			req.Ports = rules
 		}
@@ -1737,7 +1733,7 @@ func adminCmd(ctx context.Context, args []string) error {
 		printWarnings(p.Warnings)
 		if req.OneWay && !p.OneWay || len(req.Ports) > 0 && len(p.Ports) == 0 {
 			// A control node older than 0.19 keeps neither: never leave that unsaid.
-			return fmt.Errorf("the control plane ignored --one-way or --ports (older than ento 0.19?): policy %d allows %s <-> %s on every port; remove it with `ento admin disallow %d` if that is not what you want",
+			return fmt.Errorf("the control plane made it both ways or on every port (older than ento 0.19?): policy %d allows %s <-> %s on every port; remove it with `ento admin disallow %d` if that is not what you want",
 				p.ID, p.Source, p.Destination, p.ID)
 		}
 		if len(checks) > 0 && len(p.Posture) == 0 {
@@ -1752,13 +1748,16 @@ func adminCmd(ctx context.Context, args []string) error {
 
 	case "policy":
 		checks, args, err := postureFlag(rest)
-		var oneWay *bool
 		var rules []string
+		oneWayOnly := slices.Contains(rest, "--one-way") // an old rule both ways made one way
 		if err == nil {
-			oneWay, rules, args, err = ruleFlags(args)
+			rules, args, err = ruleFlags(args)
 		}
-		if err != nil || len(args) != 1 || checks == nil && oneWay == nil && rules == nil {
-			return errors.New("usage: ento admin policy ID --posture CHECK[,CHECK...]|none | [--one-way|--two-way] [--ports RULE[,RULE...]|all]")
+		if err != nil || len(args) != 1 || checks == nil && rules == nil && !oneWayOnly {
+			if err != nil && strings.HasPrefix(err.Error(), "rules go one way") {
+				return err
+			}
+			return errors.New("usage: ento admin policy ID --posture CHECK[,CHECK...]|none | --ports RULE[,RULE...]|all")
 		}
 		id, err := oneID(args)
 		if err != nil {
@@ -1771,7 +1770,7 @@ func adminCmd(ctx context.Context, args []string) error {
 			}
 			printWarnings(p.Warnings)
 		}
-		if oneWay != nil || rules != nil {
+		if rules != nil || oneWayOnly {
 			// What is not given stays as it is.
 			var pols []api.Policy
 			if err := c.Do(ctx, "GET", api.PathPolicies, nil, &pols); err != nil {
@@ -1781,10 +1780,7 @@ func adminCmd(ctx context.Context, args []string) error {
 			if i < 0 {
 				return fmt.Errorf("no policy %d", id)
 			}
-			req := api.PolicyRulesRequest{OneWay: pols[i].OneWay, Ports: pols[i].Ports}
-			if oneWay != nil {
-				req.OneWay = *oneWay
-			}
+			req := api.PolicyRulesRequest{OneWay: true, Ports: pols[i].Ports}
 			if rules != nil {
 				req.Ports = rules
 				if slices.Equal(rules, []string{"all"}) {
@@ -1951,36 +1947,37 @@ func printWarnings(w []string) {
 // empty for "none".
 // ruleFlags takes --one-way, --two-way and --ports LIST out of args: the direction (nil: not given)
 // and the port rules (nil: not given; ["all"] for all).
-func ruleFlags(args []string) (*bool, []string, []string, error) {
-	var oneWay *bool
+// ruleFlags reads --ports. Rules go one way (0.52): --one-way is what every rule is (accepted, for
+// scripts written before), --two-way is refused.
+func ruleFlags(args []string) ([]string, []string, error) {
 	var rules, rest []string
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
-		case a == "--one-way" || a == "--two-way":
-			v := a == "--one-way"
-			oneWay = &v
+		case a == "--one-way":
+		case a == "--two-way":
+			return nil, nil, errors.New("rules go one way (SOURCE opens, DESTINATION answers): for the other way add its own, ento admin allow DESTINATION SOURCE")
 		case a == "--ports" || strings.HasPrefix(a, "--ports="):
 			v, ok := strings.CutPrefix(a, "--ports=")
 			if !ok {
 				if i+1 >= len(args) {
-					return nil, nil, nil, errors.New("--ports needs a list of rules")
+					return nil, nil, errors.New("--ports needs a list of rules")
 				}
 				i++
 				v = args[i]
 			}
 			c, err := ports.Canonical(splitList(v))
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			if len(c) == 0 {
-				return nil, nil, nil, errors.New("--ports needs a list of rules (or all)")
+				return nil, nil, errors.New("--ports needs a list of rules (or all)")
 			}
 			rules = c
 		default:
 			rest = append(rest, a)
 		}
 	}
-	return oneWay, rules, rest, nil
+	return rules, rest, nil
 }
 
 func postureFlag(args []string) ([]string, []string, error) {
