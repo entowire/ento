@@ -319,6 +319,7 @@ const hasRole = (p) => !!(roleOf(p) || deviceRole(p) || p.person_role);
 const mayChange = (p) => isAdmin() || !hasRole(p);
 // roleBadge: each layer's role apart, the device's (its group, a device icon) and the signed-in
 // person's (their group, a people icon); the device has the role when both show.
+const personRoleBadge = (r) => badge([icon("people", 13), r + "s"], "mute", { title: `in ${r}s` });
 const roleBadge = (p) => {
   const d = deviceRole(p), r = p.person_active && p.person_role;
   return [
@@ -592,10 +593,10 @@ function renderPeople() {
     onclick: () => pick(x), onkeydown: (e) => { if (e.key === "Enter") pick(x); } },
     el("td", {}, el("div", { class: "cell" }, el("span", { class: "avatar" + (ui.person === x.key ? " lite" : "") }, initials(x.name)),
       el("div", {}, el("b", {}, x.name), x.email && x.email !== x.name ? el("small", {}, x.email) : null))),
-    el("td", {}, el("div", { class: "tags" }, x.groups.length ? x.groups.map((g) => tag(g)) : el("span", { class: "dim" }, "–"))),
+    el("td", {}, el("div", { class: "tags" }, x.groups.length ? x.groups.map((g) => groupTag(g)) : el("span", { class: "dim" }, "–"))),
     el("td", {}, String(x.devices.length)),
     el("td", { class: "dim nowrap", title: when(x.last) }, x.last ? ago(x.last) : "never"),
-    el("td", {}, el("div", { class: "tags nowrap" }, statusOf(x), x.role ? badge(x.role, "mute") : null))))
+    el("td", {}, el("div", { class: "tags nowrap" }, statusOf(x), x.role ? personRoleBadge(x.role) : null))))
     : [el("tr", {}, el("td", { colspan: 5 }, empty(people.length ? "Nobody matches." : "Nobody yet.")))]));
   renderPerson(people.find((x) => x.key === ui.person));
 }
@@ -622,9 +623,9 @@ function renderPerson(x) {
     el("div", { class: "dhead" }, el("span", { class: "avatar lg lite" }, initials(x.name)),
       el("div", {}, el("b", {}, x.name), el("small", {}, x.email || (x.role ? x.role : "member"))),
       button(icon("close", 16), () => { ui.person = null; renderPeople(); }, "icon-btn", { "aria-label": "Close" })),
-    el("div", { class: "tags" }, statusOf(x), x.role ? badge(x.role, "mute") : null, pp ? null : badge("not in this network's sign-in", "mute")),
+    el("div", { class: "tags" }, statusOf(x), x.role ? personRoleBadge(x.role) : null, pp ? null : badge("not in this network's sign-in", "mute")),
     el("div", { class: "sect" }, el("h3", {}, "Groups"),
-      el("div", { class: "tags" }, x.groups.length ? x.groups.map((g) => tag(g)) : el("span", { class: "dim" }, "none")),
+      el("div", { class: "tags" }, x.groups.length ? x.groups.map((g) => groupTag(g)) : el("span", { class: "dim" }, "none")),
       pp ? button("Change groups", () => editPersonGroups(pp), "link")
         : el("p", { class: "hint" }, "From their sign-in; devices take them at every sign-in.")),
   ];
@@ -650,7 +651,7 @@ function renderPerson(x) {
     x.devices.length ? x.devices.map((p) => el("div", { class: "box" }, devIcon(p),
       el("div", { class: "grow" }, el("b", {}, p.hostname),
         el("small", {}, el("span", { class: "mono" }, p.address), ` · ${online(p) ? "online" : "seen " + ago(p.last_seen)}`),
-        el("div", { class: "tags" }, stateOf(p))),
+        el("div", { class: "tags" }, stateOf(p), roleBadge(p))),
       el("div", { class: "row-actions nowrap" }, p.person_active && mayChange(p) && p.id !== info.self.id ? button("Sign out", () => signOutDevice(p)) : null,
         button("Open", () => openDevice(p.id)))))
       : el("p", { class: "hint" }, "Hasn't joined from any device yet: a device appears here once they sign in on it in ento.")));
@@ -665,7 +666,7 @@ function renderPerson(x) {
           x.email || x.user, "Suspend")) suspendUser(x.user, true);
       }, "btn sm danger"));
   }
-  if (pp) foot.push(button("Delete", () => deletePerson(pp), "link danger"));
+  if (pp) foot.push(button("Delete", () => deletePerson(pp), "btn sm danger"));
   if (foot.length) sections.push(el("div", { class: "dfoot" }, foot));
   put(d, ...sections);
 }

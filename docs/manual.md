@@ -945,7 +945,8 @@ or role to set:
   calls are refused with "sign in first"), and an admin person on a laptop outside admin only views
   there. The dashboard shows each layer's role apart: the device's group with a device icon
   (**admin**, **operator**) and the signed-in person's with a people icon (**admins**,
-  **operators**); the device has the role when both show (0.54.1). Operators change only devices
+  **operators**); the device has the role when both show (0.54.1), and the People page shows a
+  person's role and groups with the same icons (0.54.2). Operators change only devices
   with no role in either layer (neither in admin or operator, nor bound to a person in admins or
   operators). Automation
   administers through `ento control` on a control node (4.6). Where the network has no identity
