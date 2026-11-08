@@ -251,6 +251,11 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	s.prefixDeviceGroups(ctx)
 	s.rolesFromGroups(ctx)
+	// Roles take a person and a device (0.54): devices whose people had a role keep it, once.
+	if err := s.rolesBothLayers(ctx); err != nil {
+		wg.Close()
+		return nil, fmt.Errorf("device roles: %w", err)
+	}
 	// Groups come from the identity provider only: checked at start, then every 30 seconds.
 	go func() {
 		s.syncGroups(ctx)

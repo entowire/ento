@@ -31,10 +31,10 @@ func TestSetAdmin(t *testing.T) {
 	if _, err := st.Redeem(ctx, tok.TempAddress, perm.PublicKey(), "laptop", "linux", time.Now(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := setAdmin(ctx, st, "ops-laptop", true); err != nil || !p.Admin {
+	if p, err := setAdmin(ctx, st, "ops-laptop", true); err != nil || !p.Machine.Admin || p.Admin {
 		t.Fatalf("admin: %+v %v", p, err)
 	}
-	if p, err := setAdmin(ctx, st, "ops-laptop", false); err != nil || p.Admin {
+	if p, err := setAdmin(ctx, st, "ops-laptop", false); err != nil || p.Machine.Admin {
 		t.Fatalf("admin off: %+v %v", p, err)
 	}
 	if _, err := setAdmin(ctx, st, "nobody", true); err == nil {

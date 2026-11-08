@@ -490,7 +490,8 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("device %d %s: admin=%v (approved=%v)\n", p.ID, p.Hostname, p.Admin, p.Approved)
+		// The device's group (0.54): it administers only with a person in admins signed in on it.
+		fmt.Printf("device %d %s: in admin=%v (approved=%v)\n", p.ID, p.Hostname, p.Machine.Admin, p.Approved)
 		return nil
 	case "groups":
 		fs := flag.NewFlagSet("control groups", flag.ExitOnError)

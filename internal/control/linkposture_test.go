@@ -88,6 +88,7 @@ func testLinkPosture(t *testing.T, space ipam.Space, st store.Store) {
 	if _, err := st.UpdatePeer(ctx, opPeer.ID, store.PeerUpdate{Operator: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
+	signInRoles(t, st)
 	laptop, laptopPeer := device("laptop", "operators")
 	if code := admin.do(t, "POST", api.PathPostureChecks, api.PostureCheck{Name: "enc", DiskEncryption: true}, nil); code != http.StatusCreated {
 		t.Fatalf("add check: HTTP %d", code)

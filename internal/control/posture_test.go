@@ -179,6 +179,7 @@ func TestPostureChecks(t *testing.T) {
 	if _, err := st.UpdatePeer(ctx, opPeer.ID, store.PeerUpdate{Operator: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
+	signInRoles(t, st)
 	laptop, laptopPeer := device("laptop", "laptops")
 	server, _ := device("server", "servers")
 	phone, _ := device("phone", "phones")

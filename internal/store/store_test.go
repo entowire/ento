@@ -412,8 +412,8 @@ func testPeersAndPolicies(t *testing.T, s Store) {
 	if _, err := s.UpdatePeer(ctx, peer.ID, PeerUpdate{Operator: &yes}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.PeerByAddress(ctx, peer.Address); !got.Operator || got.Admin || !got.Approved {
-		t.Fatalf("operator role not persisted: %+v", got)
+	if got, _ := s.PeerByAddress(ctx, peer.Address); !got.Machine.Operator || got.Machine.Admin || got.Operator || !got.Approved {
+		t.Fatalf("operator role not persisted (the device's alone, no role without its person): %+v", got)
 	}
 
 	v1, _ := s.Version(ctx)
@@ -597,7 +597,8 @@ func testSessions(t *testing.T, s Store) {
 	ctx := context.Background()
 	now := time.Now().Truncate(time.Second)
 	enroll := func(name string) Peer {
-		tok, err := s.CreateToken(ctx, Token{PublicKey: key(t), Approve: true, Groups: []string{"laptops"}, ExpiresAt: now.Add(time.Hour)})
+		// Devices in admin: their person's role counts while the person is signed in (0.54).
+		tok, err := s.CreateToken(ctx, Token{PublicKey: key(t), Approve: true, Admin: true, Groups: []string{"laptops"}, ExpiresAt: now.Add(time.Hour)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -634,7 +635,7 @@ func testSessions(t *testing.T, s Store) {
 	open(legacy, now.Add(-10*h), time.Time{}, now, false)
 	open(legacyIdle, now.Add(-10*h), time.Time{}, now.Add(-9*h), false)
 	open(aged, now.Add(-13*h), now, now, true)
-	if p, _ := s.PeerByAddress(ctx, fresh.Address); !p.Admin || !slices.Contains(p.Groups, "staff") || !slices.Contains(p.Groups, "laptops") {
+	if p, _ := s.PeerByAddress(ctx, fresh.Address); !p.Person.Admin || !slices.Contains(p.Groups, "staff") || !slices.Contains(p.Groups, "laptops") {
 		t.Fatalf("an open person layer: %+v", p)
 	}
 
@@ -1515,7 +1516,7 @@ func TestPostgresLayersMigration(t *testing.T) {
 		return p
 	}
 	if p := at("100.64.1.1"); p.Machine.Approved || p.Machine.Admin || len(p.Machine.Groups) != 0 || !p.Person.Active ||
-		!p.Person.Approved || !p.Person.Admin || !slices.Equal(p.Person.Groups, []string{"admins"}) || !p.Admin || p.Person.Since.IsZero() {
+		!p.Person.Approved || !p.Person.Admin || !slices.Equal(p.Person.Groups, []string{"admins"}) || p.Admin || p.Person.Since.IsZero() {
 		t.Fatalf("the laptop after the migration: %+v", p)
 	}
 	if p := at("100.64.1.2"); p.Approved || p.Person.Active || p.Machine.Approved {
@@ -1666,7 +1667,7 @@ func testIsolation(t *testing.T, s Store) {
 	ctx := context.Background()
 	p := enrolled(t, s, "laptop")
 	on, sub := true, "sub-1"
-	p, err := s.UpdatePeer(ctx, p.ID, PeerUpdate{User: &sub, PersonActive: &on, PersonApproved: &on, PersonAdmin: &on,
+	p, err := s.UpdatePeer(ctx, p.ID, PeerUpdate{Admin: &on, User: &sub, PersonActive: &on, PersonApproved: &on, PersonAdmin: &on,
 		PersonGroups: &[]string{"admins"}})
 	if err != nil || !p.Admin || !p.Approved {
 		t.Fatalf("an admin person signed in: %+v %v", p, err)

@@ -252,7 +252,6 @@ func (s *Server) refreshDevice(ctx context.Context, t store.SSOToken) bool {
 		userLabel(updated), now.Approved, now.Admin, now.Operator, strings.Join(now.Groups, ","),
 		was.Approved, was.Admin, was.Operator, strings.Join(was.Groups, ","), map[bool]string{true: "open", false: "closed"}[now.Active]), "ok")
 	s.endUISessionsIfLess(ctx, p, updated)
-	s.dropDeviceAdmin(ctx, updated) // their groups made them an admin while signed in
 	return updated.Person.Active || p.Person.Active
 }
 

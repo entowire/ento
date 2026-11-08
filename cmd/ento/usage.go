@@ -40,7 +40,7 @@ const usageControl = `Control node:
   ento control authority add NAME --key KEY --groups G   register an authority (bootstrap)
                          [--max-devices N]; authority token NAME gives it a new enrollment token
   ento control allow SOURCE DESTINATION                  add a policy (bootstrap)
-  ento control admin [--off] NAME                        make a device an administrator (bootstrap)
+  ento control admin [--off] NAME                        put a device in admin (bootstrap; an admin signs in on it)
 
 `
 

@@ -196,6 +196,7 @@ func TestHWKeys(t *testing.T) {
 	if _, err := st.UpdatePeer(ctx, opPeer.ID, store.PeerUpdate{Operator: &yes}); err != nil {
 		t.Fatal(err)
 	}
+	signInRoles(t, st)
 	srv.checkVersion(ctx)
 	if code := op.do(t, "PATCH", fmt.Sprintf("%s/%d", api.PathPeers, lp.ID), api.UpdatePeerRequest{UnbindHardwareKey: true}, nil); code != http.StatusForbidden {
 		t.Fatalf("an operator released the binding: HTTP %d", code)

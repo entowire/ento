@@ -76,8 +76,9 @@ A single binary, `ento`:
   program able to read the browser's cookies on the device can use an open session from there.
   With an identity provider, a session also opens when the person signed in on the device in ento
   signs in on the page again (0.49; a fresh sign-in, nonce and `auth_time` checked, 0.50): only for
-  a person with a role of their own, and it acts with that person's rights alone (`Peer.PersonOnly`),
-  so neither the device's role nor the provider's open session counts.
+  a person with a role of their own, and it has what that person has on that device (a role takes
+  both layers, 0.54; from 0.50 to 0.53 the person's rights alone), so the provider's open session
+  does not count.
 - Authorization levels:
   - *enrolling*: a temporary key from an enrollment token; may only call the redeem endpoint;
   - *pending*: enrolled, not approved; receives an empty network map;
@@ -85,8 +86,11 @@ A single binary, `ento`:
   - *admin*: may call the admin API.
 - Two layers per device (0.27; `store.Peer.Machine`, `store.Peer.Person`): the machine's (approval,
   groups, role from its token or an administrator; columns `approved`, `admin`, `operator`,
-  `groups`) and the person's (from their sign-in; `person_*`), with the effective rights their union
-  while the person layer is open (`Peer.derive`; in SQL `effectiveApproved`). Sessions and timeouts
+  `groups`) and the person's (from their sign-in; `person_*`), with the effective approval and
+  groups their union while the person layer is open, and a role only where both have it (0.54:
+  admin is the machine's admin and the person's; `Peer.derive`; in SQL `effectiveApproved`). Without
+  an identity provider the control node gives the machine's role alone (`Server.withRoles`).
+  Sessions and timeouts
   touch only the person layer; suspension clears the machine's approval and closes the person's
   for good. The person layer closes when its person's last traffic (`person_activity_at`, from the
   devices' check-ins: `person_idle` seconds; and their administration, recorded at most once a

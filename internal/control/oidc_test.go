@@ -264,12 +264,14 @@ func TestSSOLogin(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		groups       []string
+		devices      []string
 		wantApproved bool
 		wantAdmin    bool
 	}{
-		{"staff member is approved", []string{"/staff"}, true, false},
-		{"admin gets an admin device", []string{"/staff", "/admins"}, true, true},
-		{"outsider keeps only the device's own groups", []string{"/contractors"}, true, false},
+		{"staff member is approved", []string{"/staff"}, []string{"laptops"}, true, false},
+		{"admin on an admin device administers", []string{"/staff", "/admins"}, []string{"laptops", "admin"}, true, true},
+		{"admin on another device does not", []string{"/staff", "/admins"}, []string{"laptops"}, true, false},
+		{"outsider keeps only the device's own groups", []string{"/contractors"}, []string{"laptops"}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -289,8 +291,8 @@ func TestSSOLogin(t *testing.T) {
 			defer srv.Close()
 
 			// The device's invitation gives it a group, so it is in (0.43: groups decide); the sign-in
-			// adds its person's groups and role.
-			tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"laptops"}})
+			// adds its person's groups, and their role where the device is in that role's group (0.54).
+			tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: tc.devices})
 			srv.checkVersion(ctx)
 			dev, res := enroll(t, tok, "laptop")
 			if !res.Approved {

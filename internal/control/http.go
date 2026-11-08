@@ -139,8 +139,18 @@ func (s *Server) peerOnly(h peerHandler) http.HandlerFunc {
 			writeErr(w, http.StatusServiceUnavailable, "temporarily unavailable")
 			return
 		}
-		h(w, r, self)
+		h(w, r, s.withRoles(self))
 	}
+}
+
+// withRoles gives a device its role where nobody can sign in: a network without an identity
+// Not yet). With one, a role takes a person signed in on the device too (store.Peer.derive, 0.54).
+func (s *Server) withRoles(p store.Peer) store.Peer {
+	if s.cfg.OIDC != nil || !p.Approved || p.Suspended || isolated(p) {
+		return p
+	}
+	p.Admin, p.Operator = p.Machine.Admin, p.Machine.Operator && !p.Machine.Admin
+	return p
 }
 
 // maxSignedBody bounds the body of a signed request (read before the handler, for the signature).
@@ -160,20 +170,16 @@ type uiCaller struct {
 // address: every process on a device shares the address, but only the agent, root or an
 // administrator reads the key. The proof is a signature over the request (package reqsig), or, for
 // administration only (sessions), a session of the admin interface, which such a signature opens,
-// or the person signed in on the device by signing in on the page again; that one acts with the
-// person's rights alone. Sign-in and credentials for linked networks always need the signature.
+// or the person signed in on the device by signing in on the page again. Sign-in and credentials for linked networks always need the signature.
 func (s *Server) keyHolder(sessions bool, h peerHandler) http.HandlerFunc {
 	return s.peerOnly(func(w http.ResponseWriter, r *http.Request, self store.Peer) {
 		if c, ok := r.Context().Value(uiSessionKey{}).(uiCaller); ok {
 			if sessions && c.device == self.ID {
-				// A session the person opened by signing in acts with their rights alone, never the
-				// device's (0.50): the device's key did not approve it.
-				if c.person != "" {
-					if !personSignedIn(self, c.person) {
-						writeErr(w, http.StatusUnauthorized, "no session: sign in again")
-						return
-					}
-					self = self.PersonOnly()
+				// A session the person opened by signing in lasts while they are signed in on the
+				// device; its rights are theirs on it, as every role is (0.54).
+				if c.person != "" && !personSignedIn(self, c.person) {
+					writeErr(w, http.StatusUnauthorized, "no session: sign in again")
+					return
 				}
 				h(w, r, self)
 				return
@@ -240,7 +246,7 @@ func (s *Server) adminOnly(h peerHandler) http.HandlerFunc {
 	return s.keyHolder(true, func(w http.ResponseWriter, r *http.Request, self store.Peer) {
 		if !self.Admin || !self.Approved {
 			s.audit(r, &self, "admin_api", r.Method+" "+r.URL.Path, "denied")
-			writeErr(w, http.StatusForbidden, "admin only")
+			writeErr(w, http.StatusForbidden, roleRefusal(self, "full administration: a person in admins signed in on a device in admin"))
 			return
 		}
 		s.personAdministers(r.Context(), self)
@@ -265,12 +271,23 @@ func (s *Server) operatorRole(h peerHandler) peerHandler {
 		}
 		if !(self.Admin || self.Operator) || !self.Approved {
 			s.audit(r, &self, "admin_api", r.Method+" "+r.URL.Path, "denied")
-			writeErr(w, http.StatusForbidden, "admins and operators only")
+			writeErr(w, http.StatusForbidden, roleRefusal(self, "administration: a person in admins or operators signed in on a device in admin or operator"))
 			return
 		}
 		s.personAdministers(r.Context(), self)
 		h(w, r, self)
 	}
+}
+
+// roleRefusal says why a call that needs a role was refused, and what is missing: the person, or
+func roleRefusal(self store.Peer, needs string) string {
+	switch {
+	case (self.Machine.Admin || self.Machine.Operator) && !(self.Person.Active && self.Person.Approved):
+		return "this needs " + needs + "; nobody is signed in on this device: sign in first (ento agent login)"
+	case self.Person.Active && (self.Person.Admin || self.Person.Operator) && !(self.Machine.Admin || self.Machine.Operator):
+		return "this needs " + needs + "; this device is in neither admin nor operator, so its person only views here"
+	}
+	return "this needs " + needs
 }
 
 // roleName is a device's role, for audit lines.
@@ -285,9 +302,12 @@ func roleName(p store.Peer) string {
 }
 
 // mayOperate reports whether self may change target: admins any device, operators only devices
-// that are neither admins nor operators (their own included).
+// with no role in either layer (their own included): not in admin or operator, and not bound to a
+// person in admins or operators, whether or not that person is signed in now (a role takes both,
+// 0.54, so the current role alone would leave an admin's device to operators while they are away).
 func mayOperate(self, target store.Peer) bool {
-	return self.Admin || !(target.Admin || target.Operator)
+	return self.Admin || !(target.Admin || target.Operator || target.Machine.Admin || target.Machine.Operator ||
+		target.User != "" && (target.Person.Admin || target.Person.Operator))
 }
 
 func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
@@ -858,7 +878,7 @@ func (s *Server) handleUpdatePeer(w http.ResponseWriter, r *http.Request, self s
 			if req.Approved != nil && *req.Approved && !slices.Contains(*req.Groups, IsolatedGroup) {
 				approved = true // approved explicitly, groups or not
 			}
-			if id == self.ID && (!approved || current.Admin && !admin && !current.Person.Admin) {
+			if id == self.ID && (!approved || current.Machine.Admin && !admin) {
 				writeErr(w, http.StatusBadRequest, "you cannot isolate this device or take away its admin group from it")
 				return
 			}
@@ -1279,7 +1299,6 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 			s.cfg.Logf("sso login for peer %d: %v", self.ID, err)
 			return
 		}
-		p = s.dropDeviceAdmin(ctx, p)
 		s.keepSSOToken(ctx, p.ID, c.Subject, refreshToken)
 		s.cfg.Logf("sso: peer %d %s is now %q (approved=%v admin=%v operator=%v groups=%q)", p.ID, p.Hostname, p.UserName,
 			p.Approved, p.Admin, p.Operator, p.Groups)

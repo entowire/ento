@@ -47,6 +47,7 @@ func adminOf(t *testing.T, ctx context.Context, srv *Server, st store.Store, hos
 	}
 	srv.checkVersion(ctx)
 	c, _ := enroll(t, tok, host)
+	signInRoles(t, st)
 	return c
 }
 
@@ -307,7 +308,7 @@ func TestSSOSessions(t *testing.T) {
 		p, _ := st.PeerByAddress(ctx, netip.MustParseAddr(res.Address))
 		return c, p
 	}
-	laptop, lp := device("laptop-1", "laptops")
+	laptop, lp := device("laptop-1", "laptops", "operator") // an operator person operates on it (0.54)
 	_, sp := device("server-1", "servers")
 	admin.do(t, "POST", api.PathPolicies, api.Policy{Source: "laptops", Destination: "servers", OneWay: true, Ports: []string{"tcp/1514"}}, nil)
 	admin.do(t, "POST", api.PathPolicies, api.Policy{Source: "operators", Destination: "servers"}, nil)
@@ -785,6 +786,7 @@ func TestPolicyRulesInMaps(t *testing.T) {
 	if _, err := st.UpdatePeer(ctx, p.ID, store.PeerUpdate{Operator: &yes}); err != nil {
 		t.Fatal(err)
 	}
+	signInRoles(t, st)
 	var oneWay api.Policy
 	if code := op.do(t, "PUT", fmt.Sprintf("%s/%d/rules", api.PathPolicies, pol.ID), api.PolicyRulesRequest{OneWay: true}, &oneWay); code != 200 {
 		t.Fatalf("an operator changing a policy without checks: HTTP %d", code)

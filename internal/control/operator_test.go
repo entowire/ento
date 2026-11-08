@@ -40,6 +40,7 @@ func TestOperatorLimits(t *testing.T) {
 	if _, err := st.UpdatePeer(ctx, opPeer.ID, store.PeerUpdate{Operator: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
+	signInRoles(t, st)
 	_, plain := enrollPeer("plain")
 	var adminPeer store.Peer
 	peers, _ := st.Peers(ctx)
@@ -99,17 +100,21 @@ func TestOperatorLimits(t *testing.T) {
 	if code := admin.do(t, "PATCH", peerPath(opPeer), api.UpdatePeerRequest{Operator: ptr(false)}, nil); code != http.StatusOK {
 		t.Fatalf("admin removes the operator role: HTTP %d", code)
 	}
-	if code := op.do(t, "GET", api.PathPeers, nil, nil); code != http.StatusForbidden {
-		t.Errorf("former operator lists devices: HTTP %d, want 403", code)
+	if code := op.do(t, "GET", api.PathPeers, nil, nil); code != http.StatusOK {
+		t.Errorf("former operator device lists devices: HTTP %d, want 200 (viewing)", code)
+	}
+	if code := op.do(t, "PATCH", peerPath(plain), api.UpdatePeerRequest{Approved: ptr(false)}, nil); code != http.StatusForbidden {
+		t.Errorf("former operator device changes a device: HTTP %d, want 403", code)
 	}
 }
 
-// TestLoginRoles checks the roles a sign-in gives: admin wins over operator, both are approved.
+// TestLoginRoles checks the roles a sign-in gives on a device in admin: admin wins over operator,
+// both are approved.
 func TestLoginRoles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, st := startTestNetwork(t, ctx, "100.71.0.0/16")
-	if _, _, err := IssueToken(ctx, st, TokenOptions{}); err != nil {
+	if _, _, err := IssueToken(ctx, st, TokenOptions{Admin: true}); err != nil {
 		t.Fatal(err)
 	}
 	toks, _ := st.ActiveTokens(ctx, time.Now())
@@ -201,6 +206,7 @@ func TestOperatorRenames(t *testing.T) {
 	if _, err := st.UpdatePeer(ctx, opPeer.ID, store.PeerUpdate{Operator: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
+	signInRoles(t, st)
 	admin.do(t, "POST", api.PathRoutes, api.Route{Name: "office", Networks: []string{"192.168.10.0/24"}, Via: "office-gw"}, nil)
 	admin.do(t, "POST", api.PathPolicies, api.Policy{Source: "staff", Destination: "route:office"}, nil)
 	admin.do(t, "POST", api.PathPolicies, api.Policy{Source: "staff", Destination: "staff"}, nil)

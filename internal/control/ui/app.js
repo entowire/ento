@@ -311,8 +311,15 @@ $("sign-out").addEventListener("click", async () => {
 // Operators administer within limits (ordinary devices, ordinary tokens, policies); the API enforces
 // them, the page only leaves out what they cannot do.
 const isAdmin = () => !!(info && info.self.admin);
-const mayChange = (p) => isAdmin() || !(p.admin || p.operator);
+// A role takes a person in admins or operators signed in on a device in admin or operator (0.54):
+// roleOf is what the device has now, deviceRole its own group's role, hasRole either layer's.
 const roleOf = (p) => p.admin ? "admin" : (p.operator ? "operator" : null);
+const deviceRole = (p) => (ownGroups(p).includes(DEV + "admin") ? "admin" : (ownGroups(p).includes(DEV + "operator") ? "operator" : null));
+const hasRole = (p) => !!(roleOf(p) || deviceRole(p) || p.person_role);
+const mayChange = (p) => isAdmin() || !hasRole(p);
+// roleBadge: the role it has now, else its group's, which waits for a person with that role.
+const roleBadge = (p) => roleOf(p) ? badge(roleOf(p), "mute")
+  : (deviceRole(p) ? badge(`${deviceRole(p)} device`, "mute", { title: `administers once a person in ${deviceRole(p)}s signs in on it` }) : null);
 
 function renderMe() {
   if (!info) return;
@@ -745,7 +752,7 @@ function filterChips(box, filters, items, current, pick) {
 
 // --- devices --------------------------------------------------------------------------------------
 const deviceFilters = [["all", "All", () => true], ["online", "Online", online], ["pending", "Isolated", (p) => !p.suspended && (isIsolated(p) || !p.approved)],
-  ["posture", "Failing a check", failsPosture], ["suspended", "Suspended", (p) => p.suspended], ["admin", "Admins", (p) => p.admin || p.operator]];
+  ["posture", "Failing a check", failsPosture], ["suspended", "Suspended", (p) => p.suspended], ["admin", "Admins", hasRole]];
 
 function openDevice(id) {
   ui.device = id;
@@ -771,7 +778,7 @@ function renderDevices() {
         el("small", { class: "seen", title: when(p.last_seen) }, el("span", { class: "dot" + (online(p) ? " on" : "") }), online(p) ? "online" : "seen " + ago(p.last_seen), systemOf(p) ? " · " + systemOf(p) : "")))),
       el("td", {}, p.user || (p.authority ? "via " + p.authority : el("span", { class: "dim" }, "–"))),
       el("td", { class: "mono" }, p.address),
-      el("td", {}, el("div", { class: "tags" }, stateOf(p), roleOf(p) ? badge(roleOf(p), "mute") : null)),
+      el("td", {}, el("div", { class: "tags" }, stateOf(p), roleBadge(p))),
       el("td", {}, checksOf(p)),
       el("td", { class: "right" }, (isIsolated(p) || !machineApproved) && !p.suspended && mayChange(p) ? button("Let in…", () => letIn(p), "btn xs primary") : null));
   }) : [el("tr", {}, el("td", { colspan: 6 }, empty("No devices match.")))]));
@@ -816,7 +823,7 @@ function renderDeviceDetail(p) {
   put($("device-detail"), 
     el("div", { class: "dhead" }, devIcon(p, "ico"), el("div", {}, el("b", {}, p.hostname), el("small", {}, systemOf(p) || "–", me ? " · this device" : "")),
       button(icon("close", 16), () => { ui.device = null; renderDevices(); }, "icon-btn", { "aria-label": "Close" })),
-    el("div", { class: "tags" }, stateOf(p), roleOf(p) ? badge(roleOf(p), "mute") : null),
+    el("div", { class: "tags" }, stateOf(p), roleBadge(p)),
     acts.length ? el("div", { class: "row-actions" }, acts) : null,
     el("div", { class: "sect" }, el("h3", {}, "Groups"),
       el("div", { class: "tags" }, ownGroups(p).map((g) => groupTag(g)), person.map((g) => tag(g, "tag person" + (p.person_active ? "" : " closed"),
@@ -940,13 +947,14 @@ async function editGroups(p) {
 }
 
 async function changeRole(p) {
-  const current = roleOf(p) || "none";
+  const current = deviceRole(p) || "none";
   const choices = [["none", "None", "an ordinary device"],
     ["operator", "Operator", "ordinary devices, invitations and rules; nothing that cannot be undone"],
     ["admin", "Administrator", "everything on this dashboard"]];
   const body = el("div", { class: "stack" }, ...choices.map(([v, label, what]) =>
     el("label", { class: "check" }, el("input", { type: "radio", name: "role", value: v, checked: v === current }), el("span", {}, label, el("small", {}, what)))));
-  if (!await ask(`Role of ${p.hostname}`, p.user ? `The machine's role. ${p.user}'s sign-in adds theirs (from their groups) while they are signed in.` : "", { body, ok: "Save" })) return;
+  const how = "A role takes both: a person in admins (or operators) signed in on a device in admin (or operator). With nobody signed in, the device administers nothing.";
+  if (!await ask(`Role of ${p.hostname}`, `The device's role. ${how}`, { body, ok: "Save" })) return;
   const role = body.querySelector("input:checked").value;
   if (role === current) return;
   update(p, { admin: role === "admin", operator: role === "operator" }, role === "none" ? "has no role" : `is now ${role === "admin" ? "an administrator" : "an operator"}`);

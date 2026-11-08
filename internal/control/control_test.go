@@ -145,6 +145,7 @@ func TestEnrollmentApprovalAndNetMap(t *testing.T) {
 	}
 	srv.checkVersion(ctx)
 	admin, adminRes := enroll(t, adminTok, "admin-host")
+	signInRoles(t, st)
 	if !adminRes.Approved || len(adminRes.Controls) != 1 {
 		t.Fatalf("unexpected admin enrollment: %+v", adminRes)
 	}
@@ -215,5 +216,34 @@ func TestEnrollmentApprovalAndNetMap(t *testing.T) {
 		}
 	case <-time.After(60 * time.Second):
 		t.Fatal("netmap long-poll did not deliver the change")
+	}
+}
+
+// signInRoles signs a person in on every device in admin or operator that has nobody signed in: a
+// person in admins on a device in admin, in operators on a device in operator. A role takes both
+func signInRoles(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	peers, err := st.Peers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on, now := true, time.Now()
+	for _, p := range peers {
+		if !(p.Machine.Admin || p.Machine.Operator) || p.Person.Active {
+			continue
+		}
+		admin, operator, groups := p.Machine.Admin, !p.Machine.Admin, []string{"admins"}
+		if operator {
+			groups = []string{"operators"}
+		}
+		sub := p.User
+		if sub == "" {
+			sub = "sub-" + p.Hostname
+		}
+		if _, err := st.UpdatePeer(ctx, p.ID, store.PeerUpdate{User: &sub, LoginAt: &now, PersonActive: &on, PersonApproved: &on,
+			PersonAdmin: &admin, PersonOperator: &operator, PersonGroups: &groups}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

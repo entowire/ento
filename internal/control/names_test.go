@@ -35,6 +35,7 @@ func TestDeviceNames(t *testing.T) {
 	}
 	srv.checkVersion(ctx)
 	admin, _ := enroll(t, adminTok, "whatever-it-says")
+	signInRoles(t, st)
 
 	token := func(req api.CreateTokenRequest) (int, string) {
 		t.Helper()

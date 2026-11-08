@@ -131,9 +131,9 @@ func (s *Server) personCheckIn(ctx context.Context, p store.Peer, req api.CheckI
 }
 
 // personAdministers notes a call that used rights of the device's open person layer (its admin or
-// operator role, the admin interface) as the person's activity.
+// operator role, which always takes the person, the admin interface) as the person's activity.
 func (s *Server) personAdministers(ctx context.Context, p store.Peer) {
-	if !p.Person.Active || p.Machine.Admin || p.Machine.Operator {
+	if !p.Person.Active {
 		return
 	}
 	now := time.Now()

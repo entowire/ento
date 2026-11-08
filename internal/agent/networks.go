@@ -101,6 +101,12 @@ func NetworkStateDir(stateDir, domain string) (string, error) {
 		return "", fmt.Errorf("%q is not a network's domain", domain)
 	}
 	if !exists(filepath.Join(NetworkDir(stateDir, domain), membershipFile)) {
+		// The networks are in the agent's state, root's: without it none can be seen, and the
+		// list below would be empty (0.53.1; the first network's sign-in alone goes through the
+		// agent for others).
+		if _, err := os.ReadDir(stateDir); errors.Is(err, os.ErrPermission) {
+			return "", fmt.Errorf("--network %s needs the agent's state, which is root's: run the command with sudo", domain)
+		}
 		known := []string{}
 		if d := FirstDomain(stateDir); d != "" {
 			known = append(known, d)

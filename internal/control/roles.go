@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"entowire.com/ento/internal/store"
 )
@@ -117,10 +118,11 @@ func (s *Server) viewerGroups() []string {
 	return []string{"viewers"}
 }
 
-// isViewer reports whether an approved device may look at the administration (its person's groups
-// while signed in; viewer groups are people groups).
+// isViewer reports whether an approved device may look at the administration: a person in admins,
 func (s *Server) isViewer(p store.Peer) bool {
-	return p.Approved && !p.Suspended && !isolated(p) && intersects(p.Groups, s.viewerGroups())
+	pl := p.Person
+	return p.Approved && !p.Suspended && !isolated(p) && pl.Active && pl.Approved &&
+		(pl.Admin || pl.Operator || intersects(pl.Groups, s.viewerGroups()))
 }
 
 // roleSet is the role groups among groups, sorted.
@@ -198,24 +200,49 @@ func (s *Server) rolesFromGroups(ctx context.Context) {
 	}
 }
 
-// dropDeviceAdmin takes a device out of the admin groups once an admin person has signed in on it
-// (0.47): from then on its admin rights are that person's, while they are signed in, and end with
-// their session. The device keeps its other groups and its approval. The first administrator's device
-// (enrolled with admin words) is how a network starts; this ends that once a person holds the role.
-func (s *Server) dropDeviceAdmin(ctx context.Context, p store.Peer) store.Peer {
-	if p.Authority != "" || !p.Person.Active || !p.Person.Admin || !intersects(p.Machine.Groups, s.adminGroups()) {
-		return p
+// rolesNeedPeople marks a network whose devices got back the role groups 0.47 to 0.53 took from
+// them (rolesBothLayers).
+const rolesNeedPeople = "roles_need_people"
+
+// rolesBothLayers keeps every role where it was when roles came to take both a person and a device
+// (0.54): from 0.47 to 0.53 a device left admin when an admin person signed in on it, and an admin
+// or operator person administered on any device. Once, each device whose person has a role is put
+// in that role's device group (not isolated, suspended or an authority's), so that the person keeps
+// it there; a device in admin with nobody signed in administers no longer. A setting, written once
+// every device is done, keeps a later removal from being undone.
+func (s *Server) rolesBothLayers(ctx context.Context) error {
+	if _, done, err := s.cfg.Store.Setting(ctx, rolesNeedPeople); err != nil || done {
+		return err
 	}
-	groups := slices.DeleteFunc(slices.Clone(p.Machine.Groups), func(g string) bool { return slices.Contains(s.adminGroups(), g) })
-	_, admin, operator := s.groupRights(groups)
-	updated, err := s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &groups, Admin: &admin, Operator: &operator})
+	peers, err := s.cfg.Store.Peers(ctx)
 	if err != nil {
-		s.cfg.Logf("device admin of %s: %v", p.Hostname, err)
-		return p
+		return err
 	}
-	s.audit(nil, &updated, "device_admin_dropped", fmt.Sprintf("%s: %s signed in as an admin; the device's own admin group is gone (groups=%s)",
-		peerLabel(updated), userLabel(updated), strings.Join(groups, ",")), "ok")
-	return updated
+	for _, p := range peers {
+		pl := p.Person
+		if p.Authority != "" || p.User == "" || !pl.Approved || p.Suspended || p.Isolated() {
+			continue
+		}
+		groups := slices.Clone(p.Machine.Groups)
+		switch {
+		case pl.Admin && !intersects(groups, s.adminGroups()):
+			groups = append(groups, s.adminGroups()[0])
+		case pl.Operator && !pl.Admin && !intersects(groups, s.adminGroups()) && !intersects(groups, s.operatorGroups()):
+			groups = append(groups, s.operatorGroups()[0])
+		default:
+			continue
+		}
+		approved, admin, operator := s.groupRights(groups)
+		approved = approved || p.Machine.Approved
+		updated, err := s.cfg.Store.UpdatePeer(ctx, p.ID, store.PeerUpdate{Groups: &groups, Approved: &approved, Admin: &admin, Operator: &operator})
+		if err != nil {
+			return fmt.Errorf("device roles of %s: %w", p.Hostname, err)
+		}
+		s.audit(nil, &updated, "device_role_kept", fmt.Sprintf("%s: %s has a role, which now takes the device's group too (groups=%s)",
+			peerLabel(updated), userLabel(updated), strings.Join(groups, ",")), "ok")
+	}
+	_, err = s.cfg.Store.KeepSetting(ctx, rolesNeedPeople, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 // prefixDeviceGroups gives the devices' own groups their prefix, once, for a network that ran an

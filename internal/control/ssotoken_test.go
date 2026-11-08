@@ -104,7 +104,8 @@ func TestSSORefresh(t *testing.T) {
 	defer cancel()
 	idp := fakeIdP(t, "alice@example.com", []string{"/staff"})
 	srv, st, logs := ssoNode(t, ctx, idp)
-	tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"laptops"}})
+	// A device in admin: its person administers once in admins (0.54).
+	tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"laptops", "admin"}})
 	srv.checkVersion(ctx)
 	dev, res := enroll(t, tok, "laptop")
 	ssoLogin(t, dev)
@@ -143,7 +144,7 @@ func TestSSORefresh(t *testing.T) {
 	// Groups changed at the provider: the device follows at the next check.
 	idp.set("ok", []string{"/staff", "/admins"})
 	check(ctx, srv)
-	if p := peerAt(t, st, res.Address); !p.Admin || len(p.Groups) != 3 || logs.count("action=sso_changed") != 1 {
+	if p := peerAt(t, st, res.Address); !p.Admin || len(p.Groups) != 4 || logs.count("action=sso_changed") != 1 {
 		t.Fatalf("after joining admins: %+v", p)
 	}
 	var nm api.NetMap
@@ -156,7 +157,7 @@ func TestSSORefresh(t *testing.T) {
 	for _, mode := range []string{"noid", "nogroups"} {
 		idp.set(mode, nil)
 		check(ctx, srv)
-		if p := peerAt(t, st, res.Address); !p.Approved || !p.Admin || len(p.Groups) != 3 {
+		if p := peerAt(t, st, res.Address); !p.Approved || !p.Admin || len(p.Groups) != 4 {
 			t.Fatalf("after a refresh in mode %s: %+v", mode, p)
 		}
 	}
@@ -359,6 +360,7 @@ func TestSuspendUser(t *testing.T) {
 	adminTok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true, Admin: true, Groups: []string{"admins"}})
 	srv.checkVersion(ctx)
 	admin, _ := enroll(t, adminTok, "admin-host")
+	signInRoles(t, st)
 	var addrs []string
 	for _, host := range []string{"laptop", "phone"} {
 		tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"laptops"}})
@@ -446,7 +448,8 @@ func TestLoginOnlyForSSODevices(t *testing.T) {
 	machine, res := enroll(t, tok, "laptop-m")
 	ssoLogin(t, machine)
 	p := peerAt(t, st, res.Address)
-	if !p.Admin || p.User == "" || !slices.Contains(p.Groups, "device:laptops") || !slices.Contains(p.Groups, "admins") ||
+	// An admin person on a device outside admin: their groups, not the role (0.54).
+	if p.Admin || !p.Person.Admin || p.User == "" || !slices.Contains(p.Groups, "device:laptops") || !slices.Contains(p.Groups, "admins") ||
 		!slices.Equal(p.Machine.Groups, []string{"device:laptops"}) || !p.Machine.Approved || p.Machine.Admin {
 		t.Fatalf("a sign-in on a token-approved device: %+v", p)
 	}
@@ -457,9 +460,9 @@ func TestLoginOnlyForSSODevices(t *testing.T) {
 	srv.checkVersion(ctx)
 	laptop, _ := enroll(t, open, "laptop")
 	ssoLogin(t, laptop)
-	// The first sign-in binds the device (the SIEM raises it when it makes an admin device), the
-	// next one by the same person does not.
-	if logs.count("action=login") != 2 || logs.count("admin=true operator=false groups=device:laptops,admins binding=new") != 2 {
+	// The first sign-in binds the device, the next one by the same person does not. An admin person
+	// on a device outside admin gets no role (0.54).
+	if logs.count("action=login") != 2 || logs.count("admin=false operator=false groups=device:laptops,admins binding=new") != 2 {
 		t.Fatal("the first sign-in is not recorded as a new binding")
 	}
 	time.Sleep(10 * time.Millisecond)

@@ -356,22 +356,28 @@ func (s *Server) adminUIHandler() http.Handler {
 	})
 }
 
-// isAdminAddr reports whether a connection comes from an approved admin or operator device.
+// isAdminAddr reports whether a connection comes from a device that may open the interface.
 func (s *Server) isAdminAddr(ctx context.Context, a net.Addr) bool {
 	ap, err := netip.ParseAddrPort(a.String())
 	if err != nil {
 		return false
 	}
 	p, err := s.cfg.Store.PeerByAddress(ctx, ap.Addr().Unmap())
-	return err == nil && s.mayAdminister(p)
+	return err == nil && s.mayOpenInterface(p)
+}
+
+// mayOpenInterface: devices that may administer, and approved devices in admin or operator, whose
+func (s *Server) mayOpenInterface(p store.Peer) bool {
+	return s.mayAdminister(p) || (p.Machine.Admin || p.Machine.Operator) && p.Approved && !p.Suspended && !isolated(p)
 }
 
 // mayAdminister: approved admin and operator devices, and viewers (read-only).
 func (s *Server) mayAdminister(p store.Peer) bool {
+	p = s.withRoles(p)
 	return (p.Admin || p.Operator) && p.Approved && !isolated(p) || s.isViewer(p)
 }
 
-// adminDevice returns the approved admin or operator device the request comes from, known by its
+// adminDevice returns the device the request comes from if it may open the interface, known by its
 // overlay address (the connection ends here, inside WireGuard).
 func (s *Server) adminDevice(r *http.Request) (store.Peer, bool) {
 	addr, ok := caller(r)
@@ -379,7 +385,7 @@ func (s *Server) adminDevice(r *http.Request) (store.Peer, bool) {
 		return store.Peer{}, false
 	}
 	p, err := s.cfg.Store.PeerByAddress(r.Context(), addr.Unmap())
-	return p, err == nil && s.mayAdminister(p)
+	return p, err == nil && s.mayOpenInterface(p)
 }
 
 // uiSecret returns a new random secret and the hash it is stored by.

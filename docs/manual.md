@@ -235,7 +235,7 @@ deployments that are set up by automation before any administrator has a device:
     ento control allow servers servers
     ento control allow --ports tcp/443 msp:operators servers   # one way (0.52), these ports (0.19.1)
     ento control authority add msp --key entoa1:... --groups operators > msp.token
-    ento control admin ops-laptop          # make a device an administrator (--off takes it back)
+    ento control admin ops-laptop          # put a device in admin (--off takes it out)
 
 Each of these (`token`, `allow`, `authority`, `admin`, and `groups` and `person`) logs what it changed to the system log, as the
 control nodes log theirs (0.35): `audit: action=control_cli by="<user behind sudo> (cli)" from=local
@@ -257,14 +257,17 @@ command line makes too (0.49; Rauthy, with entowire's build for the setup link):
 
 It prints a one-time link to set up the account's passkey (open it on the administrator's device,
 once it has joined: the provider is reached through the tunnel); then `sudo ento agent login`
-signs them in on that device, and the dashboard opens with **Sign in** (Admin web interface). Run
+signs them in on that device, and the dashboard opens with **Sign in** (Admin web interface). From
+then on that device administers while they are signed in on it (Roles take a person and a device,
+0.54); with nobody signed in, it administers nothing. Run
 again for a person who has not set up their account yet, it gives a new link (the first lapsed); for
 one who has, it refuses, so it never takes over an account. Logged like the commands above (`ento
 control person`).
 
 ## Add devices
 
-From an enrolled admin peer, as root (on Windows, in a PowerShell run as administrator):
+From a device in admin with an admin signed in on it (or any device in admin, where the network has
+no identity provider), as root (on Windows, in a PowerShell run as administrator):
 
     ento admin token --groups servers --ttl 1h --out server.token
     # on the device:
@@ -817,8 +820,9 @@ PKCE, the control nodes' own client, which needs the redirect address
 session opens only for the person signed in on that device in ento right now (the page names them;
 with nobody signed in there it says to sign in first), when that person is an admin, an operator or
 a viewer by their own groups, on a device that may administer; anyone else is refused (audited as
-`admin_ui_signin`, denied). The session acts with that person's rights alone, never the device's
-(0.50: before, a person without a role on an admin device administered as the device). Each time it
+`admin_ui_signin`, denied). The session has what that person has on that device (0.54: a role takes
+both; from 0.50 to 0.53 it had the person's rights alone, and before, a person without a role on an
+admin device administered as the device). Each time it
 asks the provider for a new sign-in (`prompt=login`, `max_age=0`), not its open session, and checks
 the ID token's signature, its nonce and that its `auth_time` is not older than the page's request;
 a provider that does not honour them is refused. It lasts as the approved one does (8 hours, 30
@@ -931,16 +935,23 @@ or role to set:
   and an administrator token or words put the device in that group, even when the token names other
   groups too. A control node of 0.47 puts a device that was an admin or operator by an older flag
   alone in that role's group once, at start (audited as `device_roles_from_groups`).
-- **The device leaves admin when an admin signs in on it** (0.47): once a person whose groups make
-  them an admin signs in on a device in the admin group (or becomes an admin while signed in), the
-  device leaves that group (audited as `device_admin_dropped`); it keeps its other groups and its
-  approval. From then on administration on that device is the person's: it ends when they sign out
-  or their session closes. This is how a network's first device (enrolled with the first
-  administrator's words) hands over to its people. A device that must administer with nobody signed
-  in (automation) is put back in admin by an admin, and stays there while no admin person signs in
-  on it.
-- **viewers** (`--viewer-groups`) open the dashboard and the admin API read-only, for devices and
-  for people signed in on them.
+  in admins signed in on a device in admin; operation, a person in admins or operators on a device
+  in admin or operator; viewing, a person in admins, operators or viewers on any device. Either
+  alone is no administration: a device in admin with nobody signed in administers nothing (its
+  calls are refused with "sign in first"), and an admin person on a laptop outside admin only views
+  there. The dashboard shows a device in a role group with nobody of that role on it as **admin
+  device** (or **operator device**); operators change only devices with no role in either layer
+  (neither in admin or operator, nor bound to a person in admins or operators). Automation
+  administers through `ento control` on a control node (4.6). Where the network has no identity
+  provider, nobody can sign in, and a device in admin or operator has that role alone.
+
+  From 0.47 to 0.53 a device left admin when an admin person signed in on it, and an admin or
+  operator person administered on any device. A control node of 0.54 keeps each of them where it
+  was, once, at start: a device whose person has a role is put in that role's device group (not an
+  isolated or suspended one, nor an authority's; audited as `device_role_kept`, and remembered by
+  the setting `roles_need_people`, so a removal made afterwards stays).
+- **viewers** (`--viewer-groups`, people groups) open the dashboard and the admin API read-only,
+  for the people signed in on a device.
 
 Where people are managed here (`--people`), the dashboard refuses to disable, delete or take the
 admin group from the only admin who can sign in (enabled, and their account set up), or from your
@@ -1461,7 +1472,10 @@ internal DNS (its resolver on its own address; systemd-resolved sends its names 
 is `/var/lib/ento/networks/<domain>/`. The running agent acts on `join` and `leave` without a
 restart; an agent started before 0.51 is restarted first (`sudo systemctl restart ento-agent`).
 Commands for one network take `--network DOMAIN`: `status`, `login`, `logout`, `whoami`, `approve`
-and `approvals` (and `ento admin --network DOMAIN ...`); without it they are the first network's.
+and `approvals` (and `ento admin --network DOMAIN ...`); without it they are the first network's. They read
+the agent's state, which is root's, so they run with `sudo` (only the first network's `login`,
+`logout` and `whoami` go through the running agent for other users); without it `--network` says so
+(0.53.1; before, it said the device was in no network).
 `ento agent approvals` lists every network's waiting sign-ins, each under its network's name, and a
 sign-in started for another network than the first says which. `down`, `up` and `uninstall` act on
 all of them.

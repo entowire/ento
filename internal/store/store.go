@@ -187,19 +187,20 @@ func (p Peer) Isolated() bool {
 	return slices.ContainsFunc(p.Machine.Groups, func(g string) bool { return slices.Contains(IsolatedGroups, g) })
 }
 
-// derive sets Approved, Admin, Operator and Groups from the layers. Isolation and suspension come
-// before both: an isolated device is not approved, has no role and none of its person's groups
-// (0.50; before, an open person layer gave them back).
+// derive sets Approved, Admin, Operator and Groups from the layers. Approval and groups add up; a
+// admin, operator a person in admins or operators on a device in admin or operator, and either
+// layer alone has no role. Isolation and suspension come before both: an isolated device is not
+// approved, has no role and none of its person's groups (0.50).
 func (p *Peer) derive() {
 	m := p.Machine
-	p.Approved, p.Admin, p.Operator, p.Groups = m.Approved, m.Admin, m.Operator, slices.Clone(m.Groups)
+	p.Approved, p.Admin, p.Operator, p.Groups = m.Approved, false, false, slices.Clone(m.Groups)
 	if p.Groups == nil {
 		p.Groups = []string{}
 	}
 	if pl := p.Person; pl.Active && pl.Approved {
 		p.Approved = true
-		p.Admin = p.Admin || pl.Admin
-		p.Operator = p.Operator || pl.Operator
+		p.Admin = m.Admin && pl.Admin
+		p.Operator = (m.Admin || m.Operator) && (pl.Admin || pl.Operator)
 		for _, g := range pl.Groups {
 			if !slices.Contains(p.Groups, g) {
 				p.Groups = append(p.Groups, g)
@@ -215,15 +216,6 @@ func (p *Peer) derive() {
 	if p.Suspended {
 		p.Approved = false
 	}
-}
-
-// PersonOnly returns the device as its person layer alone sees it: the person's approval, role and
-// groups, without the machine's approval and role (its device groups stay, for isolation and rules).
-// A dashboard session opened by signing in acts with these (0.50).
-func (p Peer) PersonOnly() Peer {
-	p.Machine.Approved, p.Machine.Admin, p.Machine.Operator = false, false, false
-	p.derive()
-	return p
 }
 
 // MachineOnly returns the device as its machine layer alone sees it.

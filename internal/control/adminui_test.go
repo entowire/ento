@@ -153,6 +153,7 @@ func startUITest(t *testing.T, ctx context.Context) (srv *Server, st store.Store
 	srv.checkVersion(ctx)
 	admin, _ = enroll(t, adminTok, "admin-laptop")
 	user, _ = enroll(t, userTok, "phone")
+	signInRoles(t, mem)
 	return srv, mem, pool, admin, user
 }
 
@@ -217,6 +218,7 @@ func TestAdminInterfaceSessions(t *testing.T) {
 	otherTok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true, Admin: true})
 	srv.checkVersion(ctx)
 	other, _ := enroll(t, otherTok, "other-laptop")
+	signInRoles(t, st)
 	if c := approve(t, other, code); c != http.StatusNotFound {
 		t.Fatalf("approved by another device: %d", c)
 	}
@@ -319,7 +321,8 @@ func TestAdminInterfaceSessions(t *testing.T) {
 	if c := other.do(t, "PATCH", fmt.Sprintf("%s/%d", api.PathPeers, info.Self.ID), api.UpdatePeerRequest{Admin: ptr(false)}, &self); c != 200 || self.Admin {
 		t.Fatalf("take admin away: %d", c)
 	}
-	if c := uiDo(t, ui, "GET", api.PathInfo, nil, nil, nil); c != http.StatusForbidden {
+	// Its admin person now only views here, so the page still opens, but the session has ended.
+	if c := uiDo(t, ui, "GET", api.PathInfo, nil, nil, nil); c != http.StatusUnauthorized {
 		t.Fatalf("session of a former admin device: %d", c)
 	}
 	// Made an admin again, it does not get the old session back.
@@ -370,6 +373,7 @@ func TestAdminInterface(t *testing.T) {
 	srv.checkVersion(ctx)
 	admin, _ := enroll(t, adminTok, "admin-laptop")
 	user, userRes := enroll(t, userTok, "phone")
+	signInRoles(t, st)
 	ctl := srv.Address()
 	ui := uiClient(admin, "net.example.test", pool, ctl)
 	change := uiChange
