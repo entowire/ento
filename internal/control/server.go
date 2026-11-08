@@ -190,6 +190,7 @@ type Server struct {
 	runCtx  context.Context
 
 	services atomic.Pointer[[]api.Host] // ServiceNames as last resolved (servicenames.go)
+	domain   atomic.Pointer[string]     // the internal DNS domain administrators chose (dns.go), nil: none
 }
 
 type gracePeer struct {
@@ -481,6 +482,9 @@ func (s *Server) waitChangeOrApprovals(ctx context.Context, self store.Peer, sin
 func (s *Server) reconcile(ctx context.Context) error {
 	s.reconMu.Lock()
 	defer s.reconMu.Unlock()
+	if err := s.loadDNSDomain(ctx); err != nil {
+		return err
+	}
 	peers, err := s.cfg.Store.Peers(ctx)
 	if err != nil {
 		return err

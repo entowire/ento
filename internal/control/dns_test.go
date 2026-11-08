@@ -214,3 +214,74 @@ func TestServiceNames(t *testing.T) {
 		t.Fatalf("fixed names %+v", got)
 	}
 }
+
+// Administrators set and change the domain (0.55): it is stored with the network, so every
+// control node uses it and it outlives a restart; it wins over --dns-domain, and maps follow it.
+func TestDNSDomain(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv, st := startTestNetwork(t, ctx, "100.65.0.0/16")
+	admin := adminOf(t, ctx, srv, st, "ops-laptop", "admins")
+	opTok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true, Groups: []string{"staff"}})
+	srv.checkVersion(ctx)
+	op, opRes := enroll(t, opTok, "op-laptop")
+	opPeer, _ := st.PeerByAddress(ctx, netip.MustParseAddr(opRes.Address))
+	yes := true
+	if _, err := st.UpdatePeer(ctx, opPeer.ID, store.PeerUpdate{Operator: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	signInRoles(t, st)
+	srv.checkVersion(ctx)
+	domainOf := func(c *testClient) string {
+		var nm api.NetMap
+		c.do(t, "GET", api.PathNetMap, nil, &nm)
+		if nm.DNS == nil {
+			return ""
+		}
+		return nm.DNS.Domain
+	}
+
+	if code := op.do(t, "PUT", api.PathDNSDomain, api.DNSDomain{Domain: "corp.internal"}, nil); code != http.StatusForbidden {
+		t.Fatalf("an operator set the domain: HTTP %d", code)
+	}
+	for _, bad := range []string{"", "internal", "bad_name.internal", "-x.internal"} {
+		if code := admin.do(t, "PUT", api.PathDNSDomain, api.DNSDomain{Domain: bad}, nil); code != http.StatusBadRequest {
+			t.Errorf("domain %q: HTTP %d", bad, code)
+		}
+	}
+	var out api.DNSDomain
+	if code := admin.do(t, "PUT", api.PathDNSDomain, api.DNSDomain{Domain: "Corp.Internal."}, &out); code != http.StatusOK || out.Domain != "corp.internal" {
+		t.Fatalf("set the domain: HTTP %d %+v", code, out)
+	}
+	if d := domainOf(op); d != "corp.internal" {
+		t.Fatalf("the map's domain %q", d)
+	}
+
+	// The control nodes' own --dns-domain is only where it starts.
+	srv.cfg.DNSDomain = "start.internal"
+	srv.checkVersion(ctx)
+	if d := domainOf(op); d != "corp.internal" {
+		t.Fatalf("--dns-domain won over the administrators' domain: %q", d)
+	}
+
+	// A zone forwarded elsewhere is no domain of the network's.
+	admin.do(t, "POST", api.PathDNSForwards, api.DNSForward{Zone: "example.com", Servers: []string{"192.0.2.53"}}, nil)
+	if code := admin.do(t, "PUT", api.PathDNSDomain, api.DNSDomain{Domain: "office.example.com"}, nil); code != http.StatusConflict {
+		t.Fatalf("a domain in a forwarded zone: HTTP %d", code)
+	}
+	if code := admin.do(t, "PUT", api.PathDNSDomain, api.DNSDomain{Domain: "office.example.net"}, &out); code != http.StatusOK {
+		t.Fatalf("change the domain: HTTP %d", code)
+	}
+	var listed api.DNSAdmin
+	admin.do(t, "GET", api.PathDNS, nil, &listed)
+	if listed.Domain != "office.example.net" || domainOf(op) != "office.example.net" {
+		t.Fatalf("after the change: %+v, map %q", listed, domainOf(op))
+	}
+	if v, _, _ := st.Setting(ctx, store.SettingDNSDomain); v != "office.example.net" {
+		t.Fatalf("stored %q", v)
+	}
+	entries, _ := st.Audit(ctx, store.AuditQuery{Action: "dns_domain_changed", Limit: 10})
+	if len(entries) != 2 { // two changes (the operator's refusal is audited as admin_api, denied)
+		t.Fatalf("audited %d: %+v", len(entries), entries)
+	}
+}

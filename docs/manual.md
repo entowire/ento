@@ -534,10 +534,18 @@ in use) and, on a gateway, `exit for:`.
 
 ### Internal DNS (names for devices and office machines)
 
-With a domain on the control nodes (`ento control run --dns-domain example.internal`, the same on
-each; 0.26), devices resolve each other by name, `NAME.example.internal` (their device names), and
-the names administrators add:
+With a domain (0.26), devices resolve each other by name, `NAME.example.internal` (their device
+names), and the names administrators add. Admins set or change the domain on the **Names** page or
+with `ento admin dns domain NAME` (0.55); it is stored with the network, so every control node uses
+it at once, and every device's name moves to it with its next map (the added names, relative to
+it, move along). The control nodes' `--dns-domain` (the same on each) is only where it starts. Any
+well-formed name of at least two labels will do: one under `.internal` never collides with a public
+name; a domain of the company's own (`office.example.com`) works too, answered only inside the
+network, where it hides the public names it shares from the devices (no proof of ownership is
+asked, as it is published nowhere). Not within a zone forwarded to other name servers. A device in
+several networks answers a domain for the first network that has it and logs the others' as left
 
+    sudo ento admin dns domain corp.internal                 # set or change the domain
     sudo ento admin dns add nas.office 192.168.10.5          # nas.office.example.internal
     sudo ento admin dns forward office.example.com 192.168.10.1   # names in a zone: the office's own DNS
     sudo ento admin dns                                      # the domain, names and zones
@@ -563,8 +571,9 @@ systemd-resolved the agent logs what to set. On Android the VPN names the agent 
 DNS in strict mode bypasses it. macOS and Windows: not yet. Linked networks get the names in their
 namespace's hosts file. `ento agent status` shows `dns:` when the device answers them.
 
-Adding and deleting names and zones is for admins and audited (`dns_record_added`,
-`dns_record_deleted`, `dns_forward_added`, `dns_forward_deleted`); the admin page's **Names** page
+Setting the domain, adding and deleting names and zones is for admins and audited
+(`dns_domain_changed`, `dns_record_added`, `dns_record_deleted`, `dns_forward_added`,
+`dns_forward_deleted`); the admin page's **Names** page
 lists every name devices resolve (devices' names, read-only, then the added ones) and changes them.
 
 ### Device posture

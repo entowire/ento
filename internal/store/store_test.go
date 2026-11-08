@@ -1747,7 +1747,7 @@ func TestAudit(t *testing.T) {
 	}
 }
 
-// Setting reads what KeepSetting stored, and says when nothing is.
+// Setting reads what KeepSetting and SetSetting stored, and says when nothing is.
 func TestSetting(t *testing.T) {
 	for name, open := range backends(t) {
 		t.Run(name, func(t *testing.T) {
@@ -1761,6 +1761,15 @@ func TestSetting(t *testing.T) {
 			}
 			if v, ok, err := s.Setting(ctx, "k"); err != nil || !ok || v != "v1" {
 				t.Fatalf("stored: %q %v %v", v, ok, err)
+			}
+			// SetSetting replaces it, as a change of the network (a new version).
+			before, _ := s.Version(ctx)
+			if err := s.SetSetting(ctx, "k", "v2"); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := s.Version(ctx)
+			if v, _, _ := s.Setting(ctx, "k"); v != "v2" || after <= before {
+				t.Fatalf("replaced: %q, version %d -> %d", v, before, after)
 			}
 		})
 	}

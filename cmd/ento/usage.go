@@ -139,7 +139,9 @@ agent join; operators: ordinary devices, tokens and policies only):
                          use it (allow GROUP route:NAME) may send all their internet traffic through
                          DEVICE, to public addresses; --default: they do unless they turn it off
   ento admin routes | route delete NAME
-  ento admin dns        the network's internal DNS (control nodes' --dns-domain): names and forwarded zones
+  ento admin dns        the network's internal DNS: its domain, names and forwarded zones
+  ento admin dns domain NAME   set or change the domain (e.g. corp.internal; admins, 0.55): every
+                         device is DEVICE.NAME; it starts as the control nodes' --dns-domain
   ento admin dns add NAME ADDRESS | dns delete NAME     a name in the domain (e.g. nas.office) for an
                          address; devices resolve it when they reach the address (admins)
   ento admin dns forward ZONE SERVER[,SERVER...] | dns unforward ZONE   names in ZONE are asked of

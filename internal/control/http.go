@@ -46,6 +46,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE "+api.PathDNSRecords+"/{name}", s.adminOnly(s.handleDeleteDNSRecord))
 	mux.HandleFunc("POST "+api.PathDNSForwards, s.adminOnly(s.handleAddDNSForward))
 	mux.HandleFunc("DELETE "+api.PathDNSForwards+"/{zone}", s.adminOnly(s.handleDeleteDNSForward))
+	mux.HandleFunc("PUT "+api.PathDNSDomain, s.adminOnly(s.handleSetDNSDomain))
 	mux.HandleFunc("POST "+api.PathApprovals, s.keyHolder(false, s.handleRequestApproval))
 	mux.HandleFunc("GET "+api.PathApprovals, s.keyHolder(false, s.handlePendingApprovals))
 	mux.HandleFunc("GET "+api.PathApprovals+"/{id}", s.keyHolder(false, s.handleApprovalStatus))

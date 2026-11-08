@@ -1655,6 +1655,14 @@ func (p *Postgres) KeepSetting(ctx context.Context, key, value string) (string, 
 	return stored, err
 }
 
+func (p *Postgres) SetSetting(ctx context.Context, key, value string) error {
+	return p.write(ctx, func(tx pgx.Tx) (bool, error) {
+		_, err := tx.Exec(ctx, `INSERT INTO ento_settings (key, value) VALUES ($1, $2)
+			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, key, value)
+		return err == nil, err
+	})
+}
+
 func (p *Postgres) Setting(ctx context.Context, key string) (string, bool, error) {
 	var v string
 	err := p.pool.QueryRow(ctx, `SELECT value FROM ento_settings WHERE key = $1`, key).Scan(&v)

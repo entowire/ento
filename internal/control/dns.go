@@ -1,6 +1,7 @@
 package control
 
-// Internal DNS (0.26). With a domain (Config.DNSDomain, e.g. "example.internal"), every device's
+// Internal DNS (0.26). With a domain (administrators' choice, 0.55, else Config.DNSDomain, e.g.
+// "example.internal"), every device's
 // agent answers the names in it, from its network map: the devices of its map (by name) and the
 // names administrators give addresses (a printer in an office behind a route), and it asks the name
 // servers of forwarded zones (an office's own DNS, through its route) for their names. The control
@@ -104,7 +105,7 @@ func dnsReachable(nm api.NetMap, overlay netip.Prefix, routes []store.Route) fun
 // dnsConfig is the internal DNS of a device's map (nil: the network has none).
 func (s *Server) dnsConfig(ctx context.Context, nm api.NetMap) (*api.DNSConfig, error) {
 	fixed := s.fixedNames(nm)
-	if s.cfg.DNSDomain == "" || !nm.Self.Approved {
+	if s.dnsDomain() == "" || !nm.Self.Approved {
 		if len(fixed) == 0 {
 			return nil, nil
 		}
@@ -123,7 +124,7 @@ func (s *Server) dnsConfig(ctx context.Context, nm api.NetMap) (*api.DNSConfig, 
 		return nil, err
 	}
 	reach := dnsReachable(nm, s.cfg.Space.Prefix, routes)
-	out := &api.DNSConfig{Domain: s.cfg.DNSDomain, Fixed: fixed}
+	out := &api.DNSConfig{Domain: s.dnsDomain(), Fixed: fixed}
 	// An administrator's record wins over a device's name (A2): a device renamed to it never takes
 	// the name over.
 	recorded := map[string]bool{}
@@ -199,10 +200,77 @@ func (s *Server) fixedNames(nm api.NetMap) []api.Host {
 	return out
 }
 
+// loadDNSDomain takes the domain administrators chose from the store (reconcile, on every change).
+func (s *Server) loadDNSDomain(ctx context.Context) error {
+	v, ok, err := s.cfg.Store.Setting(ctx, store.SettingDNSDomain)
+	if err != nil {
+		return err
+	}
+	if ok && v != "" {
+		s.domain.Store(&v)
+	} else {
+		s.domain.Store(nil)
+	}
+	return nil
+}
+
+// dnsDomain is the network's internal DNS domain: administrators' choice, else the control nodes'
+// --dns-domain ("": none).
+func (s *Server) dnsDomain() string {
+	if p := s.domain.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.DNSDomain
+}
+
+// handleSetDNSDomain sets or changes the domain (admins, 0.55). Every device's name moves to the
+// new domain with its next map; added names and forwarded zones keep theirs (relative to it, or
+// their own zone).
+func (s *Server) handleSetDNSDomain(w http.ResponseWriter, r *http.Request, self store.Peer) {
+	var req api.DNSDomain
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	d, err := CheckDNSDomain(req.Domain)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	old := s.dnsDomain()
+	if d == old {
+		writeJSON(w, http.StatusOK, api.DNSDomain{Domain: d})
+		return
+	}
+	forwards, err := s.cfg.Store.DNSForwards(r.Context())
+	if err != nil {
+		s.respondStoreErr(w, err)
+		return
+	}
+	for _, f := range forwards {
+		if f.Zone == d || strings.HasSuffix(d, "."+f.Zone) {
+			writeErr(w, http.StatusConflict, fmt.Sprintf("the zone %s is forwarded to other name servers: delete that first", f.Zone))
+			return
+		}
+	}
+	if err := s.cfg.Store.SetSetting(r.Context(), store.SettingDNSDomain, d); err != nil {
+		s.respondStoreErr(w, err)
+		return
+	}
+	s.domain.Store(&d)
+	from := old
+	if from == "" {
+		from = "none"
+	}
+	s.audit(r, &self, "dns_domain_changed", fmt.Sprintf("domain %s (was %s)", d, from), "ok")
+	s.checkVersion(r.Context())
+	writeJSON(w, http.StatusOK, api.DNSDomain{Domain: d})
+}
+
 // noDNS refuses a change to the internal DNS of a network without a domain.
 func (s *Server) noDNS(w http.ResponseWriter) bool {
-	if s.cfg.DNSDomain == "" {
-		writeErr(w, http.StatusConflict, "this network has no internal DNS: its control nodes need a domain (--dns-domain)")
+	if s.dnsDomain() == "" {
+		writeErr(w, http.StatusConflict, "this network has no internal DNS yet: set its domain first (ento admin dns domain NAME)")
 		return true
 	}
 	return false
@@ -231,7 +299,7 @@ func (s *Server) handleListDNS(w http.ResponseWriter, r *http.Request, _ store.P
 		s.respondStoreErr(w, err)
 		return
 	}
-	out := api.DNSAdmin{Domain: s.cfg.DNSDomain, Records: []api.DNSRecord{}, Forwards: []api.DNSForward{}}
+	out := api.DNSAdmin{Domain: s.dnsDomain(), Records: []api.DNSRecord{}, Forwards: []api.DNSForward{}}
 	for _, rec := range records {
 		a := api.DNSRecord{Name: rec.Name, Address: rec.Address.String(), CreatedAt: stamp(rec.CreatedAt), CreatedBy: rec.CreatedBy}
 		if slices.ContainsFunc(peers, func(p store.Peer) bool { return p.Hostname == rec.Name }) {
@@ -256,10 +324,10 @@ func (s *Server) relativeName(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if n == s.cfg.DNSDomain {
+	if n == s.dnsDomain() {
 		return "", errors.New("the domain itself has no address: name something in it")
 	}
-	return strings.TrimSuffix(n, "."+s.cfg.DNSDomain), nil
+	return strings.TrimSuffix(n, "."+s.dnsDomain()), nil
 }
 
 func (s *Server) handleAddDNSRecord(w http.ResponseWriter, r *http.Request, self store.Peer) {
@@ -290,7 +358,7 @@ func (s *Server) handleAddDNSRecord(w http.ResponseWriter, r *http.Request, self
 		s.respondStoreErr(w, err)
 		return
 	}
-	s.audit(r, &self, "dns_record_added", fmt.Sprintf("name %s.%s %s", name, s.cfg.DNSDomain, addr), "ok")
+	s.audit(r, &self, "dns_record_added", fmt.Sprintf("name %s.%s %s", name, s.dnsDomain(), addr), "ok")
 	s.checkVersion(r.Context())
 	writeJSON(w, http.StatusCreated, api.DNSRecord{Name: name, Address: addr.String(), CreatedAt: stamp(rec.CreatedAt), CreatedBy: rec.CreatedBy})
 }
@@ -320,7 +388,7 @@ func (s *Server) handleAddDNSForward(w http.ResponseWriter, r *http.Request, sel
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if zone == s.cfg.DNSDomain {
+	if zone == s.dnsDomain() {
 		writeErr(w, http.StatusBadRequest, "the network's own domain is answered by its devices; forward a zone in it or another one")
 		return
 	}

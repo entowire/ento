@@ -2530,7 +2530,7 @@ func awaitExit(stateDir, choice string) error {
 
 // adminDNSCmd lists and changes the network's internal DNS.
 func adminDNSCmd(ctx context.Context, c *agent.AdminClient, rest []string) error {
-	const usage = "usage: ento admin dns [add NAME ADDRESS | delete NAME | forward ZONE SERVER[,SERVER...] | unforward ZONE]"
+	const usage = "usage: ento admin dns [domain NAME | add NAME ADDRESS | delete NAME | forward ZONE SERVER[,SERVER...] | unforward ZONE]"
 	old := func(err error) error {
 		if code := agent.HTTPStatus(err); code == 404 || code == 405 {
 			return errors.New("the control plane has no internal DNS (older than ento 0.26)")
@@ -2545,7 +2545,7 @@ func adminDNSCmd(ctx context.Context, c *agent.AdminClient, rest []string) error
 			return old(err)
 		}
 		if d.Domain == "" {
-			fmt.Println("this network has no internal DNS: its control nodes need a domain (--dns-domain)")
+			fmt.Println("this network has no internal DNS yet: give it a domain (ento admin dns domain NAME, e.g. corp.internal)")
 			return nil
 		}
 		records, forwards := d.Records, d.Forwards
@@ -2567,6 +2567,19 @@ func adminDNSCmd(ctx context.Context, c *agent.AdminClient, rest []string) error
 			}
 		}
 		return w.Flush()
+	case "domain":
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		var out api.DNSDomain
+		if err := c.Do(ctx, "PUT", api.PathDNSDomain, api.DNSDomain{Domain: args[0]}, &out); err != nil {
+			if code := agent.HTTPStatus(err); code == 404 || code == 405 {
+				return errors.New("the control plane sets its domain only by --dns-domain (older than ento 0.55)")
+			}
+			return err
+		}
+		fmt.Printf("domain %s: every approved device is <device name>.%s from its next map\n", out.Domain, out.Domain)
+		return nil
 	case "add":
 		if len(args) != 2 {
 			return errors.New(usage)

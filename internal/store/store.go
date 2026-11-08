@@ -589,6 +589,10 @@ type UISession struct {
 // a control node whose key does not open it refuses to start (it could read none of the tokens).
 const SettingSSOTokenCanary = "sso_token_canary"
 
+// SettingDNSDomain is the setting that holds the domain of the network's internal DNS as its
+// administrators chose it (0.55); without it, the control nodes' --dns-domain.
+const SettingDNSDomain = "dns_domain"
+
 type SSOToken struct {
 	PeerID    int64
 	Subject   string
@@ -851,6 +855,9 @@ type Store interface {
 	KeepSetting(ctx context.Context, key, value string) (string, error)
 	// Setting returns the value stored under key ("" and false: none).
 	Setting(ctx context.Context, key string) (string, bool, error)
+	// SetSetting stores value under key, replacing any, as a change of the network (a new
+	// version: every device gets a new map).
+	SetSetting(ctx context.Context, key, value string) error
 
 	// Sessions of the admin interface. CreateUISession fails with ErrExists when the hash, or the
 	// code among the device's pending sessions, is taken. UISession returns an unexpired session;

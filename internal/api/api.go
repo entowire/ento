@@ -19,6 +19,8 @@ const (
 	PathDNS         = "/v1/admin/dns"
 	PathDNSRecords  = "/v1/admin/dns/records"
 	PathDNSForwards = "/v1/admin/dns/forwards"
+	// PathDNSDomain sets or changes the domain (PUT DNSDomain, admins, 0.55).
+	PathDNSDomain = "/v1/admin/dns/domain"
 	// PathCheckIn: a device's check-in (CheckInRequest → CheckInResponse), signed with its key.
 	PathCheckIn = "/v1/checkin"
 	// PathLogout: the device's person signs out (LogoutRequest), signed with its key (0.27).
@@ -217,6 +219,11 @@ type DNSAdmin struct {
 	Domain   string       `json:"domain"`
 	Records  []DNSRecord  `json:"records"`
 	Forwards []DNSForward `json:"forwards"`
+}
+
+// DNSDomain is the domain of the network's internal DNS (PathDNSDomain).
+type DNSDomain struct {
+	Domain string `json:"domain"`
 }
 
 // DNSRecord is a name administrators gave an address in the network's domain (relative to it).

@@ -1721,7 +1721,8 @@ function renderNames() {
   const on = !!dns.domain;
   $("dns-sub").textContent = on
     ? `Devices resolve each other as NAME.${dns.domain}, and the names added here when they reach the address. Linux and Android devices (ento 0.26 or later).`
-    : "This network has no internal DNS: its control nodes need a domain (--dns-domain, e.g. example.internal).";
+    : (isAdmin() ? "This network has no internal DNS yet: give it a domain, such as corp.internal." : "This network has no internal DNS yet: an admin gives it a domain.");
+  $("dns-domain-btn").textContent = on ? "Change the domain" : "Set the domain";
   $("dns-on").hidden = !on;
   if (!on) return;
   $("dns-suffix").textContent = "." + dns.domain;
@@ -1740,6 +1741,21 @@ function renderNames() {
     el("div", { class: "who" }, el("b", { class: "mono" }, `${p.hostname}.${dns.domain}`)), el("span", { class: "mono dim" }, p.address))),
     "No approved devices."));
 }
+
+// The domain (admins, 0.55): every device's name moves to it with its next map.
+$("dns-domain-btn").addEventListener("click", async () => {
+  const text = (dns.domain
+    ? `Every device's name moves from NAME.${dns.domain} to the new domain within seconds, and the names added here with it; names under ${dns.domain} stop resolving. `
+    : "Devices then resolve each other as NAME.domain, and the names added here. ") +
+    "A domain under .internal (such as corp.internal) never collides with a public one. A domain of your own (office.example.com) works too: its names are answered inside the network only, and they hide the public ones of the same names from your devices.";
+  const v = await ask(dns.domain ? "Change the domain" : "Set the domain", text, { input: dns.domain || "", ok: dns.domain ? "Change" : "Set" });
+  if (v === null || !v.trim() || v.trim() === dns.domain) return;
+  try {
+    const r = await call("PUT", "/v1/admin/dns/domain", { domain: v.trim() });
+    notice(`Devices are now NAME.${r.domain}.`, true);
+  } catch (e) { notice("Domain: " + e.message); }
+  load();
+});
 
 async function removeName(kind, key, label) {
   if (!await ask(`Delete ${label}?`, "Devices stop resolving it within seconds.", { ok: "Delete", danger: true })) return;

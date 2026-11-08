@@ -1010,6 +1010,17 @@ func (m *Memory) KeepSetting(_ context.Context, key, value string) (string, erro
 	return value, nil
 }
 
+func (m *Memory) SetSetting(_ context.Context, key, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.settings == nil {
+		m.settings = map[string]string{}
+	}
+	m.settings[key] = value
+	m.version++
+	return nil
+}
+
 func (m *Memory) Setting(_ context.Context, key string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

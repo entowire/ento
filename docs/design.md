@@ -405,7 +405,8 @@ later.
 
 ## Internal DNS
 
-With a domain (`--dns-domain`, 0.26), each device's map carries `DNS` (`api.DNSConfig`): the domain,
+With a domain (0.26: the setting `dns_domain` administrators set, 0.55, which every control node
+takes at each reconcile, else `--dns-domain`), each device's map carries `DNS` (`api.DNSConfig`): the domain,
 names relative to it with their addresses, and forwarded zones with their servers. The control node
 puts in it the device itself and the devices of its map (by device name, which wins), and the names
 administrators added (`dns_records`) and zones they forwarded (`dns_forwards`, servers filtered the
