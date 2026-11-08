@@ -78,6 +78,8 @@ p { margin: 0; }
 .me > div { min-width: 0; flex: 1; }
 .me b { display: block; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .me small { display: block; color: var(--muted); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#me-name a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+#me-name a:hover { color: var(--accent-text); text-decoration-color: currentColor; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--fg); color: var(--bg); display: flex; align-items: center;
   justify-content: center; font-weight: 700; font-size: 12.5px; flex: none; text-transform: uppercase; }
 .avatar.lite { background: var(--accent-soft); color: var(--accent-ink); }
@@ -240,7 +242,7 @@ td .row-actions { justify-content: flex-end; flex-wrap: nowrap; }
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; font-size: 14px; margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
-.dfoot { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); padding-top: 16px; }
+.dfoot { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-top: 1px solid var(--line); padding-top: 16px; }
 
 /* --- access ---------------------------------------------------------------------------------- */
 .groups { list-style: none; margin: 0; padding: 8px; }

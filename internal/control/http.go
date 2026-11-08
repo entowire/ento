@@ -621,7 +621,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request, self store.P
 		return
 	}
 	out := api.AdminInfo{Network: s.cfg.Space.Prefix.String(), Node: s.cfg.Name, Version: s.cfg.Version,
-		Self: peerInfo(self), SSO: s.cfg.OIDC != nil, People: s.people != nil, NoGateways: s.cfg.NoGateways, Viewer: !(self.Admin || self.Operator) && s.isViewer(self), PersonRoles: s.personRoles(), Services: s.serviceNames(), Controls: []api.ControlInfo{}}
+		Self: peerInfo(self), SSO: s.cfg.OIDC != nil, People: s.people != nil, NoGateways: s.cfg.NoGateways, Viewer: !(self.Admin || self.Operator) && s.isViewer(self), PersonRoles: s.personRoles(), Services: s.serviceNames(), Account: s.accountPage(), Controls: []api.ControlInfo{}}
 	for _, n := range nodes {
 		out.Controls = append(out.Controls, api.ControlInfo{Name: n.Name, Address: n.Address.String(),
 			Endpoint: n.Endpoint, LastSeen: n.LastSeen.UTC().Format(time.RFC3339)})

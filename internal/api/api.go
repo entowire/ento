@@ -401,6 +401,9 @@ type AdminInfo struct {
 	PersonRoles map[string][]string `json:"person_roles,omitempty"`
 	// Services: the forwarded services rules can name as "service:NAME" (0.53).
 	Services []string `json:"services,omitempty"`
+	// Account: the identity provider's page where people change their own password, passkeys and
+	// authenticator app (0.54.1; where people are managed here).
+	Account string `json:"account,omitempty"`
 }
 
 // PeerInfo is the administrative view of a peer.

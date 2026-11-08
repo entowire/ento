@@ -1045,3 +1045,12 @@ func (s *Server) checkPersonFits(ctx context.Context, u rauthyUser, groups []str
 	}
 	return nil
 }
+
+// accountPage is where people change their own sign-in: entowire's build of Rauthy serves only
+// that on its account page (tools/rauthy, patch 0014). "" where people are not managed here.
+func (s *Server) accountPage() string {
+	if s.people == nil || s.cfg.People == nil || s.cfg.People.Kind != "rauthy" {
+		return ""
+	}
+	return strings.TrimSuffix(s.cfg.People.API, "/") + "/account"
+}

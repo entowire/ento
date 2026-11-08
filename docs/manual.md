@@ -770,7 +770,11 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   person at once, sign them out of one device. With `--people` (below), everyone in the identity
   provider too: invite a person (the page shows their setup link, to hand over), change their
   groups, see and remove their passkeys (a lost key: remove them all, then a new setup link),
-  disable or enable them, delete them.
+  disable or enable them, delete them. Everyone changes their own password, passkeys and
+  authenticator app on the identity provider's account page, which their name at the bottom of
+  the dashboard's side bar opens (0.54.1, entowire's build of Rauthy: each change confirmed with a passkey or the
+  password and a code, and none that would leave them without a way to sign in their groups
+  allow).
 - **Devices**: every device with its state, checks and last contact, filtered (online, waiting,
   failing a check, suspended, admins) and searched; a device's panel shows its groups, its posture
   report and each check, and does what the admin commands do: approve and unapprove (**Sign out**
@@ -939,9 +943,11 @@ or role to set:
   in admin or operator; viewing, a person in admins, operators or viewers on any device. Either
   alone is no administration: a device in admin with nobody signed in administers nothing (its
   calls are refused with "sign in first"), and an admin person on a laptop outside admin only views
-  there. The dashboard shows a device in a role group with nobody of that role on it as **admin
-  device** (or **operator device**); operators change only devices with no role in either layer
-  (neither in admin or operator, nor bound to a person in admins or operators). Automation
+  there. The dashboard shows each layer's role apart: the device's group with a device icon
+  (**admin**, **operator**) and the signed-in person's with a people icon (**admins**,
+  **operators**); the device has the role when both show (0.54.1). Operators change only devices
+  with no role in either layer (neither in admin or operator, nor bound to a person in admins or
+  operators). Automation
   administers through `ento control` on a control node (4.6). Where the network has no identity
   provider, nobody can sign in, and a device in admin or operator has that role alone.
 

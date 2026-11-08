@@ -317,9 +317,15 @@ const roleOf = (p) => p.admin ? "admin" : (p.operator ? "operator" : null);
 const deviceRole = (p) => (ownGroups(p).includes(DEV + "admin") ? "admin" : (ownGroups(p).includes(DEV + "operator") ? "operator" : null));
 const hasRole = (p) => !!(roleOf(p) || deviceRole(p) || p.person_role);
 const mayChange = (p) => isAdmin() || !hasRole(p);
-// roleBadge: the role it has now, else its group's, which waits for a person with that role.
-const roleBadge = (p) => roleOf(p) ? badge(roleOf(p), "mute")
-  : (deviceRole(p) ? badge(`${deviceRole(p)} device`, "mute", { title: `administers once a person in ${deviceRole(p)}s signs in on it` }) : null);
+// roleBadge: each layer's role apart, the device's (its group, a device icon) and the signed-in
+// person's (their group, a people icon); the device has the role when both show.
+const roleBadge = (p) => {
+  const d = deviceRole(p), r = p.person_active && p.person_role;
+  return [
+    d ? badge([icon("laptop", 13), d], "mute", { title: r ? `in ${d}, with ${p.user} of ${r}s signed in` : `in ${d}: administers once a person in ${d}s signs in on it` }) : null,
+    r ? badge([icon("people", 13), r + "s"], "mute", { title: d ? `${p.user} is in ${r}s` : `${p.user} is in ${r}s; the device is in neither admin nor operator, so they only view here` }) : null,
+  ];
+};
 
 function renderMe() {
   if (!info) return;
@@ -328,7 +334,21 @@ function renderMe() {
   const s = info.self;
   $("net-name").textContent = pageDomain() || location.hostname;
   $("net-host").textContent = info.network;
-  $("me-name").textContent = s.user || s.hostname;
+  // The person's name opens their own sign-in (password, passkeys, authenticator app) on the
+  // identity provider's page (0.54.1).
+  const name = $("me-name");
+  name.replaceChildren();
+  if (info.account && s.user) {
+    const a = document.createElement("a");
+    a.href = info.account;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.title = "Your sign-in: password, passkeys and authenticator app";
+    a.textContent = s.user;
+    name.append(a);
+  } else {
+    name.textContent = s.user || s.hostname;
+  }
   $("me-device").textContent = `${s.hostname} · ${isAdmin() ? "admin" : (info.viewer ? "viewer" : "operator")}`;
   $("me-avatar").textContent = initials(s.user || s.hostname);
   document.querySelectorAll("[data-admin-only]").forEach((e) => { e.hidden = !isAdmin(); });
@@ -421,7 +441,7 @@ function postureOf(p) {
   return [
     el("div", { class: "tags" }, fact(f.disk_encryption, "Encrypted", "Not encrypted", "Encryption"),
       fact(f.firewall, "Firewall", "No firewall", "Firewall"), boot, fact(f.antimalware, "Anti-malware", "No anti-malware", "Anti-malware")),
-    el("p", { class: "hint" }, systemOf(p) + (f.patch_level ? `, patch ${f.patch_level}` : "") + " · reported " + ago(p.posture_reported_at) + (f.agent ? " by ento " + f.agent : "")),
+    el("p", { class: "hint" }, systemOf(p) + (f.patch_level ? `, patch ${f.patch_level}` : ""), el("br"), "reported " + ago(p.posture_reported_at) + (f.agent ? " by ento " + f.agent : "")),
     results,
   ];
 }
@@ -826,7 +846,7 @@ function renderDeviceDetail(p) {
     el("div", { class: "tags" }, stateOf(p), roleBadge(p)),
     acts.length ? el("div", { class: "row-actions" }, acts) : null,
     el("div", { class: "sect" }, el("h3", {}, "Groups"),
-      el("div", { class: "tags" }, ownGroups(p).map((g) => groupTag(g)), person.map((g) => tag(g, "tag person" + (p.person_active ? "" : " closed"),
+      el("div", { class: "tags" }, ownGroups(p).map((g) => groupTag(g)), person.map((g) => groupTag(g, "tag person" + (p.person_active ? "" : " closed"),
         { title: `from ${p.user}'s sign-in` + (p.person_active ? "" : ": not now, they are signed out") })),
         !ownGroups(p).length && !person.length ? el("span", { class: "dim" }, "none") : null),
       managedBy(p) ? el("p", { class: "hint" }, `Set by ${managedBy(p)}.`) : null),
