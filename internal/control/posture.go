@@ -292,13 +292,19 @@ func (ps *postureState) passes(p store.Peer, checks []string) bool {
 	return true
 }
 
-// inGroup reports whether p is in group g ("*": every device). A route ("route:NAME") is no group:
-// policies to routes are applied by routeAccess only.
+// inGroup reports whether p is in group g ("*": every device), or one of a rule's source devices
+// (who on a device group, rules.go). A route ("route:NAME") and a forwarded service
+// ("service:NAME") are no group: rules to them are applied by routeAccess and serviceAllowed.
 func inGroup(p store.Peer, g string) bool {
-	if isRoute(g) {
+	switch {
+	case isRoute(g) || isService(g):
 		return false
+	case g == "*":
+		return true
+	case strings.HasPrefix(g, "*") || strings.Contains(g, onSep):
+		return sourceIn(p, g)
 	}
-	return g == "*" || hasGroup(p.Groups, g)
+	return hasGroup(p.Groups, g)
 }
 
 // allowed reports whether a policy lets a and b reach each other. "*" matches every peer. A policy
@@ -688,7 +694,7 @@ func sameGroup(g, h string) bool {
 // coversGroups reports whether a policy between groups x and y connects devices of groups a and b,
 // going by the names ("*" matches every group; a plain name and its device group match).
 func coversGroups(x, y, a, b string) bool {
-	match := func(g, h string) bool { return g == "*" || h == "*" || sameGroup(g, h) }
+	match := func(g, h string) bool { return g == "*" || h == "*" || sameGroup(g, h) || sourcesOverlap(g, h) }
 	return match(x, a) && match(y, b) || match(x, b) && match(y, a)
 }
 
@@ -700,7 +706,7 @@ func coversGroups(x, y, a, b string) bool {
 // 0.52; this stays as strict as when they went both).
 // Going by group names: devices in several groups can still be connected by others.
 func bypasses(o, p store.Policy) bool {
-	if isRoute(o.Destination) != isRoute(p.Destination) { // a policy between groups reaches no route
+	if isRoute(o.Destination) != isRoute(p.Destination) || isService(o.Destination) != isService(p.Destination) { // a policy between groups reaches no route or service
 		return false
 	}
 	if len(p.Posture) == 0 || o.Source == p.Source && o.Destination == p.Destination ||
@@ -758,7 +764,8 @@ func policyLabel(p store.Policy) string {
 }
 
 func apiPolicy(p store.Policy) api.Policy {
-	return api.Policy{ID: p.ID, Source: p.Source, Destination: p.Destination, Posture: p.Posture, OneWay: p.OneWay, Ports: p.Ports}
+	who, on := splitSource(p.Source)
+	return api.Policy{ID: p.ID, Source: p.Source, Who: who, On: on, Destination: p.Destination, Posture: p.Posture, OneWay: p.OneWay, Ports: p.Ports}
 }
 
 // filteringAgents is the first agent version that enforces a policy's direction and ports.

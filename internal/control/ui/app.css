@@ -381,3 +381,22 @@ body.viewer :is(.row-actions, .dfoot, .builder, #add-device, [data-add-device], 
 .tag svg { opacity: .65; }
 .builder select.input { width: 170px; }
 .toast:not(:popover-open) { display: none; }
+
+/* Rules of who on which devices (0.53), and the activity (the network's audit). */
+.builder .input.on { width: 150px; }
+.on-g { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13.5px; }
+.on-g b { color: var(--fg); font-weight: 600; }
+.rule-hint:empty { display: none; }
+.rule-hint { padding-bottom: 12px; border-bottom: 1px solid var(--soft); }
+.feed > .item { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) auto; gap: 4px 14px; align-items: start; }
+.feed .when { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.feed .what { min-width: 0; overflow-wrap: anywhere; }
+.feed .what b { font-weight: 600; }
+.feed .target { display: block; color: var(--muted); font-size: 13px; font-family: var(--mono); margin-top: 2px; }
+#ov-activity .target { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 700px) {
+  .feed > .item { grid-template-columns: minmax(0, 1fr) auto; }
+  .feed .when { grid-column: 1 / -1; }
+}
+#act-more { padding: 14px 20px; }
+#ov-activity > .item { grid-template-columns: 6.5em minmax(0, 1fr) auto; }

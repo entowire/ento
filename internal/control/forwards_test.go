@@ -83,7 +83,13 @@ func TestNamedForwards(t *testing.T) {
 	defer srv.Close()
 	tok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true})
 	srv.checkVersion(ctx)
-	dev, _ := enroll(t, tok, "desktop")
+	dev, res := enroll(t, tok, "desktop")
+	// An isolated device reaches nothing but its control nodes (0.53: forwarded services by rules).
+	p, _ := st.PeerByAddress(ctx, netip.MustParseAddr(res.Address))
+	yes := true
+	if _, err := st.UpdatePeer(ctx, p.ID, store.PeerUpdate{Approved: &yes, Groups: &[]string{}}); err != nil {
+		t.Fatal(err)
+	}
 	hello := func(name string) {
 		c, err := dev.net.DialContextTCPAddrPort(ctx, netip.AddrPortFrom(srv.Address(), IdentityProviderPort))
 		if err != nil {

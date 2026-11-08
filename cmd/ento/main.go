@@ -122,7 +122,12 @@ func sub(args []string) (string, []string) {
 
 // --- control ------------------------------------------------------------------------------------
 
+// storeNetwork is the network the command line last opened the database of: its audit line goes
+// there too (cliAudit).
+var storeNetwork string
+
 func openStore(ctx context.Context, network string) (store.Store, ipam.Space, error) {
+	storeNetwork = network
 	prefix, err := netip.ParsePrefix(network)
 	if err != nil {
 		return nil, ipam.Space{}, err
@@ -178,7 +183,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		attestRevocations := fs.String("attestation-revocations", "", "where the list of revoked Android attestation certificates is fetched once a phone sends an attestation (default Google's, "+attest.DefaultRevocationsURL+"; off: not checked, which keys leaked from phones make unsafe)")
 		androidApps := fs.String("android-apps", "", "comma-separated PACKAGE:SHA256 (the signing certificate's): the only apps whose attestations count (default: any app; the attestation must still be made for the device's key)")
 		serviceNames := fs.String("service-names", "", "comma-separated names of the network's services that point at addresses inside it (e.g. chat.example.com): the node resolves them and every device answers them itself, so DNS that drops answers pointing at private or shared addresses does not hide them")
-		forwardList := fs.String("forward", "", "services passed through on the node's overlay port 443 by TLS server name, for every enrolled device (its policies need open nothing): comma-separated NAME=HOST:PORT[+HOST:PORT...], tried in order; devices resolve NAME to the control nodes")
+		forwardList := fs.String("forward", "", "services passed through on the node's overlay port 443 by TLS server name, for the devices rules let reach service:NAME (0.53; the first time a node forwards one it adds the rule that keeps who reached it before): comma-separated NAME=HOST:PORT[+HOST:PORT...], tried in order; devices resolve NAME to the control nodes")
 		forwardPeopleList := fs.String("forward-people", "", "forwarded services (--forward) that only devices with a person signed in in one of these roles reach, by the person's own groups (not the device's), checked while each connection lasts: comma-separated NAME=ROLE[+ROLE...], roles admin, operator, viewer")
 		recordDomain := fs.String("record-domain", "", "the domain whose network record (TXT _ento.<domain>, what ento admin record prints) names the control nodes: devices that reach none of them look there for their new endpoints; the node checks hourly that it is named")
 		dnsDomain := fs.String("dns-domain", "", "internal DNS: devices answer names in this domain (e.g. example.internal): each other's names, and those administrators add (ento admin dns); the same on every control node")
@@ -1698,7 +1703,7 @@ func adminCmd(ctx context.Context, args []string) error {
 			if len(p.Ports) > 0 {
 				open = strings.Join(p.Ports, ",")
 			}
-			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", p.ID, cell(p.Source), arrow, cell(p.Destination), cell(open),
+			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", p.ID, cell(sourceWord(p)), arrow, cell(p.Destination), cell(open),
 				cell(strings.Join(p.Posture, ",")))
 		}
 		return w.Flush()
@@ -1706,14 +1711,18 @@ func adminCmd(ctx context.Context, args []string) error {
 	case "allow":
 		checks, args, err := postureFlag(rest)
 		var rules []string
+		var on string
 		if err == nil {
 			rules, args, err = ruleFlags(args)
+		}
+		if err == nil {
+			on, args, err = onFlag(args)
 		}
 		if err != nil || len(args) != 2 {
 			if err != nil && strings.HasPrefix(err.Error(), "rules go one way") {
 				return err
 			}
-			return errors.New("usage: ento admin allow SOURCE DESTINATION [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] (SOURCE opens, DESTINATION answers)")
+			return errors.New("usage: ento admin allow WHO DESTINATION [--on DEVICE_GROUP] [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] (WHO opens, DESTINATION answers)")
 		}
 		if len(checks) > 0 {
 			// A control node older than 0.13 would create the policy and ignore its checks: ask
@@ -1722,7 +1731,11 @@ func adminCmd(ctx context.Context, args []string) error {
 				return err
 			}
 		}
-		req := api.Policy{Source: args[0], Destination: args[1], Posture: checks, OneWay: true}
+		// WHO@DEVICES, as ento admin policies writes it, is WHO with --on DEVICES.
+		if who, devs, ok := strings.Cut(args[0], "@"); ok && on == "" {
+			args[0], on = who, devs
+		}
+		req := api.Policy{Source: args[0], On: on, Destination: args[1], Posture: checks, OneWay: true}
 		if rules != nil && !slices.Equal(rules, []string{"all"}) {
 			req.Ports = rules
 		}
@@ -1741,10 +1754,18 @@ func adminCmd(ctx context.Context, args []string) error {
 			return fmt.Errorf("the control plane ignored --posture (older than ento 0.13?): policy %d allows %s <-> %s WITHOUT checks; remove it with `ento admin disallow %d` if that is not what you want",
 				p.ID, p.Source, p.Destination, p.ID)
 		}
+		if on != "" && p.On == "" && on != "*" {
+			// A control node older than 0.53 knows no --on: never leave that unsaid.
+			return fmt.Errorf("the control plane ignored --on (older than ento 0.53?): policy %d lets %s reach %s on ANY device; remove it with `ento admin disallow %d` if that is not what you want",
+				p.ID, p.Source, p.Destination, p.ID)
+		}
 		p.Warnings = nil
 		out, _ := json.Marshal(p)
 		fmt.Println(string(out))
 		return nil
+
+	case "audit":
+		return auditCmd(ctx, c, rest)
 
 	case "policy":
 		checks, args, err := postureFlag(rest)
@@ -1894,7 +1915,7 @@ func adminCmd(ctx context.Context, args []string) error {
 	case "authority", "authorities":
 		return adminAuthorityCmd(ctx, c, cmd, rest)
 	}
-	return errors.New("usage: ento admin [--link NAME] ui|token|tokens|revoke|peers|rename|confirm-name|approve|unapprove|signout|suspend|resume|groups|role|delete|policies|allow|policy|disallow|posture|route|routes|dns|link|links|authority|authorities")
+	return errors.New("usage: ento admin [--link NAME] ui|token|tokens|revoke|peers|rename|confirm-name|approve|unapprove|signout|suspend|resume|groups|role|delete|policies|allow|policy|disallow|posture|route|routes|dns|link|links|authority|authorities|audit")
 }
 
 // knowsChecks makes sure the control plane knows posture checks (ento 0.13 and later) and has these;
@@ -1949,6 +1970,29 @@ func printWarnings(w []string) {
 // and the port rules (nil: not given; ["all"] for all).
 // ruleFlags reads --ports. Rules go one way (0.52): --one-way is what every rule is (accepted, for
 // scripts written before), --two-way is refused.
+// onFlag takes --on DEVICE_GROUP (the devices a rule's people are on, 0.53) from args.
+func onFlag(args []string) (string, []string, error) {
+	var on string
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--on" || strings.HasPrefix(a, "--on="):
+			v, ok := strings.CutPrefix(a, "--on=")
+			if !ok {
+				if i+1 >= len(args) {
+					return "", nil, errors.New("--on needs a device group")
+				}
+				i++
+				v = args[i]
+			}
+			on = v
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return on, rest, nil
+}
+
 func ruleFlags(args []string) ([]string, []string, error) {
 	var rules, rest []string
 	for i := 0; i < len(args); i++ {

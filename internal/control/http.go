@@ -55,6 +55,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PATCH "+api.PathPeers+"/{id}", s.operatorOnly(s.handleUpdatePeer))
 	mux.HandleFunc("DELETE "+api.PathPeers+"/{id}", s.adminOnly(s.handleDeletePeer))
 	mux.HandleFunc("POST "+api.PathUserSuspension, s.operatorOnly(s.handleSuspendUser))
+	mux.HandleFunc("GET "+api.PathAudit, s.operatorOnly(s.handleAudit))
 	mux.HandleFunc("GET "+api.PathPolicies, s.operatorOnly(s.handleListPolicies))
 	mux.HandleFunc("POST "+api.PathPolicies, s.operatorOnly(s.handleAddPolicy))
 	mux.HandleFunc("DELETE "+api.PathPolicies+"/{id}", s.operatorOnly(s.handleDeletePolicy))
@@ -600,7 +601,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request, self store.P
 		return
 	}
 	out := api.AdminInfo{Network: s.cfg.Space.Prefix.String(), Node: s.cfg.Name, Version: s.cfg.Version,
-		Self: peerInfo(self), SSO: s.cfg.OIDC != nil, People: s.people != nil, NoGateways: s.cfg.NoGateways, Viewer: !(self.Admin || self.Operator) && s.isViewer(self), PersonRoles: s.personRoles(), Controls: []api.ControlInfo{}}
+		Self: peerInfo(self), SSO: s.cfg.OIDC != nil, People: s.people != nil, NoGateways: s.cfg.NoGateways, Viewer: !(self.Admin || self.Operator) && s.isViewer(self), PersonRoles: s.personRoles(), Services: s.serviceNames(), Controls: []api.ControlInfo{}}
 	for _, n := range nodes {
 		out.Controls = append(out.Controls, api.ControlInfo{Name: n.Name, Address: n.Address.String(),
 			Endpoint: n.Endpoint, LastSeen: n.LastSeen.UTC().Format(time.RFC3339)})
@@ -1065,19 +1066,35 @@ func (s *Server) handleAddPolicy(w http.ResponseWriter, r *http.Request, self st
 		writeErr(w, http.StatusBadRequest, "source and destination are required")
 		return
 	}
-	for _, g := range []*string{&req.Source, &req.Destination} {
-		resolved, err := s.resolveRuleGroup(r.Context(), *g)
+	// The source: who on which devices (rules.go); the destination: a group, every device, a route
+	// or a forwarded service.
+	src, err := s.ruleSource(r.Context(), req.Source, req.On)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Source = src
+	if strings.HasPrefix(req.Destination, "*") && req.Destination != "*" || strings.Contains(req.Destination, onSep) {
+		writeErr(w, http.StatusBadRequest, "a destination is devices (a device group or *), a route or a forwarded service: never who is signed in")
+		return
+	}
+	if !isService(req.Destination) {
+		resolved, err := s.resolveRuleGroup(r.Context(), req.Destination)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		*g = resolved
+		req.Destination = resolved
+		if err := checkGroups([]string{req.Destination}, true); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
-	if err := checkGroups([]string{req.Source, req.Destination}, true); err != nil {
+	if err := s.checkService(req.Destination, req.Ports); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.keepGroups(r.Context(), []string{req.Source, req.Destination})
+	s.keepGroups(r.Context(), ruleGroups(store.Policy{Source: req.Source, Destination: req.Destination}))
 	if err := s.checkPolicyRoute(r.Context(), store.Policy{Source: req.Source, Destination: req.Destination}); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

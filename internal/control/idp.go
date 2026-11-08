@@ -73,6 +73,13 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 			return
 		}
 	}
+	service := strings.ToLower(name)
+	ruled := func(p store.Peer) (bool, error) {
+		if service == "" {
+			return true, nil
+		}
+		return s.serviceAllowed(ctx, p, service)
+	}
 	switch {
 	case dev == nil || dev.ID == 0:
 		s.audit(nil, dev, action, via+"not an enrolled device: refused", "denied")
@@ -80,6 +87,15 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 	case dev.Suspended:
 		s.audit(nil, dev, action, via+"suspended device: refused", "denied")
 		return
+	}
+	if ok, err := ruled(*dev); err != nil {
+		s.audit(nil, dev, action, via+"rules unreadable (database unavailable)", "failed")
+		return
+	} else if !ok {
+		s.audit(nil, dev, action, via+"no rule lets this device reach it: refused", "denied")
+		return
+	}
+	switch {
 	case len(people) > 0 && !s.personIn(*dev, people):
 		s.audit(nil, dev, action, via+"no person signed in as "+strings.Join(people, " or ")+": refused", "denied")
 		return
@@ -120,8 +136,8 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 	done := make(chan struct{}, 2)
 	go func() { in, _ = io.Copy(up, c); done <- struct{}{} }()
 	go func() { out, _ = io.Copy(c, up); done <- struct{}{} }()
-	var ended atomic.Bool // the person's session ended while the connection was open
-	if len(people) > 0 {
+	var ended atomic.Bool // the person's session ended, or no rule lets the device through any more
+	if len(people) > 0 || service != "" {
 		stop := make(chan struct{})
 		defer close(stop)
 		go func() {
@@ -139,7 +155,14 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 				if err != nil && !errors.Is(err, store.ErrNotFound) {
 					continue // the database did not answer (a failover): ask again next time
 				}
-				if err != nil || !s.personIn(p, people) {
+				if err == nil {
+					if ok, rerr := ruled(p); rerr != nil {
+						continue // as above
+					} else if !ok {
+						err = errNoRule
+					}
+				}
+				if err != nil || len(people) > 0 && !s.personIn(p, people) {
 					ended.Store(true)
 					c.Close()
 					up.Close()
@@ -155,11 +178,17 @@ func (s *Server) passThrough(ctx context.Context, c net.Conn, targets []string, 
 	<-done
 	how := ""
 	if ended.Load() {
-		how = ", ended: the person is no longer signed in as " + strings.Join(people, " or ")
+		how = ", ended: no rule lets the device through any more"
+		if len(people) > 0 {
+			how += ", or the person is no longer signed in as " + strings.Join(people, " or ")
+		}
 	}
 	s.audit(nil, dev, action, fmt.Sprintf("%sdevice %s via %s, %s, %d bytes in, %d bytes out%s",
 		via, state(dev), used, time.Since(start).Round(time.Second), in, out, how), "ok")
 }
+
+// errNoRule: a forwarded service's rules no longer let the device through.
+var errNoRule = errors.New("no rule")
 
 func (s *Server) idpAcquire(a netip.Addr) bool {
 	s.idpMu.Lock()

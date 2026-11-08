@@ -696,6 +696,10 @@ func (downStore) PeerByAddress(context.Context, netip.Addr) (store.Peer, error) 
 	return store.Peer{}, errors.New("connection refused")
 }
 
+func (downStore) AddAudit(context.Context, store.AuditEntry) error {
+	return errors.New("connection refused")
+}
+
 // A database that does not answer (a failover) refuses the identity forward as a failure, never as
 // a denial of a stranger (which the SIEM counts as repeated denials of the devices it refused).
 func TestIdentityForwardDatabaseDown(t *testing.T) {
@@ -717,7 +721,9 @@ func TestIdentityForwardDatabaseDown(t *testing.T) {
 	var lines []string
 	srv := &Server{cfg: Config{Store: downStore{}, Logf: func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) }}}
 	srv.forwardIdentity(context.Background(), c, []string{"127.0.0.1:1"})
-	if len(lines) != 1 || !strings.Contains(lines[0], "device lookup failed") || !strings.HasSuffix(lines[0], "result=failed") {
+	// The journal line is the record, and says so when the database did not take it (0.53).
+	if len(lines) != 2 || !strings.Contains(lines[0], "device lookup failed") || !strings.HasSuffix(lines[0], "result=failed") ||
+		!strings.Contains(lines[1], "not stored in the database") {
 		t.Fatalf("audit: %q", lines)
 	}
 }

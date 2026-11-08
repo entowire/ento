@@ -689,7 +689,7 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request, self 
 		return
 	}
 	for _, p := range policies {
-		if p.Source == name || p.Destination == name {
+		if slices.Contains(ruleGroups(p), name) {
 			users = append(users, fmt.Sprintf("rule %s to %s", p.Source, p.Destination))
 		}
 	}

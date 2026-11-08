@@ -119,12 +119,20 @@ agent join; operators: ordinary devices, tokens and policies only):
   ento admin groups ID GROUP[,GROUP...]
   ento admin role ID admin|operator|none   (admins only)
   ento admin policies   list policies
-  ento admin allow SOURCE DESTINATION [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] | disallow ID
-                         SOURCE opens connections to DESTINATION, which answers them: a rule goes
-                         one way (0.52); for the other way, allow DESTINATION SOURCE as well
+  ento admin allow WHO DESTINATION [--on DEVICE_GROUP] [--ports RULE[,RULE...]] [--posture CHECK[,CHECK...]] | disallow ID
+                         WHO, on the devices --on names (default: any device), opens connections to
+                         DESTINATION, which answers them: a rule goes one way (0.52); for the other
+                         way, allow DESTINATION SOURCE as well. WHO: a people group, a device group
+                         (anyone on its devices, as before 0.53), '*signed-in' (everyone signed in),
+                         '*nobody' (nobody signed in) or '*' (anyone). DESTINATION: a device group,
+                         '*', route:NAME, or service:NAME (a forwarded service, no --ports; 0.53).
+                         WHO@DEVICES is WHO --on DEVICES, as ento admin policies writes it
                          --ports: what may be opened: tcp/22, tcp/8000-8100, udp/53, tcp, udp, icmp (default: all)
                          --posture: SOURCE devices must pass these checks (admins only)
   ento admin policy ID --posture CHECK[,CHECK...]|none   change the checks a policy requires (admins)
+  ento admin audit [--action A] [--result ok|denied|failed] [--search TEXT] [--since 24h] [--limit N] [--csv]
+                         the network's audit, newest first (0.53): every change and refusal, and
+                         who made it; --csv: every matching entry (viewers may read it too)
   ento admin route add NAME NETWORK[,NETWORK...] --via DEVICE   a network behind a gateway device (admins);
                          devices reach it once a policy lets them: allow GROUP route:NAME [--ports ...]
   ento admin route add NAME --exit --via DEVICE [--default]   an exit (admins): devices a policy lets

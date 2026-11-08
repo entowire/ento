@@ -340,7 +340,7 @@ A new device reaches nothing until it is approved and a policy allows it:
 
     ento admin peers
     ento admin approve 2
-    ento admin allow admins servers            # both directions; "*" matches every peer
+    ento admin allow admins servers            # admins, from any device, open connections to servers
 
 Control nodes know a device by its overlay address, which proves the device but not the program on
 it: every process, container or app there shares the address. Calls that act with the device's
@@ -422,6 +422,36 @@ both ways); in the admin interface, adding a rule has a ports field, and each ru
 Operators may change the ports of a policy that requires no posture checks; changes are audited as
 `policy_rules` with what the policy was, and `policy_added`/`policy_deleted` lines carry the
 direction and ports.
+
+### Who, on which devices (0.53)
+
+everyone signed in or nobody signed in, on a device group or any device. A person's groups count only
+while they are signed in on that device (they leave with the sign-in), a device's groups whoever is
+on it:
+
+    sudo ento admin allow engineers servers --on laptops --ports tcp/22   # engineers, on laptops
+    sudo ento admin allow '*signed-in' wiki --on laptops                  # anyone signed in on a laptop
+    sudo ento admin allow '*nobody' backup --on servers                   # a server with nobody on it
+    sudo ento admin allow servers monitoring                              # anyone or nobody, on servers
+
+Who is a people group, `*signed-in` (everyone signed in), `*nobody` (nobody signed in) or `*`
+(anyone, signed in or not); `--on` names a device group (its name, or `device:NAME`), and without it
+the rule holds on any device. A device group alone as the source means anyone on its devices, as
+before 0.53, and a people group alone its people on any device. `ento admin policies` writes a rule
+of people on devices as `WHO@DEVICES` (`engineers@laptops`), which `allow` takes as well; the API
+keeps the source as one string (`engineers on device:laptops`) and gives `who` and `on` apart.
+A control node older than 0.53 matches no device with such a source, so it lets less through,
+never more; `allow --on` says so when the control plane ignored it.
+
+The destination is devices (a device group or `*`), a route (`route:NAME`, below) or a forwarded
+service (`service:NAME`, see Forwarded services), never who is signed in. Several rules add
+up; a rule that requires posture checks still leaves out each of its source devices that fails one.
+Operators may not add a rule that reaches the same devices as one with checks without them: a rule
+of people on devices counts as reaching the devices of any rule its people and its devices may
+share (a people group and everyone signed in may; nobody signed in and a people group may not).
+
+On the Access page the builder reads **Let** who **on** which devices **reach** what **ports**,
+with a sentence under it saying what the rule will allow; each rule is shown the same way.
 
 ### Routes (networks behind a gateway)
 
@@ -725,12 +755,13 @@ their names, cleaned up and made unique.
 `ento control run --admin-ui net.example.com --admin-ui-cert FILE --admin-ui-key FILE` serves a web
 interface on port 443 of each control node's overlay address, for that name (point it at the
 control nodes' overlay addresses in DNS; the certificate is read again when the file changes): the
-network's dashboard (0.39, rebuilt from scratch). It has seven pages:
+network's dashboard (0.39, rebuilt from scratch). It has these pages:
 
 - **Overview**: the control nodes and whether they were heard from lately (each records itself in
   the store every minute, 0.41.2; before, only when it started), counts (devices, people,
   devices waiting for approval, devices failing a check), the devices waiting (approve or remove them
-  there), what needs a look (copied identities, failing checks, names to confirm), open invitations.
+  there), what needs a look (copied identities, failing checks, names to confirm), open invitations,
+  the latest activity (0.53).
 - **People**: everyone who signed in on a device, from what the devices know (their groups from
   sign-in, their devices and whether they are signed in now); suspend or resume every device of a
   person at once, sign them out of one device. With `--people` (below), everyone in the identity
@@ -751,12 +782,14 @@ network's dashboard (0.39, rebuilt from scratch). It has seven pages:
   invitations are listed and revoked there, authorities' reusable ones too.
 - **Groups** (0.45.3, its own page): people groups and device groups, their members, add and
   remove them, a new group, delete one.
-- **Access**: the rules between groups
-  (policies, written as "Let A reach B on PORTS", one way or both, with the device checks they
-  require) and the device checks themselves (posture checks: which rules and links require each,
-  how many devices pass).
+- **Access**: the rules (policies, written as "Let WHO on DEVICES reach WHAT, PORTS", 0.53: who is a
+  people group, everyone or nobody signed in, or anyone; devices a device group or any device; what
+  devices, a route or a forwarded service), with the device checks they require, and the device
+  checks themselves (posture checks: which rules and links require each, how many devices pass).
 - **Routes**, **Names** (internal DNS) and **Linked networks** (grouped by the network they lead to,
   with the devices that may join and the checks the link requires; authorities).
+- **Activity** (0.53): the network's audit (below), newest first, searched and filtered by result
+  (done, refused, failed) and kind, older entries page by page, and **Export CSV** of what matches.
 
 Group names are checked wherever they are set: 1 to 64 characters, no commas or control
 characters, `*` only in rules. The page carries the version of the control node that served it and
@@ -827,6 +860,34 @@ if need be) and deletes one that nothing uses (no rule, device, invitation, link
 as `group_added` and `group_deleted`), never a built-in one (`admin`, `operator`, `isolated`,
 `admins`, `operators`, `viewers`, and the groups the control nodes' flags name for roles, viewing and
 approval: 409, 0.50). Inviting a person preselects `users` where the network has it.
+
+### The audit (0.53)
+
+that did it, as before,
+
+    audit: action=policy_added by="laptop (ana@example.com)" from=100.64.1.2 target="policy 9 engineers on device:laptops -> device:servers" result=ok
+
+and the same entry in the network's database, which all its control nodes share (table `ento_audit`:
+when, the node, the action, the device and the person signed in on it, its overlay address, the
+target and the result: ok, denied or failed). Entries are only ever added: the database refuses to
+change, delete or truncate them (a trigger), which the database's owner could still remove; that
+and the database's backups are the limits of this record. An entry the database does not take (it
+does not answer, 3 seconds at most) stays in the journal, with a second line saying so. The control
+nodes' command line (`ento control ...`) writes its line to the system log and the database as well,
+unless the database cannot be reached.
+
+Admins, operators and viewers read it (viewing reads the network and its audit, 4.7): the dashboard's
+**Activity** and the Overview's latest entries, and
+
+    sudo ento admin audit                         # the latest 50
+    sudo ento admin audit --result denied --since 24h
+    sudo ento admin audit --action policy_added --search laptops
+    sudo ento admin audit --csv > audit.csv       # every matching entry (at most 100 000)
+
+The API is `GET /v1/admin/audit` with `before` (an entry's ID: older ones), `limit` (up to 1000),
+`action`, `result`, `q` (text in any field, any case), `since` (RFC 3339) and `format=csv`; an
+export is itself audited (`audit_exported`). The audit is kept as long as the database; nothing
+removes old entries yet.
 
 ### Device groups and people groups (0.44)
 
@@ -978,11 +1039,11 @@ approval first. A device starts at most one sign-in every 5 seconds. The agent o
 https sign-in links (anything else a control node sends is printed, not opened), and strips control
 characters from what it prints.
 
-### Services for every device (0.33)
+### Forwarded services (0.33; reached by rules since 0.53)
 
-A service that every enrolled device must reach, whatever the policies say (an installer for the
-network's endpoint agents, say, on machines whose policies open only what that agent needs), can be
-passed through by the control nodes like the identity provider:
+A service that devices reach by name on the control nodes (an installer for the network's endpoint
+agents, say, on machines whose policies open only what that agent needs) can be passed through by
+the control nodes like the identity provider:
 
     ento control run ... --forward agent.example.com=10.0.0.1:8462+10.0.0.2:8462
 
@@ -993,8 +1054,24 @@ not suspended, 10 seconds to send, 10 minutes of silence and an hour at most, 32
 device; each connection is audited (`forward_connection`, naming the device and the service). Every
 device resolves the name to the control nodes' overlay addresses itself, like the provider's (agents
 of 0.30.1 or later), so no DNS record is needed inside the network; one pointing there helps tools
-outside it. Several services: comma-separated entries, each name once. The service decides who may
-do what: the control nodes only keep devices that are not the network's out.
+outside it. Several services: comma-separated entries, each name once.
+
+other destination: `service:NAME`, without ports (it is reached on its own port), from who on which
+devices, with posture checks if the rule requires them:
+
+    sudo ento admin allow '*' service:agent.example.com                  # every approved device
+    sudo ento admin allow staff service:wiki.example.com --on laptops
+
+Full administration (a person in admins signed in on a device in admin) reaches every forwarded
+service without a rule. A device that no rule lets through gets no answer, not even the service's
+certificate (audited `forward_connection`, denied, "no rule lets this device reach it"); an open
+connection is checked every 15 seconds and ends when no rule lets the device through any more.
+Isolated and suspended devices, and devices not approved, reach none. The first time a control node
+of 0.53 or later forwards a service, it adds the rules that keep who reached it before: `*` (anyone
+on any device) or, with `--forward-people`, the people groups of those roles (`admins`,
+`operators`, the `--viewer-groups`), each audited as `policy_added`; a setting remembers it, so a
+rule removed later stays removed. The dashboard's builder offers the forwarded services
+(`services` in `/v1/admin/info`). The service still decides who may do what in it.
 
 A forwarded service can be kept to people instead (0.48): only devices with a person signed in on
 them in one of the given roles reach it, by the person's own people groups: admin, operator or
@@ -1008,7 +1085,9 @@ A device without such a person gets no answer from the service, not even its cer
 connection ends before TLS (audited `forward_connection`, denied, "no person signed in as ...").
 An open connection is checked every 15 seconds and ends once the person signs out, their session
 closes or their role goes (audited with "ended: the person is no longer signed in as ...").
-The roles are listed, not ranked: `operator` alone does not let admins in.
+The roles are listed, not ranked: `operator` alone does not let admins in. `--forward-people` holds
+besides the service's rules (both must let a device through); rules of people (`admins ->
+service:NAME`) replace it.
 
 ### Sign-in approvals
 

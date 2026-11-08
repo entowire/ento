@@ -29,6 +29,7 @@
   <symbol id="i-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></symbol>
   <symbol id="i-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
   <symbol id="i-both" viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h22M7 2L2 7l5 5M19 2l5 5-5 5"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
   <symbol id="i-one" viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h22M18 1l6 6-6 6"/></symbol>
 </svg>
 
@@ -79,6 +80,7 @@
       <a href="#routes" data-tab="routes"><svg width="18" height="18" aria-hidden="true"><use href="#i-routes"/></svg>Routes</a>
       <a href="#names" data-tab="names"><svg width="18" height="18" aria-hidden="true"><use href="#i-names"/></svg>Names</a>
       <a href="#links" data-tab="links"><svg width="18" height="18" aria-hidden="true"><use href="#i-links"/></svg>Linked networks</a>
+      <a href="#activity" data-tab="activity"><svg width="18" height="18" aria-hidden="true"><use href="#i-activity"/></svg>Activity</a>
     </nav>
     <div class="me">
       <span class="avatar" id="me-avatar" aria-hidden="true"></span>
@@ -107,6 +109,10 @@
           <section class="card" aria-labelledby="att-h">
             <div class="card-head"><h2 id="att-h">Needs a look</h2></div>
             <div class="list" id="attention"></div>
+          </section>
+          <section class="card" aria-labelledby="act-h">
+            <div class="card-head"><h2 id="act-h">Recent activity</h2><a class="link" href="#activity">Everything</a></div>
+            <div class="list feed" id="ov-activity"></div>
           </section>
         </div>
         <div class="col">
@@ -170,17 +176,21 @@
             <form class="builder" id="policy-form">
               <h2 id="rules-h" class="sr">Rules</h2>
               <span>Let</span>
-              <label><span class="sr">From group</span><select class="input from" name="source" required></select></label>
+              <label><span class="sr">Who</span><select class="input from" name="source" required></select></label>
+              <span>on</span>
+              <label><span class="sr">Which devices</span><select class="input on" name="on"></select></label>
               <span>reach</span>
               <label><span class="sr">To group or route</span><select class="input to" name="destination" required></select></label>
-              <span>on</span>
+              <span>ports</span>
               <label><span class="sr">Ports</span><input class="input ports" name="ports" autocomplete="off" placeholder="all ports" title="all, or e.g. tcp/22, tcp/443, udp/53, icmp"></label>
               <button type="button" class="link" id="policy-checks-btn" data-admin-only>device checks…</button>
               <button type="submit" class="btn sm primary" data-push>Allow</button>
             </form>
+            <p class="hint pad rule-hint" id="policy-hint"></p>
             <div id="policy-list"></div>
             <div class="deny"><svg width="18" height="18" aria-hidden="true"><use href="#i-block"/></svg><span><b>Everything else is blocked</b>, between people's devices too.
-              A rule goes one way: the first group opens connections, the second answers (for the other way, add its own rule). Ports are enforced by the receiving device.</span></div>
+              A rule goes one way: who, on those devices, opens connections; the other side answers (for the other way, add its own rule).
+              People's rights last only while they are signed in on the device. Ports are enforced by the receiving device.</span></div>
           </section>
           <section class="card" aria-labelledby="chk-h">
             <div class="card-head"><h2 id="chk-h">Device checks</h2><button type="button" class="link" id="check-new" data-admin-only>New check</button></div>
@@ -283,6 +293,26 @@
       <section class="card" aria-labelledby="aut-h">
         <div class="card-head"><h2 id="aut-h">Authorities</h2><span class="dim">networks allowed to send their devices here, made with <code>ento admin authority add</code></span></div>
         <div class="list" id="authority-list"></div>
+      </section>
+    </section>
+
+    <!-- Activity -->
+    <section class="view" id="activity" hidden>
+      <div class="head">
+        <div><h1>Activity</h1><p class="sub">Every change and every refusal in the network, and who made it. Entries are only ever added.</p></div>
+        <div class="tools"><a class="btn" id="act-export" href="/v1/admin/audit?format=csv" download>Export CSV</a></div>
+      </div>
+      <section class="card" aria-labelledby="actl-h">
+        <h2 id="actl-h" class="sr">Entries</h2>
+        <form class="builder" id="act-filter" role="search">
+          <label class="search"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg><input name="q" type="search"
+            placeholder="Device, person, rule or address" autocomplete="off" aria-label="Find in the activity"></label>
+          <label><span class="sr">Result</span><select class="input" name="result">
+            <option value="">every result</option><option value="ok">done</option><option value="denied">refused</option><option value="failed">failed</option></select></label>
+          <label><span class="sr">Kind</span><select class="input" name="kind"></select></label>
+        </form>
+        <div class="list feed" id="act-list"></div>
+        <div class="pad" id="act-more" hidden><button type="button" class="btn sm" id="act-older">Older entries</button></div>
       </section>
     </section>
 

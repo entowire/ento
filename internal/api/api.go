@@ -41,8 +41,12 @@ const (
 	// PathUserSuspension suspends or resumes every device of a user (SuspendUserRequest).
 	PathUserSuspension = "/v1/admin/users/suspension"
 	PathPolicies       = "/v1/admin/policies"
-	PathLogin          = "/v1/login"
-	ControlPort        = 80
+	// PathAudit lists the network's audit, newest first (AuditPage; 0.53): query before (an entry's
+	// ID), limit, action, result, q (text in any field), since (RFC 3339); format=csv gives every
+	// matching entry, up to MaxAuditExport, as a file.
+	PathAudit   = "/v1/admin/audit"
+	PathLogin   = "/v1/login"
+	ControlPort = 80
 
 	// Linked networks. In the linked network: authorities (admin) and credential renewal (devices
 	// admitted by an authority). In the home network: links (admin) and credentials for its
@@ -395,6 +399,8 @@ type AdminInfo struct {
 	Viewer bool `json:"viewer,omitempty"`
 	// PersonRoles: the people groups that give a person each role (0.46.1): admin, operator, viewer.
 	PersonRoles map[string][]string `json:"person_roles,omitempty"`
+	// Services: the forwarded services rules can name as "service:NAME" (0.53).
+	Services []string `json:"services,omitempty"`
 }
 
 // PeerInfo is the administrative view of a peer.
@@ -490,12 +496,20 @@ type SkippedDevice struct {
 	Reason   string `json:"reason"`
 }
 
-// Policy allows traffic between two groups ("*" matches every approved peer). Posture names checks
-// its source devices must pass: one that fails any of them is left out of the policy (admins only
-// set them).
+// Policy is a rule: it lets its source open connections to its destination ("*" matches every
+// approved peer). Posture names checks its source devices must pass: one that fails any of them is
+// left out of the policy (admins only set them).
+//
+// device:laptops", or a group alone as before), and, in answers, Who and On apart. Who is a people
+// group, "*signed-in" (everyone signed in), "*nobody" (nobody signed in) or "*" (anyone); On a
+// device group, or empty for any device. A request may give Source alone (a group, as before 0.53)
+// or Source as who with On. The destination is device groups, "*", "route:NAME" or
+// "service:NAME" (a forwarded service, without ports).
 type Policy struct {
 	ID          int64    `json:"id"`
 	Source      string   `json:"source"`
+	Who         string   `json:"who,omitempty"`
+	On          string   `json:"on,omitempty"`
 	Destination string   `json:"destination"`
 	Posture     []string `json:"posture,omitempty"`
 	// OneWay: only the source opens connections (the destination answers them). Every policy is
@@ -1012,3 +1026,27 @@ type NewPersonResult struct {
 	Person Person    `json:"person"`
 	Setup  SetupLink `json:"setup"`
 }
+
+// AuditEntry is one entry of the network's audit (0.53): what was done or refused (Action, Target,
+// Result: ok, denied or failed), when, by which device and person from which overlay address, as
+// the control node Node recorded it.
+type AuditEntry struct {
+	ID     int64  `json:"id"`
+	At     string `json:"at"`
+	Node   string `json:"node"`
+	Action string `json:"action"`
+	Device string `json:"device"`
+	Person string `json:"person,omitempty"`
+	From   string `json:"from"`
+	Target string `json:"target"`
+	Result string `json:"result"`
+}
+
+// AuditPage is a page of the audit; More: older entries match too (ask with before = the last ID).
+type AuditPage struct {
+	Entries []AuditEntry `json:"entries"`
+	More    bool         `json:"more"`
+}
+
+// MaxAuditExport is the most entries one export (format=csv) holds.
+const MaxAuditExport = 100000

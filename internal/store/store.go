@@ -620,9 +620,43 @@ type SignInCode struct {
 	ExpiresAt   time.Time
 }
 
+// when, by whom (the device, the person signed in on it, its overlay address) and on which control
+// node. Entries are only ever added (0.53).
+type AuditEntry struct {
+	ID     int64
+	At     time.Time
+	Node   string // the control node that wrote it
+	Action string
+	Device string // the device that asked ("-": the control node itself, or its command line)
+	Person string // the person signed in on it, if any
+	From   string // its overlay address ("-": none)
+	Target string
+	Result string // ok, denied or failed
+}
+
+// AuditQuery selects audit entries, newest first: those older than Before (0: from the newest), at
+// most Limit (1 to MaxAuditPage), with the action, the result and text in any field if given, and
+// none older than Since (zero: no limit).
+type AuditQuery struct {
+	Before int64
+	Limit  int
+	Action string
+	Result string
+	Text   string
+	Since  time.Time
+}
+
+// MaxAuditPage is the most audit entries one query returns.
+const MaxAuditPage = 1000
+
 // Store is implemented by every storage backend.
 type Store interface {
 	Close() error
+
+	// AddAudit appends an entry to the audit (its ID is given by the store, At kept as given); the
+	// audit is never changed or shortened. Audit returns entries as the query asks.
+	AddAudit(ctx context.Context, e AuditEntry) error
+	Audit(ctx context.Context, q AuditQuery) ([]AuditEntry, error)
 
 	// Version returns the current state version.
 	Version(ctx context.Context) (int64, error)
@@ -823,6 +857,8 @@ type Store interface {
 	// KeepSetting stores value under key unless the key has one, and returns the stored value: the
 	// first control node to ask sets it, every later one learns it.
 	KeepSetting(ctx context.Context, key, value string) (string, error)
+	// Setting returns the value stored under key ("" and false: none).
+	Setting(ctx context.Context, key string) (string, bool, error)
 
 	// Sessions of the admin interface. CreateUISession fails with ErrExists when the hash, or the
 	// code among the device's pending sessions, is taken. UISession returns an unexpired session;

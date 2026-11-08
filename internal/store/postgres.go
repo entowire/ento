@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -264,6 +265,34 @@ CREATE TABLE IF NOT EXISTS ento_checkins (
 	suspected    text NOT NULL,
 	suspected_at timestamptz
 );
+-- 0.53: the network's audit, shared by its control nodes; entries are only ever added.
+CREATE TABLE IF NOT EXISTS ento_audit (
+	id        bigserial PRIMARY KEY,
+	at        timestamptz NOT NULL,
+	node      text NOT NULL,
+	action    text NOT NULL,
+	device    text NOT NULL,
+	person    text NOT NULL,
+	from_addr text NOT NULL,
+	target    text NOT NULL,
+	result    text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ento_audit_action ON ento_audit (action, id);
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'ento_audit_append_only') THEN
+		CREATE FUNCTION ento_audit_append_only() RETURNS trigger LANGUAGE plpgsql AS
+			'BEGIN RAISE EXCEPTION ''the audit is only ever added to''; END';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'ento_audit_no_change') THEN
+		CREATE TRIGGER ento_audit_no_change BEFORE UPDATE OR DELETE ON ento_audit
+			FOR EACH ROW EXECUTE FUNCTION ento_audit_append_only();
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'ento_audit_no_truncate') THEN
+		CREATE TRIGGER ento_audit_no_truncate BEFORE TRUNCATE ON ento_audit
+			FOR EACH STATEMENT EXECUTE FUNCTION ento_audit_append_only();
+	END IF;
+END $$;
 `
 
 // Postgres is a Store backed by PostgreSQL, shared by all control nodes of a deployment.
@@ -1626,6 +1655,15 @@ func (p *Postgres) KeepSetting(ctx context.Context, key, value string) (string, 
 	return stored, err
 }
 
+func (p *Postgres) Setting(ctx context.Context, key string) (string, bool, error) {
+	var v string
+	err := p.pool.QueryRow(ctx, `SELECT value FROM ento_settings WHERE key = $1`, key).Scan(&v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
 // Sessions of the admin interface are not part of the network map either.
 
 func (p *Postgres) CreateUISession(ctx context.Context, u UISession) error {
@@ -2261,4 +2299,53 @@ func (p *Postgres) RecordPersonActivity(ctx context.Context, id int64, at time.T
 		return ErrNotFound
 	}
 	return err
+}
+
+// The audit is not part of the network map: adding to it bumps no version.
+
+func (p *Postgres) AddAudit(ctx context.Context, e AuditEntry) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO ento_audit (at, node, action, device, person, from_addr, target, result)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, e.At, e.Node, e.Action, e.Device, e.Person, e.From, e.Target, e.Result)
+	return err
+}
+
+func (p *Postgres) Audit(ctx context.Context, q AuditQuery) ([]AuditEntry, error) {
+	limit := q.Limit
+	if limit <= 0 || limit > MaxAuditPage {
+		limit = MaxAuditPage
+	}
+	where, args := []string{"true"}, []any{}
+	arg := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
+	if q.Before > 0 {
+		where = append(where, "id < "+arg(q.Before))
+	}
+	if q.Action != "" {
+		where = append(where, "action = "+arg(q.Action))
+	}
+	if q.Result != "" {
+		where = append(where, "result = "+arg(q.Result))
+	}
+	if !q.Since.IsZero() {
+		where = append(where, "at >= "+arg(q.Since))
+	}
+	if q.Text != "" {
+		like := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(q.Text) + "%"
+		a := arg(like)
+		where = append(where, fmt.Sprintf("(node || ' ' || action || ' ' || device || ' ' || person || ' ' || from_addr || ' ' || target || ' ' || result) ILIKE %s", a))
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, at, node, action, device, person, from_addr, target, result FROM ento_audit WHERE `+
+		strings.Join(where, " AND ")+` ORDER BY id DESC LIMIT `+arg(limit), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AuditEntry{}
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.At, &e.Node, &e.Action, &e.Device, &e.Person, &e.From, &e.Target, &e.Result); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

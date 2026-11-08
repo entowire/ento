@@ -172,7 +172,7 @@ function ask(title, text, { input = null, body = null, ok = "OK", danger = false
 // --- state ----------------------------------------------------------------------------------------
 let info = null, peers = [], tokens = [], policies = [], links = [], auths = [], checks = [], routes = [];
 let dns = { domain: "", records: [], forwards: [] };
-const tabs = ["overview", "people", "devices", "groups", "access", "routes", "names", "links"];
+const tabs = ["overview", "people", "devices", "groups", "access", "routes", "names", "links", "activity"];
 const ui = { person: null, device: null, group: null, peopleFilter: "all", deviceFilter: "all" };
 
 function tab() {
@@ -188,9 +188,11 @@ async function load(which, auto = false) {
     checkPageVersion();
     const t = which || tab();
     if (t === "overview") {
-      [info, peers, tokens, idp] = await Promise.all([get("/v1/admin/info"), get("/v1/admin/peers"), get("/v1/admin/tokens"),
-        info.people && isAdmin() ? get("/v1/admin/people") : null]);
+      let recent;
+      [info, peers, tokens, idp, recent] = await Promise.all([get("/v1/admin/info"), get("/v1/admin/peers"), get("/v1/admin/tokens"),
+        info.people && isAdmin() ? get("/v1/admin/people") : null, get("/v1/admin/audit?limit=8").catch(() => null)]);
       renderOverview();
+      renderRecent(recent);
     } else if (t === "people") {
       [peers, idp] = await Promise.all([get("/v1/admin/peers"), info.people && isAdmin() ? get("/v1/admin/people") : null]);
       renderPeople();
@@ -219,6 +221,8 @@ async function load(which, auto = false) {
       [links, auths, peers, checks] = await Promise.all([get("/v1/admin/links"), get("/v1/admin/authorities"), get("/v1/admin/peers"),
         get("/v1/admin/posture")]);
       renderLinks();
+    } else if (t === "activity") {
+      await loadActivity(auto);
     }
     renderNavCount();
     $("foot").textContent = `${info.node} · ento ${info.version || "?"} · updated ${new Date().toLocaleTimeString()}`;
@@ -1109,7 +1113,7 @@ function knownGroups() {
   if (idp) return [...idp.groups].sort();
   const all = new Set();
   peers.forEach((p) => (p.groups || []).forEach((g) => all.add(g)));
-  policies.forEach((p) => { all.add(p.source); all.add(p.destination); });
+  policies.forEach((p) => [ruleWho(p), ruleOn(p), p.destination].forEach((g) => { if (g && !g.startsWith("*") && !g.startsWith(SVC)) all.add(g); }));
   tokens.forEach((t) => (t.groups || []).forEach((g) => all.add(g)));
   links.forEach((l) => (l.groups || []).forEach((g) => all.add(g)));
   if (idp) idp.groups.forEach((g) => all.add(g));
@@ -1129,6 +1133,16 @@ const deviceGroupList = () => knownGroups().filter(isDev);
 const peopleGroupList = () => knownGroups().filter((g) => !isDev(g));
 // groupTag shows a group with the mark of its kind.
 const groupTag = (g, cls = "tag", attrs = {}) => el("span", { class: cls, ...attrs }, isDev(g) ? icon("laptop", 12) : icon("people", 12), gname(g));
+
+// A rule is who on which devices reaching devices, a route or a forwarded service (ento 0.53). Who
+// is a people group or one of these; devices a device group or any device ("" in on).
+const SVC = "service:";
+const whoNames = { "*": "anyone", "*signed-in": "everyone signed in", "*nobody": "nobody signed in" };
+const ruleWho = (p) => p.who ?? p.source;
+const ruleOn = (p) => p.on || "";
+const whoLabel = (w) => whoNames[w] || gname(w);
+const endLabel = (x) => x === "*" ? "every device" : x.startsWith("route:") ? "route " + x.slice(6) : x.startsWith(SVC) ? x.slice(SVC.length) : gname(x);
+const ruleText = (p) => `${whoLabel(ruleWho(p))}${ruleOn(p) ? " on " + gname(ruleOn(p)) : ""} ${p.one_way ? "→" : "↔"} ${endLabel(p.destination)}`;
 
 // picker edits a list of groups: tags that can be removed, and an input suggesting the groups the
 // network knows; Enter, a comma or choosing a suggestion adds what was typed.
@@ -1396,49 +1410,70 @@ function policyNotice(done, r) {
 }
 
 function renderPolicies() {
-  // The rule's ends: people groups, device groups (shown without their prefix), every device, routes.
-  const fill = (sel, withRoutes) => {
-    const keep = sel.value;
-    const opt = (v, label) => el("option", { value: v }, label);
-    put(sel, opt("", "choose…"),
-      el("optgroup", { label: "People" }, ...peopleGroupList().map((g) => opt(g, g))),
-      el("optgroup", { label: "Devices" }, opt("*", "every device"), ...deviceGroupList().filter((g) => g !== DEV + "isolated").map((g) => opt(g, gname(g)))),
-      withRoutes && routesKnown().length ? el("optgroup", { label: "Routes" }, ...routesKnown().map((r) => opt("route:" + r, r))) : null);
-    if (keep) sel.value = keep;
-  };
-  fill($("policy-form").source, false);
-  fill($("policy-form").destination, true);
+  const f = $("policy-form");
+  const opt = (v, label) => el("option", { value: v }, label);
+  const keep = (sel, fill) => { const v = sel.value; fill(); if (v && [...sel.options].some((o) => o.value === v)) sel.value = v; };
+  const deviceGroups = () => deviceGroupList().filter((g) => g !== DEV + "isolated");
+  keep(f.source, () => put(f.source, opt("", "choose…"),
+    el("optgroup", { label: "People" }, ...peopleGroupList().map((g) => opt(g, g))),
+    el("optgroup", { label: "Whoever" }, opt("*signed-in", whoNames["*signed-in"]), opt("*nobody", whoNames["*nobody"]), opt("*", whoNames["*"]))));
+  keep(f.on, () => put(f.on, opt("", "any device"), ...deviceGroups().map((g) => opt(g, gname(g)))));
+  const services = (info && info.services) || [];
+  keep(f.destination, () => put(f.destination, opt("", "choose…"),
+    el("optgroup", { label: "Devices" }, opt("*", "every device"), ...deviceGroups().map((g) => opt(g, gname(g)))),
+    routesKnown().length ? el("optgroup", { label: "Routes" }, ...routesKnown().map((r) => opt("route:" + r, r))) : null,
+    services.length ? el("optgroup", { label: "Forwarded services" }, ...services.map((n) => opt(SVC + n, n))) : null));
   if (policySource) {
-    $("policy-form").source.value = policySource;
-    $("policy-form").destination.focus();
+    if (isDev(policySource)) { f.source.value = "*"; f.on.value = policySource.startsWith(DEV) ? policySource : DEV + policySource; }
+    else f.source.value = policySource;
+    f.destination.focus();
     policySource = null;
   }
   if (policyDestination) {
-    $("policy-form").destination.value = policyDestination;
-    $("policy-form").source.focus();
+    f.destination.value = policyDestination;
+    f.source.focus();
     policyDestination = null;
   }
+  ruleHint();
   $("policy-checks-btn").textContent = policyChecks.length ? `checks: ${policyChecks.join(", ")}` : "device checks…";
-  const g = null;
-  const shown = policies;
-  put($("policy-list"), ...list(shown.map((p) => {
+  put($("policy-list"), ...list(policies.map((p) => {
     const guarded = (p.posture || []).length > 0;
     // Operators neither change a rule's checks nor remove a rule that has some.
     const acts = [];
-    if (isAdmin() || !guarded) acts.push(button(p.one_way ? "Ports" : "Make one way", () => editRules(p), "link"));
+    const svc = p.destination.startsWith(SVC);
+    if ((isAdmin() || !guarded) && !(svc && p.one_way)) acts.push(button(p.one_way ? "Ports" : "Make one way", () => editRules(p), "link"));
     if (isAdmin()) acts.push(button("Checks", () => editChecks(p), "link"));
     if (isAdmin() || !guarded) acts.push(button("Remove", () => disallow(p), "link danger"));
-    const groupName = (x) => x === "*" ? "every device" : (x.startsWith("route:") ? "route " + x.slice(6) : [isDev(x) ? icon("laptop", 13) : icon("people", 13), " ", gname(x)]);
+    const who = ruleWho(p), on = ruleOn(p);
+    const toName = (x) => x.startsWith(SVC) ? [icon("names", 13), " ", endLabel(x)] : x.startsWith("route:") || x === "*" ? endLabel(x) : [icon("laptop", 13), " ", gname(x)];
     return el("div", { class: "rule" },
-      el("div", { class: "flow" }, el("span", { class: "from-g" }, groupName(p.source)),
-        el("span", { class: "arrow", title: p.one_way ? `${p.source} opens connections, ${p.destination} answers` : "an old rule both ways: make it one way and add the reverse", role: "img", "aria-label": p.one_way ? "reaches" : "and back, both ways (an old rule)" }, icon(p.one_way ? "one" : "both", 26)),
-        el("span", { class: "to-g" }, groupName(p.destination)),
-        el("span", { class: "ports-t" }, (p.ports || []).length ? p.ports.join(", ") : "all ports"),
+      el("div", { class: "flow" },
+        el("span", { class: "from-g" }, whoNames[who] ? whoNames[who] : [icon("people", 13), " ", gname(who)]),
+        el("span", { class: "on-g" }, "on ", on ? el("b", {}, icon("laptop", 12), " ", gname(on)) : el("b", {}, "any device")),
+        el("span", { class: "arrow", title: p.one_way ? "opens connections; the other side answers" : "an old rule both ways: make it one way and add the reverse", role: "img", "aria-label": p.one_way ? "reaches" : "and back, both ways (an old rule)" }, icon(p.one_way ? "one" : "both", 26)),
+        el("span", { class: "to-g" }, toName(p.destination)),
+        el("span", { class: "ports-t" }, svc ? "its own port" : (p.ports || []).length ? p.ports.join(", ") : "all ports"),
         guarded ? badge("passing " + p.posture.join(", "), "warn") : null,
         p.one_way ? null : badge("old rule, both ways", "warn")),
       el("div", { class: "row-actions" }, acts));
-  }), g ? `No rule involves ${g}.` : "No rules: devices reach nothing."));
+  }), "No rules: devices reach nothing."));
 }
+
+// ruleHint says in words what the rule being made allows, and keeps ports off for a service.
+function ruleHint() {
+  const f = $("policy-form");
+  const svc = f.destination.value.startsWith(SVC);
+  f.ports.disabled = svc;
+  f.ports.placeholder = svc ? "its own port" : "all ports";
+  if (svc) f.ports.value = "";
+  const who = f.source.value, on = f.on.value, to = f.destination.value;
+  if (!who || !to) { $("policy-hint").textContent = ""; return; }
+  const devs = on ? `a device of ${gname(on)}` : "any device";
+  const subject = who === "*" ? `Anyone or nobody signed in on ${devs}` : who === "*signed-in" ? `Anyone signed in on ${devs}` :
+    who === "*nobody" ? `${devs[0].toUpperCase() + devs.slice(1)} with nobody signed in` : `People of ${who}, while signed in on ${devs},`;
+  $("policy-hint").textContent = `${subject} may open connections to ${endLabel(to)}${svc ? "" : " on " + (f.ports.value.trim() || "every port")}.`;
+}
+["source", "on", "destination", "ports"].forEach((n) => $("policy-form")[n].addEventListener(n === "ports" ? "input" : "change", ruleHint));
 
 function routesKnown() {
   const all = new Set(routes.map((r) => r.name));
@@ -1463,8 +1498,8 @@ $("policy-checks-btn").addEventListener("click", async () => {
 
 async function editChecks(p) {
   const pick = checkBoxes(p.posture || []);
-  if (!await ask(`Checks for ${p.source} ${p.one_way ? "→" : "↔"} ${p.destination}`,
-    `Devices of ${p.source} reach ${p.destination} through this rule only while they pass every check ticked.`, { body: pick.el, ok: "Save" })) return;
+  if (!await ask(`Checks for ${ruleText(p)}`,
+    `Its devices reach ${endLabel(p.destination)} through this rule only while they pass every check ticked.`, { body: pick.el, ok: "Save" })) return;
   try {
     const r = await call("PATCH", `/v1/admin/policies/${p.id}`, { posture: pick.chosen() });
     policyNotice("Rule changed.", r);
@@ -1490,9 +1525,9 @@ function portList(text) {
 async function editRules(p) {
   const ports = el("input", { class: "input mono", value: (p.ports || []).join(", "), placeholder: "all", autocomplete: "off", "aria-label": "Ports" });
   const body = el("div", { class: "stack" },
-    p.one_way ? null : el("p", { class: "hint" }, `Saving makes it one way: only ${p.source} opens connections. For ${p.destination} to open them too, add the rule ${p.destination} → ${p.source}.`),
+    p.one_way ? null : el("p", { class: "hint" }, `Saving makes it one way: only ${whoLabel(ruleWho(p))} opens connections. For ${endLabel(p.destination)} to open them too, add the rule the other way.`),
     el("label", { class: "field" }, el("span", {}, "Ports"), ports));
-  if (!await ask(`${p.source} ${p.one_way ? "→" : "↔"} ${p.destination}`,
+  if (!await ask(ruleText(p),
     "Ports: all, or e.g. tcp/22, tcp/443, udp/53, icmp. Enforced by the receiving device's agent (0.19 and later).", { body, ok: "Save" })) return;
   try {
     const r = await call("PUT", `/v1/admin/policies/${p.id}/rules`, { one_way: true, ports: portList(ports.value) });
@@ -1502,7 +1537,7 @@ async function editRules(p) {
 }
 
 async function disallow(p) {
-  if (!await ask(`Remove ${p.source} ${p.one_way ? "→" : "↔"} ${p.destination}?`, `${p.source} stops reaching ${p.destination} (unless another rule allows it).`, { ok: "Remove", danger: true })) return;
+  if (!await ask(`Remove ${ruleText(p)}?`, `They stop reaching ${endLabel(p.destination)} through it (unless another rule allows it).`, { ok: "Remove", danger: true })) return;
   try {
     await call("DELETE", `/v1/admin/policies/${p.id}`);
     notice("Rule removed.", true);
@@ -1515,11 +1550,12 @@ $("policy-form").addEventListener("submit", async (ev) => {
   const f = ev.target;
   try {
     const posture = isAdmin() ? policyChecks : [];
-    const r = await call("POST", "/v1/admin/policies", { source: f.source.value.trim(), destination: f.destination.value.trim(), posture,
-      one_way: true, ports: portList(f.ports.value) });
+    const r = await call("POST", "/v1/admin/policies", { source: f.source.value.trim(), on: f.on.value, destination: f.destination.value.trim(), posture,
+      one_way: true, ports: f.ports.disabled ? [] : portList(f.ports.value) });
     policyNotice("Rule added.", r);
     f.reset();
     policyChecks = [];
+    ruleHint();
   } catch (e) { notice("Rule: " + e.message); }
   load();
 });
@@ -1547,7 +1583,7 @@ function renderChecks() {
       el("div", { class: "stack" },
         el("div", { class: "flow" }, el("b", {}, c.name), [...checkRequires(c), ...systems, ...patches].map((x) => tag(x)),
           el("span", { class: "dim small" }, "report ≤ " + span(c.max_age_seconds))),
-        el("div", { class: "dim small" }, users.length || linkUsers.length ? "Required by " + [...users.map((p) => `${p.source} → ${p.destination}`), ...linkUsers.map((l) => `link ${l.name}`)].join(", ")
+        el("div", { class: "dim small" }, users.length || linkUsers.length ? "Required by " + [...users.map(ruleText), ...linkUsers.map((l) => `link ${l.name}`)].join(", ")
           : "No rule or link requires it.",
           " · ", required.length ? `${required.length - failing.length} of ${required.length} pass` : `${results.filter((r) => r.passed).length} of ${results.length} would pass`,
           failing.length ? ` · failing: ${few(failing.map((p) => p.hostname))}` : "")),
@@ -1556,7 +1592,7 @@ function renderChecks() {
 }
 
 async function removeCheck(c, users, linkUsers) {
-  const by = [...users.map((p) => `${p.source} → ${p.destination}`), ...linkUsers.map((l) => `link ${l.name}`)];
+  const by = [...users.map(ruleText), ...linkUsers.map((l) => `link ${l.name}`)];
   if (by.length) return notice(`${c.name} is required by ${by.join(", ")}: take it off there first.`);
   if (!await ask(`Delete device check ${c.name}?`, "No rule or link requires it.", { ok: "Delete", danger: true })) return;
   try {
@@ -1605,7 +1641,7 @@ function renderRoutes() {
     return el("div", { class: "item" },
       el("span", { class: "ico" }, icon("routes", 20)),
       el("div", { class: "who" }, el("b", {}, r.name),
-        el("small", {}, "through ", el("span", { class: "mono" }, r.via), " · ", users.length ? "reached by " + users.map((p) => p.source + ((p.ports || []).length ? ` (${p.ports.join(", ")})` : "")).join(", ") : "nobody reaches it yet"),
+        el("small", {}, "through ", el("span", { class: "mono" }, r.via), " · ", users.length ? "reached by " + users.map((p) => whoLabel(ruleWho(p)) + (ruleOn(p) ? " on " + gname(ruleOn(p)) : "") + ((p.ports || []).length ? ` (${p.ports.join(", ")})` : "")).join(", ") : "nobody reaches it yet"),
         (r.warnings || []).map((w) => el("small", { class: "warn-text" }, w))),
       el("div", { class: "tags" }, r.exit ? badge(r.default ? "exit, used by default" : "exit", "info") : r.networks.map((n) => tag(n, "tag mono"))),
       el("div", { class: "row-actions" }, button("Allow…", () => { policyDestination = "route:" + r.name; location.hash = "#access"; }, "btn xs"),
@@ -1614,7 +1650,7 @@ function renderRoutes() {
 }
 
 async function removeRoute(r, users) {
-  if (users.length) return notice(`${r.name}: remove the rules that lead to it first (${users.map((p) => p.source).join(", ")}).`);
+  if (users.length) return notice(`${r.name}: remove the rules that lead to it first (${users.map(ruleText).join(", ")}).`);
   const what = r.exit ? "using it as their exit" : `reaching ${r.networks.join(", ")} through ${r.via}`;
   if (!await ask(`Delete route ${r.name}?`, `Devices stop ${what}.`, { ok: "Delete", danger: true })) return;
   try {
@@ -1804,8 +1840,87 @@ function show() {
 
 window.addEventListener("hashchange", () => { if (!pairing) { show(); window.scrollTo(0, 0); } });
 setInterval(() => {
-  if (!$("dialog").open && !$("add-dialog").open && !document.hidden && info && ["overview", "people", "devices"].includes(tab())) load(undefined, true);
+  if (!$("dialog").open && !$("add-dialog").open && !document.hidden && info && ["overview", "people", "devices", "activity"].includes(tab())) load(undefined, true);
 }, 15000);
 setTokenKind("words");
 routeKind();
 show();
+
+// --- activity: the network's audit (ento 0.53) ----------------------------------------------------
+// Every change and refusal, newest first, as the control nodes recorded them; the Overview shows the
+// latest few. Entries are only ever added.
+const act = { entries: [], more: false, actions: new Set(), query: "" };
+const actionNames = {
+  policy_added: "Rule added", policy_deleted: "Rule removed", policy_rules: "Rule's ports changed", policy_posture: "Rule's checks changed",
+  forward_connection: "Forwarded service", idp_connection: "Sign-in service", admin_api: "Administration", control_cli: "Command line",
+  audit_exported: "Activity exported", enrolled: "Device joined", peer_deleted: "Device removed", peer_renamed: "Device renamed",
+  token_created: "Invitation made", token_deleted: "Invitation revoked", session_opened: "Signed in", session_ended: "Signed out",
+};
+const actionName = (a) => actionNames[a] || (a.charAt(0).toUpperCase() + a.slice(1)).replaceAll("_", " ").replace(/^Sso\b/, "SSO").replace(/\bidp\b/, "identity provider");
+const shortWhen = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+// auditItem shows an entry; compact (the Overview) says how long ago.
+function auditItem(e, compact = false) {
+  const by = e.device === "-" ? `control node ${e.node}` : e.person ? `${e.device} · ${e.person}` : e.device;
+  return el("div", { class: "item" },
+    el("span", { class: "when", title: `${when(e.at)} · recorded by ${e.node}` }, compact ? ago(e.at) : shortWhen(e.at)),
+    el("div", { class: "what" }, el("b", {}, actionName(e.action)), el("span", { class: "dim" }, " · ", by, e.from && e.from !== "-" && e.from !== "local" ? ` (${e.from})` : ""),
+      e.target ? el("span", { class: "target", title: e.target }, e.target) : null),
+    e.result === "denied" ? badge("refused", "bad") : e.result === "failed" ? badge("failed", "warn") : badge("done", "mute"));
+}
+
+function renderRecent(page) {
+  put($("ov-activity"), ...list(page ? page.entries.map((e) => auditItem(e, true)) : [], page ? "Nothing yet." : "The activity could not be read."));
+}
+
+function activityQuery(before) {
+  const f = $("act-filter");
+  const q = new URLSearchParams();
+  if (f.q.value.trim()) q.set("q", f.q.value.trim());
+  if (f.result.value) q.set("result", f.result.value);
+  if (f.kind.value) q.set("action", f.kind.value);
+  $("act-export").href = "/v1/admin/audit?" + new URLSearchParams([...q, ["format", "csv"]]);
+  if (before) q.set("before", String(before));
+  q.set("limit", "100");
+  return q.toString();
+}
+
+// loadActivity reads the first page again (a refresh keeps what was read further down and adds what
+// is new on top), or the next older page.
+async function loadActivity(auto = false, older = false) {
+  const query = activityQuery(older ? act.entries.at(-1).id : 0);
+  const filters = query.replace(/(^|&)(before|limit)=[^&]*/g, "");
+  const page = await call("GET", "/v1/admin/audit?" + query, undefined, auto);
+  if (older) {
+    act.entries.push(...page.entries);
+    act.more = page.more;
+  } else if (auto && filters === act.query && act.entries.length) {
+    const top = act.entries[0].id;
+    act.entries.unshift(...page.entries.filter((e) => e.id > top));
+  } else {
+    act.entries = page.entries;
+    act.more = page.more;
+  }
+  act.query = filters;
+  page.entries.forEach((e) => act.actions.add(e.action));
+  renderActivity();
+}
+
+function renderActivity() {
+  const kind = $("act-filter").kind;
+  const chosen = kind.value;
+  put(kind, el("option", { value: "" }, "every kind"),
+    ...[...act.actions, chosen].filter(Boolean).filter((a, i, all) => all.indexOf(a) === i)
+      .sort((a, b) => actionName(a).localeCompare(actionName(b))).map((a) => el("option", { value: a }, actionName(a))));
+  kind.value = chosen;
+  put($("act-list"), ...list(act.entries.map(auditItem), act.query ? "Nothing matches." : "Nothing yet."));
+  $("act-more").hidden = !act.more;
+}
+
+let actTimer = null;
+$("act-filter").addEventListener("submit", (ev) => ev.preventDefault());
+$("act-filter").addEventListener("input", () => {
+  clearTimeout(actTimer);
+  actTimer = setTimeout(() => loadActivity().catch((e) => notice("Could not load: " + e.message)), 300);
+});
+$("act-older").addEventListener("click", () => loadActivity(false, true).catch((e) => notice("Could not load: " + e.message)));

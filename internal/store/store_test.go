@@ -42,7 +42,7 @@ func backends(t *testing.T) map[string]func(t *testing.T) Store {
 			}
 			_, err = conn.Exec(ctx, `DROP TABLE IF EXISTS ento_settings, ento_state, ento_control_nodes,
 				ento_peers, ento_tokens, ento_policies, ento_authorities, ento_links, ento_link_keys, ento_ui_sessions, ento_admin_sessions, ento_sso_tokens,
-				ento_posture, ento_posture_checks, ento_link_posture, ento_approvals, ento_checkins, ento_hwkeys, ento_routes, ento_dns_records, ento_dns_forwards, ento_signin_codes, ento_signin_use, ento_update_policy, ento_release_offers`)
+				ento_posture, ento_posture_checks, ento_link_posture, ento_approvals, ento_checkins, ento_hwkeys, ento_routes, ento_dns_records, ento_dns_forwards, ento_signin_codes, ento_signin_use, ento_update_policy, ento_release_offers, ento_audit`)
 			conn.Close(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -1686,5 +1686,81 @@ func testIsolation(t *testing.T, s Store) {
 		if q.Approved || q.Admin || q.Operator || slices.Contains(q.Groups, "admins") {
 			t.Fatalf("isolated with an admin person: approved %v admin %v operator %v groups %v", q.Approved, q.Admin, q.Operator, q.Groups)
 		}
+	}
+}
+
+// The audit (0.53): entries come back newest first, by page, filtered; the database refuses to
+func TestAudit(t *testing.T) {
+	for name, open := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			ctx := context.Background()
+			base := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+			for i, a := range []string{"enrolled", "policy_added", "policy_added", "forward_connection", "policy_deleted"} {
+				result := "ok"
+				if a == "forward_connection" {
+					result = "denied"
+				}
+				if err := s.AddAudit(ctx, AuditEntry{At: base.Add(time.Duration(i) * time.Minute), Node: "c1", Action: a, Device: "lap-1",
+					Person: "ana@example.com", From: "100.64.1.1", Target: fmt.Sprintf("entry %d 100%%_done", i), Result: result}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			all, err := s.Audit(ctx, AuditQuery{})
+			if err != nil || len(all) != 5 || all[0].Action != "policy_deleted" || all[4].Action != "enrolled" || !all[0].At.Equal(base.Add(4*time.Minute)) {
+				t.Fatalf("all: %+v %v", all, err)
+			}
+			page, _ := s.Audit(ctx, AuditQuery{Limit: 2, Before: all[1].ID})
+			if len(page) != 2 || page[0].ID != all[2].ID || page[1].ID != all[3].ID {
+				t.Fatalf("a page: %+v", page)
+			}
+			if got, _ := s.Audit(ctx, AuditQuery{Action: "policy_added"}); len(got) != 2 {
+				t.Fatalf("by action: %+v", got)
+			}
+			if got, _ := s.Audit(ctx, AuditQuery{Result: "denied"}); len(got) != 1 || got[0].Action != "forward_connection" {
+				t.Fatalf("by result: %+v", got)
+			}
+			if got, _ := s.Audit(ctx, AuditQuery{Text: "ANA@"}); len(got) != 5 {
+				t.Fatalf("by text: %d", len(got))
+			}
+			if got, _ := s.Audit(ctx, AuditQuery{Text: "entry 3 100%_"}); len(got) != 1 {
+				t.Fatalf("by text with %% and _: %+v", got)
+			}
+			if got, _ := s.Audit(ctx, AuditQuery{Text: "entry 3 100_"}); len(got) != 0 {
+				t.Fatalf("_ is no wildcard: %+v", got)
+			}
+			if got, _ := s.Audit(ctx, AuditQuery{Since: base.Add(3 * time.Minute)}); len(got) != 2 {
+				t.Fatalf("since: %+v", got)
+			}
+			if pg, ok := s.(*Postgres); ok {
+				for _, q := range []string{`UPDATE ento_audit SET result = 'ok'`, `DELETE FROM ento_audit`, `TRUNCATE ento_audit`} {
+					if _, err := pg.pool.Exec(ctx, q); err == nil {
+						t.Errorf("%s: allowed", q)
+					}
+				}
+				if got, _ := s.Audit(ctx, AuditQuery{}); len(got) != 5 {
+					t.Fatalf("after the attempts: %d entries", len(got))
+				}
+			}
+		})
+	}
+}
+
+// Setting reads what KeepSetting stored, and says when nothing is.
+func TestSetting(t *testing.T) {
+	for name, open := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			ctx := context.Background()
+			if v, ok, err := s.Setting(ctx, "k"); err != nil || ok || v != "" {
+				t.Fatalf("none: %q %v %v", v, ok, err)
+			}
+			if _, err := s.KeepSetting(ctx, "k", "v1"); err != nil {
+				t.Fatal(err)
+			}
+			if v, ok, err := s.Setting(ctx, "k"); err != nil || !ok || v != "v1" {
+				t.Fatalf("stored: %q %v %v", v, ok, err)
+			}
+		})
 	}
 }

@@ -293,6 +293,12 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.OIDC != nil {
 		idpTargets = cfg.OIDC.ConnectTo
 	}
+	// Forwarded services are reached by rules (0.53): each gets, once, the rules that let through
+	// whom it did before, ahead of the first connection.
+	if err := s.ruleServices(ctx); err != nil {
+		wg.Close()
+		return nil, fmt.Errorf("rules of the forwarded services: %w", err)
+	}
 	if len(idpTargets) > 0 || cfg.AdminUI != "" || len(cfg.Forwards) > 0 {
 		if err := s.start443(ctx, idpTargets); err != nil {
 			wg.Close()

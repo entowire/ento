@@ -46,6 +46,7 @@ type Memory struct {
 	signIns  map[string]SignInCode
 	signUse  map[int64]SignInCode // PersonSince and, in ExpiresAt, when the device last signed someone in
 	settings map[string]string
+	audit    []AuditEntry
 	nextID   int64
 }
 
@@ -1009,6 +1010,13 @@ func (m *Memory) KeepSetting(_ context.Context, key, value string) (string, erro
 	return value, nil
 }
 
+func (m *Memory) Setting(_ context.Context, key string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.settings[key]
+	return v, ok, nil
+}
+
 func (m *Memory) CreateUISession(_ context.Context, u UISession) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1533,4 +1541,46 @@ func (m *Memory) RecordPersonActivity(_ context.Context, id int64, at time.Time,
 	}
 	m.peers[id] = p
 	return nil
+}
+
+// memoryAuditKeep bounds the in-memory audit (tests and single-node trials); the database keeps all.
+const memoryAuditKeep = 100000
+
+func (m *Memory) AddAudit(_ context.Context, e AuditEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e.ID = int64(len(m.audit)) + 1
+	if n := len(m.audit); n > 0 {
+		e.ID = m.audit[n-1].ID + 1
+	}
+	m.audit = append(m.audit, e)
+	if len(m.audit) > memoryAuditKeep {
+		m.audit = slices.Clone(m.audit[len(m.audit)-memoryAuditKeep:])
+	}
+	return nil
+}
+
+func (m *Memory) Audit(_ context.Context, q AuditQuery) ([]AuditEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit := q.Limit
+	if limit <= 0 || limit > MaxAuditPage {
+		limit = MaxAuditPage
+	}
+	text := strings.ToLower(q.Text)
+	out := []AuditEntry{}
+	for i := len(m.audit) - 1; i >= 0 && len(out) < limit; i-- {
+		e := m.audit[i]
+		if q.Before > 0 && e.ID >= q.Before || q.Action != "" && e.Action != q.Action || q.Result != "" && e.Result != q.Result {
+			continue
+		}
+		if !q.Since.IsZero() && e.At.Before(q.Since) {
+			break
+		}
+		if text != "" && !strings.Contains(strings.ToLower(strings.Join([]string{e.Node, e.Action, e.Device, e.Person, e.From, e.Target, e.Result}, " ")), text) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }

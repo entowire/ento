@@ -301,7 +301,7 @@ so agents only receive updates. Control nodes are stateless between requests; an
 
 ## Policies
 
-A policy names a source group, a destination group (`*`: every device) and port rules: the
+A policy names a source, a destination group (`*`: every device) and port rules: the
 source's devices may open connections to the destination's, which answer them (one way: 0.52,
 control node starts, `internal/control/oneway.go`, except one that requires posture checks, kept
 both ways until an admin replaces it); port rules are `all`, `tcp`, `udp`, `tcp/N`, `tcp/N-M`, `udp/...` and `icmp` (echo
@@ -329,6 +329,45 @@ rules before the chain's final drop (prefix `ento-filter drop: `), or by the wra
 fields. Agents older than 0.19 ignore the filter and accept everything from their map's peers (fail open,
 as before), so control nodes warn about receiving devices with older agents when a policy gets a
 direction or ports.
+
+a people group, everyone signed in (`*signed-in`), nobody signed in (`*nobody`) or anyone (`*`), on a
+device group or any device. It is kept in the policy's one source column, `engineers on
+device:laptops`, so that no schema changes and a control node older than 0.53 reads it as a group
+that no device is in: during a rolling update or after a downgrade such a rule lets less through,
+never more. Anyone on a device group is the device group alone, and a people group on any device
+the people group alone, exactly as policies were written before, so nothing stored changes meaning.
+The matching is that of every policy (`inGroup`): a person's groups count while their layer is open
+on the device, so a rule of people follows their sign-in; the machine's own access (what the device
+may open without its person, which keeps the person layer open when exceeded) has nobody signed in.
+Bypass detection compares who and devices apart, conservatively (a people group and everyone signed
+in may share devices; nobody signed in and a people group may not).
+
+A forwarded service (`--forward`) is a destination too, `service:NAME`, without ports (0.53). The
+control node judges each connection by the device's address, as before, now against the rules
+(`serviceAllowed`: the device approved, not isolated or suspended, in a rule's source, passing its
+checks; full administration, a person in admins on a device in admin, without a rule), and checks an
+open connection again every 15 seconds. No device's map changes: the control nodes are always in
+it. Each service, the first time a node of 0.53 forwards it, gets rules for whom it let through
+before (`*`, or `--forward-people`'s role groups), once (a `service_rules:NAME` setting): before the
+node accepts its first connection, so nobody is refused in between. Isolated devices, which reached
+forwarded services before, no longer do (4.3). The identity provider and the dashboard are not
+reached by rules yet.
+
+## Audit
+
+Every change and refusal is a journal line of the control node that made it (`audit:`, one line a
+SIEM parses) and, since 0.53, an entry in the network's database (`ento_audit`), so that the record
+is the network's, not one node's, and the dashboard can show it. Writing it is synchronous and
+bounded (3 seconds): an audit line is never lost because the database is slow, it only is not
+stored, and a second journal line says so; the journal stays the record of last resort. The table
+only grows: a trigger refuses UPDATE, DELETE and TRUNCATE. That stops the control nodes (and any
+code path in them) from rewriting history, not the database's owner, who can drop the trigger;
+backups and the SIEM's copy of the journal are what show such a change. The control nodes' command
+line writes its entries too, with whoever ran it (the user behind sudo). Reading is `GET
+/v1/admin/audit` for admins, operators and viewers, by pages of IDs (newest first), filtered by
+action, result, text and time, or as CSV (an export is audited). Not yet: retention, the identity
+provider's own changes, and refusals that happen before a device is known (unenrolled addresses,
+unsigned calls from strangers) beyond what the journal has.
 
 ## Routes
 
@@ -375,8 +414,8 @@ forwarded zones (the longest match; a zone inside the domain before the domain) 
 servers, other names through the exit's gateway while an exit is in use or the upstream servers a
 phone's app gives it, else refused. `DNS.fixed` (0.30.1) names what the control nodes serve on their
 overlay addresses, port 443: the identity provider's name when they forward it (`--oidc-connect-to`),
-the admin interface's and the services they pass through for every enrolled device (`--forward
-NAME=HOST:PORT[+...]`, 0.33: split by TLS server name like the admin interface, with the identity
+the admin interface's and the services they pass through (`--forward
+NAME=HOST:PORT[+...]`, 0.33; reached by rules since 0.53: split by TLS server name like the admin interface, with the identity
 provider's rules and one audit line per connection, `forward_connection`), each with every control node's overlay address, in every device's map,
 approved or not (then `DNS` has no domain, only these). The resolver answers them first, itself
 (several A records; other types empty), and Linux routes them to it like the domain: signing in no
@@ -677,6 +716,7 @@ the authority public key.
 | `dns_forwards` | internal DNS: zones forwarded to name servers (IPv4), who added them and when |
 | `checkins` | per device: the hashes of the check-in token issued last and accepted last, the machine's fingerprint, the endpoint and time of the last accepted check-in, the last suspicion of a copy and when |
 | `approvals` | sign-in approvals: asking device, person (subject) and account name, service, the number and the three offered, expiry, state (pending, approved, denied, expired), who answered and when |
+| `audit` | the network's audit (0.53): when, control node, action, device, person, overlay address, target, result; only ever added (a trigger refuses changes) |
 | `link_posture` | per link and device that failed its checks: each failing check's outcome (failed, stale), and since when (deleted when it passes, when the link's checks change, with the link or the device) |
 | `state` | network map version |
 
