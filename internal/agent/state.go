@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -51,6 +52,34 @@ func (k *Key) UnmarshalText(b []byte) error {
 
 // ErrNotEnrolled is returned when no state exists yet.
 var ErrNotEnrolled = errors.New("not enrolled")
+
+// enrollErrorFile holds why the agent's last attempt to redeem the invitation in enroll.token
+// failed, until an attempt succeeds or install stores a new invitation; `ento agent install`
+// waits on it and on the state, and `ento agent status` shows it.
+const enrollErrorFile = "enroll.error"
+
+// Joining reports whether dir holds an invitation the agent has not redeemed yet.
+func Joining(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, enrollFile))
+	return err == nil
+}
+
+// EnrollError returns why the agent's last attempt to enroll with dir's invitation failed, ""
+// for nothing.
+func EnrollError(dir string) string {
+	b, _ := os.ReadFile(filepath.Join(dir, enrollErrorFile))
+	return strings.TrimSpace(string(b))
+}
+
+// SetEnrollError records err as the last attempt's outcome (nil: it succeeded).
+func SetEnrollError(dir string, err error) {
+	p := filepath.Join(dir, enrollErrorFile)
+	if err == nil {
+		_ = os.Remove(p)
+		return
+	}
+	_ = os.WriteFile(p, []byte(err.Error()+"\n"), 0o600)
+}
 
 // LoadState reads the state from dir.
 func LoadState(dir string) (State, error) {

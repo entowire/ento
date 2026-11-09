@@ -301,6 +301,17 @@ administrator can read out a domain and five words instead (0.20):
     sudo ento agent install --join example.com         # shows the network and its fingerprint, asks for the words
     curl -fsSL https://entowire.com/install.sh | sudo ENTO_JOIN=example.com sh   # the same, installing ento first
 
+The installation and every join wait for the network (0.56.2): `ento agent install` with words or a
+token stores the invitation for the service, which redeems it, and shows `joining network
+<domain>...` until the agent has its address (`joined network <domain> as <address>: complete`), or
+stops with the agent's reason (`joining network <domain> failed: ...`: an invitation refused is used
+up or withdrawn, new words are needed; any other failure the agent retries by itself), or, after 90
+seconds, says that it keeps trying; `ento agent join` (another network, below) does the same. Before,
+the installers said `Enrolled.` as soon as the service started, and an `ento agent status` in the
+next seconds answered `not enrolled`; while the invitation is pending it now says `joining`, with
+the last attempt's error (the file `enroll.error` beside `enroll.token`), and without root, that
+the state is root's.
+
 The domain publishes the network's record, the TXT record `_ento.<domain>`, as `ento admin
 record` prints it (on a control node: `ento control record`):
 

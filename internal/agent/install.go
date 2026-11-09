@@ -138,6 +138,7 @@ func prepareInstall(cfg Config, token, binary string) error {
 		if token == "" {
 			return errors.New("not enrolled: a token is required for the first installation")
 		}
+		_ = os.Remove(filepath.Join(cfg.StateDir, enrollErrorFile)) // a new invitation: the last one's error is gone
 		return os.WriteFile(filepath.Join(cfg.StateDir, "enroll.token"), []byte(token+"\n"), 0o600)
 	} else if err != nil {
 		return err

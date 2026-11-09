@@ -745,7 +745,9 @@ func agentUp(ctx context.Context, cfg *agent.Config, tokenFile string, tokenStdi
 		if tok == "" {
 			return errors.New("not enrolled: provide a token with --token-file, --token-stdin or ENTO_TOKEN")
 		}
-		if _, err := agent.Enroll(ctx, *cfg, tok); err != nil {
+		_, err = agent.Enroll(ctx, *cfg, tok)
+		agent.SetEnrollError(cfg.StateDir, err) // what `ento agent install` waits on
+		if err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -759,6 +761,29 @@ func agentUp(ctx context.Context, cfg *agent.Config, tokenFile string, tokenStdi
 	// A release installed by a self-update that keeps failing to start is put back (0.37).
 	agent.CheckPendingUpdate(cfg.StateDir, cfg.Version, log.Printf)
 	return agent.Run(ctx, *cfg)
+}
+
+// waitEnrolled waits for the agent service to redeem the invitation `ento agent install` stored
+// for it, printing a dot every half second, and says when the device is in the network or why not.
+func waitEnrolled(ctx context.Context, stateDir, name string) error {
+	fmt.Printf("joining network %s...", name)
+	for i := 0; i < 180 && ctx.Err() == nil; i++ {
+		if st, err := agent.LoadState(stateDir); err == nil {
+			fmt.Printf("\njoined network %s as %s: complete\n", name, st.Address)
+			return nil
+		}
+		if e := agent.EnrollError(stateDir); e != "" {
+			fmt.Println()
+			if strings.HasPrefix(e, "enrollment refused") {
+				return fmt.Errorf("joining network %s failed: %s\nthe invitation is used up or withdrawn: ask an administrator for new words and install again", name, e)
+			}
+			return fmt.Errorf("joining network %s failed: %s\nthe agent tries again by itself: sudo ento agent status shows how it goes", name, e)
+		}
+		fmt.Print(".")
+		time.Sleep(500 * time.Millisecond)
+	}
+	fmt.Println()
+	return fmt.Errorf("not in network %s yet: the agent keeps trying (sudo ento agent status shows how it goes)", name)
 }
 
 // joinFlags are the flags of enrollment by words.
@@ -952,8 +977,16 @@ func agentCmd(ctx context.Context, args []string) error {
 			fmt.Println("the ento agent is installed; it stays down (`ento agent down`) until `ento agent up`")
 			return nil
 		}
-		fmt.Println("the ento agent is installed and started; check with: ento agent status")
-		return nil
+		fmt.Println("the ento agent is installed and started")
+		if tok == "" {
+			return nil
+		}
+		// The service redeems the invitation: wait until it has, or says why not.
+		name := *join.domain
+		if name == "" {
+			name = "of the invitation"
+		}
+		return waitEnrolled(ctx, cfg.StateDir, name)
 
 	case "uninstall":
 		fs := flag.NewFlagSet("agent uninstall", flag.ExitOnError)
@@ -1166,9 +1199,18 @@ func agentCmd(ctx context.Context, args []string) error {
 			fmt.Printf("network:    %s\n", networkName(&agent.Config{StateDir: baseDir}, *network))
 		}
 		st, err := agent.LoadState(cfg.StateDir)
-		if err != nil && personChannel(cfg.StateDir) {
+		switch {
+		case err != nil && personChannel(cfg.StateDir):
 			return personStatus(ctx)
-		} else if err != nil {
+		case errors.Is(err, os.ErrPermission):
+			return errors.New("the agent's state is root's: sudo ento agent status")
+		case errors.Is(err, agent.ErrNotEnrolled) && agent.Joining(cfg.StateDir):
+			if e := agent.EnrollError(cfg.StateDir); e != "" {
+				return fmt.Errorf("joining: not in the network yet, the last attempt failed: %s", e)
+			}
+			fmt.Println("joining: the agent is redeeming its invitation (a few seconds)")
+			return nil
+		case err != nil:
 			return err
 		}
 		fmt.Printf("address:    %s (%s)\npublic key: %s\n", st.Address, st.Network, wgtypes.Key(st.PrivateKey).PublicKey())

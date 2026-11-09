@@ -89,10 +89,10 @@ func joinCmd(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := agent.NetworkDir(cfg.StateDir, domain)
-	fmt.Printf("joining %s on %s", domain, m.Interface)
+	fmt.Printf("joining network %s on %s...", domain, m.Interface)
 	for i := 0; i < 180 && ctx.Err() == nil; i++ {
 		if st, err := agent.LoadState(dir); err == nil {
-			fmt.Printf("\n\njoined %s as %s on %s\n", domain, st.Address, m.Interface)
+			fmt.Printf("\njoined network %s as %s on %s: complete\n", domain, st.Address, m.Interface)
 			fmt.Printf("commands for it take --network %s, e.g. sudo ento agent login --network %s\n", domain, domain)
 			return nil
 		}
@@ -100,12 +100,13 @@ func joinCmd(ctx context.Context, args []string) error {
 			fmt.Println()
 			// The words are used up or wrong: nothing to retry with.
 			_ = os.RemoveAll(dir)
-			return fmt.Errorf("joining %s failed: %s", domain, e)
+			return fmt.Errorf("joining network %s failed: %s", domain, e)
 		}
 		fmt.Print(".")
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("\nthe agent has not joined %s yet: it keeps trying (ento agent status shows it; ento agent leave %s gives up)", domain, domain)
+	fmt.Println()
+	return fmt.Errorf("not in network %s yet: the agent keeps trying (ento agent status shows it; ento agent leave %s gives up)", domain, domain)
 }
 
 func leaveCmd(ctx context.Context, args []string) error {
