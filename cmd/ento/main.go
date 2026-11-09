@@ -777,13 +777,21 @@ func waitEnrolled(ctx context.Context, stateDir, name string) error {
 			if strings.HasPrefix(e, "enrollment refused") {
 				return fmt.Errorf("joining network %s failed: %s\nthe invitation is used up or withdrawn: ask an administrator for new words and install again", name, e)
 			}
-			return fmt.Errorf("joining network %s failed: %s\nthe agent tries again by itself: sudo ento agent status shows how it goes", name, e)
+			return fmt.Errorf("joining network %s failed: %s\nthe agent tries again by itself: %s shows how it goes", name, e, statusCommand())
 		}
 		fmt.Print(".")
 		time.Sleep(500 * time.Millisecond)
 	}
 	fmt.Println()
-	return fmt.Errorf("not in network %s yet: the agent keeps trying (sudo ento agent status shows how it goes)", name)
+	return fmt.Errorf("not in network %s yet: the agent keeps trying (%s shows how it goes)", name, statusCommand())
+}
+
+// statusCommand is how a person shows the agent's status on this system, as administrator.
+func statusCommand() string {
+	if runtime.GOOS == "windows" {
+		return "ento agent status, in a PowerShell run as administrator,"
+	}
+	return "sudo ento agent status"
 }
 
 // joinFlags are the flags of enrollment by words.
@@ -1203,7 +1211,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		case err != nil && personChannel(cfg.StateDir):
 			return personStatus(ctx)
 		case errors.Is(err, os.ErrPermission):
-			return errors.New("the agent's state is root's: sudo ento agent status")
+			return errors.New("the agent's state is root's: " + statusCommand())
 		case errors.Is(err, agent.ErrNotEnrolled) && agent.Joining(cfg.StateDir):
 			if e := agent.EnrollError(cfg.StateDir); e != "" {
 				return fmt.Errorf("joining: not in the network yet, the last attempt failed: %s", e)

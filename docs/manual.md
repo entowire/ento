@@ -310,7 +310,10 @@ seconds, says that it keeps trying; `ento agent join` (another network, below) d
 the installers said `Enrolled.` as soon as the service started, and an `ento agent status` in the
 next seconds answered `not enrolled`; while the invitation is pending it now says `joining`, with
 the last attempt's error (the file `enroll.error` beside `enroll.token`), and without root, that
-the state is root's.
+the state is root's. A join that fails still leaves ento installed: on Windows `install.ps1` adds it
+to PATH and starts the tray program before it reports the failure (0.56.3; in 0.56.2 it stopped
+first, so `ento` was not found), and the hints name `ento agent status` in an administrator's
+PowerShell there, not `sudo`.
 
 The domain publishes the network's record, the TXT record `_ento.<domain>`, as `ento admin
 record` prints it (on a control node: `ento control record`):
