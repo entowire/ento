@@ -95,7 +95,8 @@ domain's record up as for typed words and refuses it unless its fingerprint is t
 shows **Join DOMAIN**), **Connect** (Android asks once to allow the VPN), then **Sign in** if
 the deployment uses single sign-on (0.55.1: there whenever the phone is connected and no one is
 signed in, highlighted while the device waits for approval or its sign-in has ended; **Sign out**
-once someone is). Only the network's own range goes through
+once someone is). Since 0.56 the sign-in page opens in the browser and, once the person has signed
+in, returns to the app by itself: no code to type (see Single sign-on, apps). Only the network's own range goes through
 the VPN; the phone's other traffic is untouched. Always-on VPN (Android settings) works too.
 
 ## Android app
@@ -105,8 +106,9 @@ address and the network's route and hands its file descriptor to the agent; `Mai
 with the QR code of the domain and the words an administrator's admin page shows (`ScanActivity`),
 or with both typed (**Type the domain and the words instead**), connects, and signs in or out.
 Since 0.55.1 the main screen holds only what a person needs: the state (connected, signed in as
-whom, an exit in use, a check the device fails and why, an error), Connect or Disconnect, Sign in
-or Sign out, the exit an administrator offers, and the admin page on admin and operator devices.
+whom, an exit in use, a check the device fails and why, an error; a sign-in's outcome below the
+buttons only when it adds to that: a failure, or groups that give the device no access), Connect or
+Disconnect, Sign in or Sign out, the exit an administrator offers, and the admin page on admin and operator devices.
 The technical details (address and network, approval, groups, role, peers with their last
 handshakes, routes, DNS server, exits, posture, failing checks, attestation, last error, the agent's
 and the app's versions) and **Send logs** are on `AdvancedActivity`, behind **Advanced**, a small
@@ -1028,6 +1030,18 @@ The person types the code the device shows on that page (0.50): control nodes no
 the provider's link with the code in it, and entowire's Rauthy approves at once only a code typed
 on its page; one that came in a link (anyone can send a person a link with their own device's
 code) gets a page saying a device asks to sign in as them, to accept or decline.
+
+**Apps sign in without a code** (0.56). An app on the device (the Android app) starts the sign-in
+with the address it catches (RFC 8252, e.g. `com.entowire.ento://signed-in`), and where the control
+node allows that address (`--oidc-app-redirects`, comma-separated; registered with the provider for
+the same client) the sign-in is an ordinary one: the provider's page opens in the browser (the
+authorization code grant with PKCE and a nonce), the person signs in, and the provider sends the
+browser back to the app, which hands the code to its control node (`POST /v1/login/code`). The
+verifier stays on the control node and the state is bound to the device that started the sign-in,
+so a link someone else's device started ends in the person's own app and is refused there (409,
+audited as `login` denied), and a code is used once. A provider's open session in that browser
+signs the person in at once. Elsewhere (an older control node, or the address not allowed) the app
+gets a device sign-in and its code, as before.
 
 Run with sudo from a desktop session, the agent opens the page as the user who ran sudo, in that
 user's graphical session; without one (SSH, servers) it only prints the link.

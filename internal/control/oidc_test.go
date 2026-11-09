@@ -380,3 +380,97 @@ func TestIDTokenVerification(t *testing.T) {
 		t.Fatalf("refresh with a forged token: %v %v", c, err)
 	}
 }
+
+// A sign-in for an app (0.56): the app's address must be allowed, the sign-in returns to the app
+// with a code, and only the device that started it can use that code, once.
+func TestAppSignIn(t *testing.T) {
+	const app = "com.entowire.ento://signed-in"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	idp := fakeIdP(t, "alice@example.com", []string{"/staff"})
+	space, _ := ipam.New(netip.MustParsePrefix("100.64.0.0/16"))
+	st := store.NewMemory(space)
+	key, _ := wgtypes.GeneratePrivateKey()
+	port := freeUDPPort(t)
+	srv, err := Start(ctx, Config{Name: "c1", PrivateKey: key, ListenPort: port,
+		Endpoint: fmt.Sprintf("127.0.0.1:%d", port), Space: space, Store: st, Logf: t.Logf,
+		OIDC: &OIDCConfig{Issuer: idp.URL, ClientID: "ento", ClientSecret: "s3cret",
+			ApproveGroups: []string{"staff"}, AppRedirects: []string{app}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	tok, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"phones"}})
+	srv.checkVersion(ctx)
+	phone, res := enroll(t, tok, "phone")
+	tok2, _, _ := IssueToken(ctx, st, TokenOptions{Groups: []string{"phones"}})
+	other, _ := enroll(t, tok2, "other")
+
+	// The browser: follows the authorization address to where the provider sends it back.
+	browse := func(link string) string {
+		t.Helper()
+		c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := c.Get(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("Location")
+	}
+	codeOf := func(address string) api.LoginCodeRequest {
+		u, _ := url.Parse(address)
+		return api.LoginCodeRequest{Code: u.Query().Get("code"), State: u.Query().Get("state")}
+	}
+	start := func(d *testClient, redirect string) api.LoginStart {
+		t.Helper()
+		var s api.LoginStart
+		if code := d.do(t, "POST", api.PathLogin, api.LoginStartRequest{Redirect: redirect}, &s); code != 200 {
+			t.Fatalf("login start: HTTP %d", code)
+		}
+		return s
+	}
+
+	// An address the control node does not allow: a device sign-in, with its code.
+	if s := start(phone, "evil://x"); s.UserCode == "" || s.AuthorizationURL != "" {
+		t.Fatalf("a foreign address got %+v", s)
+	}
+
+	// Someone else's device starts one and sends the link: it ends in this phone's app, whose
+	// device did not start it.
+	s := start(other, app)
+	if s.AuthorizationURL == "" || s.UserCode != "" {
+		t.Fatalf("app sign-in start: %+v", s)
+	}
+	back := browse(s.AuthorizationURL)
+	if !strings.HasPrefix(back, app+"?") {
+		t.Fatalf("the provider sent the browser to %q", back)
+	}
+	if code := phone.do(t, "POST", api.PathLoginCode, codeOf(back), nil); code != http.StatusConflict {
+		t.Fatalf("a code another device's sign-in got was taken: HTTP %d", code)
+	}
+	// The phone's own sign-in does not take that code's state either.
+	s = start(phone, app)
+	if code := phone.do(t, "POST", api.PathLoginCode, codeOf(back), nil); code != http.StatusConflict {
+		t.Fatalf("another sign-in's state was taken: HTTP %d", code)
+	}
+	back = browse(s.AuthorizationURL)
+	var status api.LoginStatus
+	if code := phone.do(t, "POST", api.PathLoginCode, codeOf(back), &status); code != 200 || status.State != "done" || status.User != "alice@example.com" {
+		t.Fatalf("the phone's own sign-in: HTTP %d %+v", code, status)
+	}
+	peer, _ := st.PeerByAddress(ctx, netip.MustParseAddr(res.Address))
+	if peer.User != "user-42" || !peer.Person.Active {
+		t.Fatalf("the phone is not bound to the person: %+v", peer)
+	}
+	// Once only.
+	if code := phone.do(t, "POST", api.PathLoginCode, codeOf(back), nil); code != http.StatusConflict {
+		t.Fatalf("a used code was taken again: HTTP %d", code)
+	}
+	// The provider's refusal ends the sign-in, failed.
+	s = start(phone, app)
+	req := codeOf(browse(s.AuthorizationURL))
+	req.Code, req.Error = "", "access_denied"
+	if code := phone.do(t, "POST", api.PathLoginCode, req, &status); code != 200 || status.State != "failed" {
+		t.Fatalf("a refused sign-in: HTTP %d %+v", code, status)
+	}
+}

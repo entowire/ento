@@ -71,6 +71,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE "+api.PathPostureChecks+"/{name}", s.adminOnly(s.handleDeletePostureCheck))
 	mux.HandleFunc("POST "+api.PathLogin, s.keyHolder(false, s.handleLoginStart))
 	mux.HandleFunc("GET "+api.PathLogin, s.keyHolder(false, s.handleLoginStatus))
+	mux.HandleFunc("POST "+api.PathLoginCode, s.keyHolder(false, s.handleLoginCode))
 	mux.HandleFunc("GET "+api.PathAdminUI, s.keyHolder(false, s.operatorRole(s.handleAdminUI)))
 	mux.HandleFunc("POST "+api.PathAdminUI, s.keyHolder(false, s.operatorRole(s.handleApproveAdminUI)))
 	mux.HandleFunc("POST "+api.PathAuthorities, s.adminOnly(s.handleCreateAuthority))
@@ -1292,7 +1293,37 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 		writeErr(w, http.StatusTooManyRequests, "a sign-in was started moments ago; wait a few seconds")
 		return
 	}
-	start, err := s.oidc.start(r.Context(), self.ID, func(c idClaims, refreshToken string) {
+	// An app on the device may ask for a sign-in that ends in it (0.56): no code to type.
+	var req api.LoginStartRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 2048)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+	}
+	var start api.LoginStart
+	var err error
+	if s.oidc.appRedirect(req.Redirect) {
+		hint := self.UserLogin
+		if hint == "" && strings.Contains(self.UserName, "@") {
+			hint = self.UserName
+		}
+		start, err = s.oidc.startApp(r.Context(), self.ID, req.Redirect, hint)
+	} else {
+		start, err = s.oidc.start(r.Context(), self.ID, s.loginDone(self))
+	}
+	if err != nil {
+		s.cfg.Logf("sso login start: %v", err)
+		writeErr(w, http.StatusBadGateway, "identity provider unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, start)
+}
+
+// loginDone applies a completed sign-in of device self: the person's rights from their groups, the
+// refresh token kept, the audit.
+func (s *Server) loginDone(self store.Peer) func(c idClaims, refreshToken string) {
+	return func(c idClaims, refreshToken string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		p, err := applyLogin(ctx, s.cfg.Store, s.oidc.cfg, self.ID, c)
@@ -1318,13 +1349,36 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 		s.audit(nil, &p, "login", fmt.Sprintf("%s approved=%v admin=%v operator=%v groups=%s binding=%s", peerLabel(p), p.Approved, p.Admin,
 			p.Operator, strings.Join(p.Groups, ","), binding), "ok")
 		s.checkVersion(ctx)
-	})
-	if err != nil {
-		s.cfg.Logf("sso login start: %v", err)
-		writeErr(w, http.StatusBadGateway, "identity provider unavailable")
+	}
+}
+
+// handleLoginCode finishes a sign-in this device started for its app (api.LoginCodeRequest): only
+// with the state that sign-in sent, so a sign-in that someone else's link started, ending in this
+// device's app, is refused.
+func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request, self store.Peer) {
+	if s.oidc == nil {
+		writeErr(w, http.StatusNotImplemented, "SSO is not configured on this deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, start)
+	var req api.LoginCodeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil || req.State == "" || (req.Code == "" && req.Error == "") {
+		writeErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	l, err := s.oidc.finishApp(r.Context(), self.ID, req, s.loginDone(self))
+	if err != nil {
+		s.audit(r, &self, "login", peerLabel(self)+": a sign-in code this device did not ask for", "denied")
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if l.state == "failed" {
+		s.audit(r, &self, "login", peerLabel(self)+": "+l.errMsg, "failed")
+	}
+	cur, err := s.cfg.Store.PeerByPublicKey(r.Context(), self.PublicKey)
+	if err != nil {
+		cur = self
+	}
+	writeJSON(w, http.StatusOK, api.LoginStatus{State: l.state, User: l.user, Error: l.errMsg, Approved: cur.Approved})
 }
 
 func (s *Server) handleLoginStatus(w http.ResponseWriter, r *http.Request, self store.Peer) {

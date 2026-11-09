@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -34,6 +36,11 @@ type OIDCConfig struct {
 	// OperatorGroups: users in any of these groups (and not admins) get operator devices, which
 	// administer within limits that keep every change reversible (store.Peer.Operator).
 	OperatorGroups []string
+	// AppRedirects are the addresses apps on devices catch (RFC 8252), registered with the provider
+	// for this client: a device starting a sign-in with one of them gets an ordinary sign-in
+	// (authorization code with PKCE) that ends in its app, which hands the code back (0.56), so its
+	// person types no code. Empty: device sign-ins only.
+	AppRedirects []string
 
 	// TokenKey (32 bytes) encrypts the refresh token each sign-in yields, kept in the store so that
 	// every RefreshInterval (default 2 minutes) a control node asks the provider, with it, whether
@@ -141,7 +148,18 @@ type deviceLogin struct {
 	user    string
 	errMsg  string
 	expires time.Time
+
+	// A sign-in for an app (startApp): what finishApp checks and sends to the token endpoint. The
+	// verifier and the nonce never leave the control node.
+	app      bool
+	oauth    string // the state sent to the provider
+	verifier string
+	nonce    string
+	redirect string
 }
+
+// appLoginLifetime: how long a sign-in for an app waits for its code.
+const appLoginLifetime = 10 * time.Minute
 
 func newOIDCProvider(cfg OIDCConfig) *oidcProvider {
 	if cfg.GroupsClaim == "" {
@@ -254,6 +272,96 @@ func (o *oidcProvider) start(ctx context.Context, peerID int64, onDone func(clai
 		UserCode: auth.UserCode, ExpiresIn: auth.ExpiresIn}, nil
 }
 
+// startApp begins a sign-in for an app on the device (OIDCConfig.AppRedirects): an ordinary sign-in
+// with the provider (authorization code, PKCE, a nonce) whose result goes to redirect, the app's
+// own address. Only this device can finish it (finishApp): the state is bound to it, and the code
+// is worth nothing without the verifier, which stays here. A link sent to someone else ends in
+// their own app, whose device did not start it: refused. loginHint names the person who was
+// signed in on the device, if anyone.
+func (o *oidcProvider) startApp(ctx context.Context, peerID int64, redirect, loginHint string) (api.LoginStart, error) {
+	d, err := o.discover(ctx)
+	if err != nil {
+		return api.LoginStart{}, err
+	}
+	if d.AuthorizationEndpoint == "" {
+		return api.LoginStart{}, errors.New("the identity provider names no authorization endpoint")
+	}
+	login := &deviceLogin{state: "pending", expires: time.Now().Add(appLoginLifetime), app: true,
+		oauth: uiRandom(), verifier: uiRandom(), nonce: uiRandom(), redirect: redirect}
+	sum := sha256.Sum256([]byte(login.verifier))
+	q := url.Values{"response_type": {"code"}, "client_id": {o.cfg.ClientID}, "redirect_uri": {redirect},
+		"scope": {o.scopes(d)}, "state": {login.oauth}, "nonce": {login.nonce},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
+	if loginHint != "" {
+		q.Set("login_hint", loginHint)
+	}
+	sep := "?"
+	if strings.Contains(d.AuthorizationEndpoint, "?") {
+		sep = "&"
+	}
+	o.mu.Lock()
+	o.logins[peerID] = login // a new start ends any sign-in of this device in progress
+	o.mu.Unlock()
+	return api.LoginStart{AuthorizationURL: d.AuthorizationEndpoint + sep + q.Encode(),
+		ExpiresIn: int(appLoginLifetime / time.Second)}, nil
+}
+
+// appRedirect reports whether redirect is an app's address this control node may send sign-ins to.
+func (o *oidcProvider) appRedirect(redirect string) bool {
+	return redirect != "" && slices.Contains(o.cfg.AppRedirects, redirect)
+}
+
+// errAppLogin is a code the device cannot use: no sign-in for an app of its own in progress, or not
+// that one (the state differs), or expired. Nothing is sent to the provider.
+var errAppLogin = errors.New("no sign-in of this device is waiting for this code: start the sign-in again")
+
+// finishApp completes the device's sign-in for an app with what the provider sent the app: the
+// code is exchanged (with the verifier) only when the state is the one this device's sign-in sent;
+// the ID token must carry its nonce. It succeeds once: the sign-in is over either way.
+func (o *oidcProvider) finishApp(ctx context.Context, peerID int64, req api.LoginCodeRequest, onDone func(idClaims, string)) (deviceLogin, error) {
+	o.mu.Lock()
+	login := o.logins[peerID]
+	ok := login != nil && login.app && login.state == "pending" && time.Now().Before(login.expires) &&
+		subtle.ConstantTimeCompare([]byte(req.State), []byte(login.oauth)) == 1
+	if ok {
+		login.state = "exchanging" // a second code for it is refused while this one is used
+	}
+	o.mu.Unlock()
+	if !ok {
+		return deviceLogin{}, errAppLogin
+	}
+	finish := func(state, user, msg string) deviceLogin {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		login.state, login.user, login.errMsg = state, user, msg
+		login.verifier, login.nonce = "", ""
+		return *login
+	}
+	if req.Error != "" {
+		return finish("failed", "", "the identity provider refused: "+req.Error), nil
+	}
+	d, err := o.discover(ctx)
+	if err != nil {
+		return finish("failed", "", err.Error()), nil
+	}
+	var tok struct {
+		IDToken      string `json:"id_token"`
+		RefreshToken string `json:"refresh_token"`
+		Error        string `json:"error"`
+	}
+	code, err := o.postForm(ctx, d.TokenEndpoint, url.Values{"grant_type": {"authorization_code"},
+		"code": {req.Code}, "redirect_uri": {login.redirect}, "code_verifier": {login.verifier}}, &tok)
+	if err != nil || code != http.StatusOK || tok.IDToken == "" {
+		return finish("failed", "", fmt.Sprintf("login refused: HTTP %d %s", code, tok.Error)), nil
+	}
+	claims, err := o.verifyIDToken(ctx, tok.IDToken, login.nonce)
+	if err != nil {
+		return finish("failed", "", "invalid ID token: "+err.Error()), nil
+	}
+	onDone(claims, tok.RefreshToken)
+	return finish("done", claims.name(), ""), nil
+}
+
 func (o *oidcProvider) poll(d *oidcDiscovery, peerID int64, login *deviceLogin, deviceCode string, interval time.Duration, onDone func(idClaims, string)) {
 	finish := func(state, user, msg string) {
 		o.mu.Lock()
@@ -314,7 +422,12 @@ func (o *oidcProvider) status(peerID int64) (deviceLogin, bool) {
 	if !ok {
 		return deviceLogin{}, false
 	}
-	return *l, true
+	out := *l
+	if out.state == "exchanging" {
+		out.state = "pending" // the app's code is being exchanged
+	}
+	out.verifier, out.nonce, out.oauth = "", "", ""
+	return out, true
 }
 
 // idClaims is the part of an ID token ento uses.

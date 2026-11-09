@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -110,6 +111,60 @@ func StartLogin(ctx context.Context, cfg Config) (*LoginFlow, error) {
 	}
 	return &LoginFlow{Link: link, UserCode: start.UserCode, c: c, stateDir: cfg.StateDir,
 		deadline: time.Now().Add(time.Duration(start.ExpiresIn) * time.Second)}, nil
+}
+
+// StartAppLogin starts a sign-in for an app on this device that catches redirect (RFC 8252; 0.56):
+// where the control node allows that address, Link is an ordinary sign-in with the identity
+// provider that ends in the app (UserCode empty: nothing to type), and the app hands what it
+// receives to FinishAppLogin. Elsewhere (an older control node, or the address not allowed) it is
+// a device sign-in, as StartLogin's.
+func StartAppLogin(ctx context.Context, cfg Config, redirect string) (*LoginFlow, error) {
+	cfg.defaults()
+	st, err := LoadState(cfg.StateDir)
+	if err != nil {
+		return nil, err
+	}
+	c := &AdminClient{Controls: st.Controls, Key: wgtypes.Key(st.PrivateKey)}
+	var start api.LoginStart
+	if err := c.Do(ctx, "POST", api.PathLogin, api.LoginStartRequest{Redirect: redirect}, &start); err != nil {
+		return nil, err
+	}
+	link := start.AuthorizationURL
+	if link == "" {
+		link = start.VerificationURI
+	}
+	if link == "" {
+		link = start.VerificationURIComplete
+	}
+	return &LoginFlow{Link: link, UserCode: start.UserCode, c: c, stateDir: cfg.StateDir,
+		deadline: time.Now().Add(time.Duration(start.ExpiresIn) * time.Second)}, nil
+}
+
+// FinishAppLogin hands the control node what the identity provider sent the app: the address it
+// opened (redirect?code=...&state=..., or ?error=...). The sign-in's outcome follows as for any
+// other (LoginFlow.Wait).
+func FinishAppLogin(ctx context.Context, cfg Config, address string) error {
+	u, err := url.Parse(address)
+	if err != nil {
+		return errors.New("not a sign-in's address")
+	}
+	q := u.Query()
+	req := api.LoginCodeRequest{Code: q.Get("code"), State: q.Get("state"), Error: q.Get("error")}
+	if req.State == "" || (req.Code == "" && req.Error == "") {
+		return errors.New("not a sign-in's address")
+	}
+	c, err := ownClient(cfg)
+	if err != nil {
+		return err
+	}
+	var s api.LoginStatus
+	if err := c.Do(ctx, "POST", api.PathLoginCode, req, &s); err != nil {
+		return err
+	}
+	if s.State == "failed" {
+		return fmt.Errorf("sign-in failed: %s", Printable(s.Error))
+	}
+	return nil
 }
 
 // Wait polls until the user has completed the login in a browser, calling tick on every poll.

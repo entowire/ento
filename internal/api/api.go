@@ -46,9 +46,12 @@ const (
 	// PathAudit lists the network's audit, newest first (AuditPage; 0.53): query before (an entry's
 	// ID), limit, action, result, q (text in any field), since (RFC 3339); format=csv gives every
 	// matching entry, up to MaxAuditExport, as a file.
-	PathAudit   = "/v1/admin/audit"
-	PathLogin   = "/v1/login"
-	ControlPort = 80
+	PathAudit = "/v1/admin/audit"
+	PathLogin = "/v1/login"
+	// PathLoginCode finishes a sign-in started for an app (LoginStartRequest.Redirect): the code and
+	// state the provider sent back to the app (LoginCodeRequest; 0.56).
+	PathLoginCode = "/v1/login/code"
+	ControlPort   = 80
 
 	// Linked networks. In the linked network: authorities (admin) and credential renewal (devices
 	// admitted by an authority). In the home network: links (admin) and credentials for its
@@ -661,14 +664,34 @@ type PostureCheckResult struct {
 	Required bool   `json:"required,omitempty"`
 }
 
-// LoginStart is returned when a device starts an SSO login (OAuth 2.0 device authorization grant).
-// The user opens VerificationURI and types UserCode in a browser. VerificationURIComplete (the
-// link with the code in it) stays empty since 0.50: control nodes no longer pass it on.
+// LoginStartRequest is the optional body of a sign-in's start (POST PathLogin; 0.56). Redirect is
+// the address an app on the device catches (RFC 8252, e.g. com.entowire.ento://signed-in): where
+// the control node allows it (OIDCConfig.AppRedirects), the sign-in is an ordinary one with the
+// provider (authorization code with PKCE, LoginStart.AuthorizationURL) that ends in the app, which
+// hands the code to PathLoginCode; elsewhere, and without a body, a device sign-in.
+type LoginStartRequest struct {
+	Redirect string `json:"redirect,omitempty"`
+}
+
+// LoginStart is returned when a device starts an SSO login. A device sign-in (OAuth 2.0 device
+// authorization grant): the user opens VerificationURI and types UserCode in a browser.
+// VerificationURIComplete (the link with the code in it) stays empty since 0.50: control nodes no
+// longer pass it on. A sign-in for an app (LoginStartRequest.Redirect): AuthorizationURL is opened
+// instead, and there is no code to type.
 type LoginStart struct {
-	VerificationURI         string `json:"verification_uri"`
+	VerificationURI         string `json:"verification_uri,omitempty"`
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
-	UserCode                string `json:"user_code"`
+	UserCode                string `json:"user_code,omitempty"`
+	AuthorizationURL        string `json:"authorization_url,omitempty"`
 	ExpiresIn               int    `json:"expires_in"`
+}
+
+// LoginCodeRequest hands a control node what the identity provider sent back to the app: the code
+// and the state of the sign-in this device started, or the provider's error (RFC 6749 4.1.2).
+type LoginCodeRequest struct {
+	Code  string `json:"code,omitempty"`
+	State string `json:"state"`
+	Error string `json:"error,omitempty"`
 }
 
 // LoginStatus reports the progress of a device's SSO login.

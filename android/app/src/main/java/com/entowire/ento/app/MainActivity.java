@@ -36,6 +36,8 @@ import org.json.JSONObject;
 public class MainActivity extends Activity {
     private static final int VPN_PERMISSION = 1;
     private static final int SCAN = 4;
+    /** Where the identity provider returns a sign-in to the app (the manifest's filter). */
+    static final String SIGNED_IN = "com.entowire.ento://signed-in";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView state, detail, message, typeInstead;
@@ -139,6 +141,37 @@ public class MainActivity extends Activity {
         root.addView(advanced, ap);
 
         setContentView(Ui.page(this, root));
+        lastLogin = Mobile.loginState(); // an outcome from before this screen opened is not news
+        finishSignIn(getIntent());
+
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        finishSignIn(intent);
+    }
+
+    /** The end of a sign-in, as the identity provider returns it: handed to the control node. */
+    private void finishSignIn(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        if (data == null || !Intent.ACTION_VIEW.equals(intent.getAction()) || !data.toString().startsWith(SIGNED_IN)) return;
+        setIntent(new Intent(this, MainActivity.class)); // used once, not again on a rotation
+        String address = data.toString();
+        message.setText("Finishing the sign-in...");
+        new Thread(() -> {
+            String result = "";
+            try {
+                Mobile.loginFinish(Agent.stateDir(this), address);
+            } catch (Exception e) {
+                result = "Sign-in failed: " + e.getMessage();
+            }
+            String r = result;
+            runOnUiThread(() -> {
+                message.setText(r);
+                show();
+            });
+        }).start();
     }
 
     @Override
@@ -193,9 +226,11 @@ public class MainActivity extends Activity {
             }
             connect.setVisibility(shown(enrolled));
             String login = Mobile.loginState();
+            // A sign-in's outcome, once, as it happens: who is signed in shows above, so a plain
+            // success only clears the sign-in's instructions; what it adds (no access, a failure) stays.
             if (!login.equals(lastLogin)) {
                 lastLogin = login;
-                if (login.startsWith("done: ")) message.setText(login.substring(6));
+                if (login.startsWith("done: ")) message.setText(login.contains(", but ") ? login.substring(6) : "");
                 else if (login.startsWith("failed: ")) message.setText("Sign-in failed: " + login.substring(8));
             }
             if (!enrolled) {
@@ -426,14 +461,18 @@ public class MainActivity extends Activity {
         message.setText("Starting sign-in...");
         new Thread(() -> {
             try {
-                JSONObject l = new JSONObject(Mobile.loginStart(Agent.stateDir(this)));
+                JSONObject l = new JSONObject(Mobile.loginStart(Agent.stateDir(this), SIGNED_IN));
                 String url = l.optString("url"), code = l.optString("code");
                 runOnUiThread(() -> {
-                    message.setText("Sign in in the browser and check it shows the code " + code + ".\n" + url);
+                    // No code: the sign-in returns to the app by itself. A code: an older control
+                    // node, whose device sign-in asks for it on the page.
+                    message.setText(code.isEmpty() ? "Sign in in the browser: you come back here when it is done."
+                            : "Sign in in the browser, then type the code " + code + " when the page asks for it.");
                     try {
                         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                     } catch (android.content.ActivityNotFoundException e) {
-                        message.setText("No browser found. Open " + url + " on any device and enter the code " + code + ".");
+                        message.setText(code.isEmpty() ? "No browser found: install one to sign in."
+                                : "No browser found. Open " + url + " on any device and enter the code " + code + ".");
                     }
                 });
             } catch (Exception e) {

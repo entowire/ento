@@ -17,12 +17,23 @@
         android:allowBackup="false"
         android:theme="@style/Ento">
 
+        <!-- singleTask: the sign-in's return (below) comes back to the open screen, not a second one. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- The end of a sign-in: the identity provider sends the browser here with the code
+                 (RFC 8252), which the app hands to the control node; only the sign-in this phone
+                 started can use it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.entowire.ento" android:host="signed-in" />
             </intent-filter>
         </activity>
 

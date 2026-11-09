@@ -174,6 +174,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		oidcClient := fs.String("oidc-client-id", "ento", "OIDC client ID (confidential, device authorization grant enabled)")
 		oidcConnect := fs.String("oidc-connect-to", "", "comma-separated host:port to dial instead of the issuer's host")
 		oidcGroups := fs.String("oidc-groups-claim", "groups", "ID token claim listing the user's groups")
+		oidcApps := fs.String("oidc-app-redirects", "", "comma-separated addresses that apps on devices catch (RFC 8252, e.g. com.entowire.ento://signed-in), registered with the identity provider for --oidc-client: an app starting a sign-in with one of them gets an ordinary sign-in that returns to it, with no code to type")
 		oidcRefusals := fs.String("oidc-refusals", "400:invalid_grant", "comma-separated STATUS:ERROR answers of the token endpoint that withdraw a user's access at a refresh (RFC 6749's invalid_grant; Rauthy also needs 401:Disabled,404:NotFound); any other failure counts as the provider failing and cuts nothing")
 		oidcApprove := fs.String("oidc-approve-groups", "", "comma-separated groups whose members' devices are approved")
 		oidcAdmin := fs.String("oidc-admin-groups", "", "comma-separated groups whose members get admin devices")
@@ -239,7 +240,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 			oidc = &control.OIDCConfig{Issuer: *oidcIssuer, ClientID: *oidcClient, ClientSecret: secret,
 				ConnectTo: splitList(*oidcConnect), GroupsClaim: *oidcGroups,
 				ApproveGroups: splitList(*oidcApprove), AdminGroups: splitList(*oidcAdmin),
-				OperatorGroups: splitList(*oidcOperator), RefreshInterval: *oidcRefresh}
+				OperatorGroups: splitList(*oidcOperator), RefreshInterval: *oidcRefresh, AppRedirects: splitList(*oidcApps)}
 			if oidc.Refusals, err = control.ParseRefusals(*oidcRefusals); err != nil {
 				return fmt.Errorf("--oidc-refusals: %w", err)
 			}

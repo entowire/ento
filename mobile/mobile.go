@@ -289,11 +289,18 @@ var (
 )
 
 // LoginStart starts an SSO sign-in (the agent must be running) and returns {"url", "code"}; the app
-// opens the URL in a browser. The outcome is reported by LoginState.
-func LoginStart(stateDir string) (_ string, err error) {
+// opens the URL in a browser. With redirect, the address the app catches (0.56), the sign-in ends
+// in the app where the control node allows it: code is then empty (nothing to type), and the app
+// passes the address it is opened with to LoginFinish. The outcome is reported by LoginState.
+func LoginStart(stateDir, redirect string) (_ string, err error) {
 	defer plain(&err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	f, err := agent.StartLogin(ctx, cfg(stateDir, ""))
+	var f *agent.LoginFlow
+	if redirect != "" {
+		f, err = agent.StartAppLogin(ctx, cfg(stateDir, ""), redirect)
+	} else {
+		f, err = agent.StartLogin(ctx, cfg(stateDir, ""))
+	}
 	if err != nil {
 		cancel()
 		return "", err
@@ -331,6 +338,19 @@ func AdminApprove(stateDir, code string) (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return agent.ApproveAdminUI(ctx, cfg(stateDir, ""), code)
+}
+
+// LoginFinish hands the control node the address the identity provider opened the app with at the
+// end of a sign-in LoginStart began (redirect?code=...&state=...). LoginState reports the outcome.
+func LoginFinish(stateDir, address string) (err error) {
+	defer plain(&err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agent.FinishAppLogin(ctx, cfg(stateDir, ""), address); err != nil {
+		setLogin("failed: " + err.Error())
+		return err
+	}
+	return nil
 }
 
 // Logout signs the phone's person out (closes the device's person layer, as ento agent logout).
