@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/netip"
 
-	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
@@ -23,7 +22,7 @@ func openNetstack(addr netip.Addr, mtu int, logf func(string, ...any)) (tunnel, 
 	}
 	logger := &device.Logger{Verbosef: func(string, ...any) {}, Errorf: func(f string, a ...any) { logf("wireguard: "+f, a...) }}
 	ft := newFilterTUN(t)
-	u := &userTunnel{name: "netstack", port: 0, tun: ft, dev: device.NewDevice(ft, conn.NewDefaultBind(), logger), noOS: true}
+	u := &userTunnel{name: "netstack", port: 0, tun: ft, dev: device.NewDevice(ft, newBind(), logger), noOS: true}
 	if err := u.dev.Up(); err != nil {
 		u.dev.Close()
 		return nil, nil, err
@@ -39,7 +38,7 @@ func userspaceOnTUN(t tun.Device, port int, protect func(fd int) bool, logf func
 	name, _ := t.Name()
 	logger := &device.Logger{Verbosef: func(string, ...any) {}, Errorf: func(f string, a ...any) { logf("wireguard: "+f, a...) }}
 	ft := newFilterTUN(t)
-	u := &userTunnel{name: name, port: port, tun: ft, dev: device.NewDevice(ft, conn.NewDefaultBind(), logger), noOS: true}
+	u := &userTunnel{name: name, port: port, tun: ft, dev: device.NewDevice(ft, newBind(), logger), noOS: true}
 	if err := u.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port)); err != nil {
 		u.dev.Close()
 		return nil, err

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -45,7 +44,7 @@ func openUserspace(name string, port, mtu int, logf func(string, ...any)) (*user
 		Errorf:   func(format string, args ...any) { logf("wireguard: "+format, args...) },
 	}
 	ft := newFilterTUN(t)
-	u := &userTunnel{name: real, port: port, tun: ft, dev: device.NewDevice(ft, conn.NewDefaultBind(), logger)}
+	u := &userTunnel{name: real, port: port, tun: ft, dev: device.NewDevice(ft, newBind(), logger)}
 	if err := u.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port)); err != nil {
 		u.dev.Close()
 		return nil, fmt.Errorf("listen on UDP %d: %w", port, err)

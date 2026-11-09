@@ -1478,6 +1478,15 @@ suspended stays suspended when the home device joins again with a new key.
 Tokens are one-time and short-lived. They are read from a file, stdin (`--token-stdin`) or the
 `ENTO_TOKEN` environment variable, never from command-line arguments.
 
+### WireGuard's socket on Windows
+
+The agent's WireGuard sends and receives through an ordinary Winsock UDP socket (0.56.4), not
+wireguard-go's default on Windows, Registered I/O (RIO): network filter drivers of VPN and security
+products can break RIO without an error, so the handshakes count as sent and never leave the
+machine. Found on canti: with NordVPN, FortiClient and Cisco AnyConnect installed (all
+disconnected), joining timed out (`redeem via 100.83.0.1: ... i/o timeout`, `tx_bytes` rising,
+nothing at the control nodes), while a plain socket's packets to the same port arrived.
+
 ### Signing in on Windows
 
 The device's key, which signs a sign-in, is readable only by the service and administrators
