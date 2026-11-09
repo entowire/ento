@@ -229,7 +229,8 @@ func SetAttestor(a Attestor) {
 
 // Status describes the device and the running agent as JSON: {"enrolled", "address", "running",
 // "login_required", "error", "peers": [{"endpoint", "handshake_seconds_ago", "rx", "tx"}]}, and
-// once the network map arrived "approved", "groups", "administers" (an admin or operator device),
+// once the network map arrived "user" (the person signed in, "" for none), "bound_user" (the person
+// the phone belongs to, signed in or not), "approved", "groups", "administers" (an admin or operator device),
 // "routes" (the networks the VPN routes, 0.0.0.0/0 while an exit is in use), "exits" (offered:
 // [{"route", "via", "default", "in_use"}]), "exit" (the one in use, "" for none) and "dns" (the
 // DNS server the VPN names, the agent's resolver, "" for none);
@@ -249,7 +250,14 @@ func Status(stateDir string) string {
 		out["approved"] = self.Approved
 		out["groups"] = self.Groups
 		out["administers"] = self.Approved && (self.Admin || self.Operator)
-		out["user"] = self.User // the person the phone is signed in as ("" for none)
+		// The person signed in on the phone ("" for none): the device stays bound to its person
+		// after a sign-out (Self.User), but their layer is closed (PersonActive false).
+		if self.PersonActive {
+			out["user"] = self.User
+		} else {
+			out["user"] = ""
+		}
+		out["bound_user"] = self.User // whose phone it is, signed in or not
 		out["routes"] = agent.InProcessRoutes()
 		out["exits"] = agent.InProcessExits()
 		out["exit"] = agent.InProcessExit()

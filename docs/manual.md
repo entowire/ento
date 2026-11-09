@@ -95,7 +95,8 @@ domain's record up as for typed words and refuses it unless its fingerprint is t
 shows **Join DOMAIN**), **Connect** (Android asks once to allow the VPN), then **Sign in** if
 the deployment uses single sign-on (0.55.1: there whenever the phone is connected and no one is
 signed in, highlighted while the device waits for approval or its sign-in has ended; **Sign out**
-once someone is). Since 0.56 the sign-in page opens in the browser and, once the person has signed
+once someone is; 0.56.1: someone is signed in while their layer is open, so Sign in returns right
+after Sign out, and Advanced shows whose phone it stays). Since 0.56 the sign-in page opens in the browser and, once the person has signed
 in, returns to the app by itself: no code to type (see Single sign-on, apps). Only the network's own range goes through
 the VPN; the phone's other traffic is untouched. Always-on VPN (Android settings) works too.
 

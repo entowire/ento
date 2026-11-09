@@ -88,6 +88,7 @@ public class AdvancedActivity extends Activity {
             }
             row("Agent", s.getBoolean("running") ? "running" : "stopped");
             if (!s.optString("user").isEmpty()) row("Signed in as", s.getString("user"));
+            else if (!s.optString("bound_user").isEmpty()) row("Belongs to", s.getString("bound_user") + " (signed out)");
             if (s.has("approved")) row("Approved", s.getBoolean("approved") ? "yes" : "no");
             row("Groups", join(s.optJSONArray("groups")));
             if (s.optBoolean("administers")) row("Role", "administers the network");
