@@ -333,6 +333,15 @@ func AdminApprove(stateDir, code string) (err error) {
 	return agent.ApproveAdminUI(ctx, cfg(stateDir, ""), code)
 }
 
+// Logout signs the phone's person out (closes the device's person layer, as ento agent logout).
+// It tells the control plane now if it can (true), or the running agent tells it once it can
+// (false). The device stays in the network, as itself.
+func Logout(stateDir string) (_ bool, err error) {
+	defer plain(&err)
+	setLogin("")
+	return agent.Logout(context.Background(), cfg(stateDir, ""), 10*time.Second)
+}
+
 // LoginState is "" (none), "waiting", "done: <message>" or "failed: <error>".
 func LoginState() string {
 	loginMu.Lock()

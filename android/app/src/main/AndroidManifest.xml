@@ -15,7 +15,7 @@
         android:label="ento"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Ento">
 
         <activity
             android:name=".MainActivity"
@@ -25,6 +25,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The details and Send logs, behind Advanced at the bottom of the main screen. -->
+        <activity
+            android:name=".AdvancedActivity"
+            android:exported="false" />
 
         <activity
             android:name=".ApprovalActivity"

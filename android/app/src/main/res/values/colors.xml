@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="void_black">#0b0c0e</color>
+    <!-- The launcher icon: entowire's mark in the logo's ink on white (brand/entowire-avatar.svg). -->
+    <color name="icon_ink">#262626</color>
+    <color name="icon_paper">#ffffff</color>
+    <!-- The screens: the website's palette (site/p-dc92103816d8), light; values-night/ for dark. -->
+    <color name="bg">#eeeeee</color>
+    <color name="fg">#262626</color>
+    <color name="muted">#595959</color>
+    <color name="line">#cccccc</color>
+    <color name="accent">#003399</color>
+    <color name="accent_ink">#ffffff</color>
+    <color name="warn">#d92d20</color>
 </resources>

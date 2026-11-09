@@ -1,29 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The symbol: a dark field of cells, one lit. -->
+<!-- entowire's mark (site/favicon.svg): the E with three dots, in the logo's ink, scaled 1.1 and
+     centred so it stays inside the adaptive icon's safe zone (66dp circle). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#1c1e23" android:pathData="M27,27h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M39,27h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M51,27h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M63,27h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M75,27h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M27,39h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M39,39h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M51,39h9v9h-9z" />
-    <path android:fillColor="#3656ff" android:pathData="M63,39h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M75,39h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M27,51h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M39,51h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M51,51h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M63,51h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M75,51h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M27,63h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M39,63h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M51,63h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M63,63h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M75,63h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M27,75h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M39,75h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M51,75h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M63,75h9v9h-9z" />
-    <path android:fillColor="#1c1e23" android:pathData="M75,75h9v9h-9z" />
+    <group android:scaleX="1.1" android:scaleY="1.1" android:translateX="36.62" android:translateY="33.1">
+        <path android:strokeColor="@color/icon_ink" android:strokeWidth="3.6" android:strokeLineCap="round" android:pathData="M26.6,1.8H7A5.2,5.2 0 0,0 1.8,7V31A5.2,5.2 0 0,0 7,36.2H26.6M1.8,19H26.6" />
+        <path android:fillColor="@color/icon_ink" android:pathData="M21.6,1.8a5,5 0 1,0 10,0a5,5 0 1,0 -10,0z" />
+        <path android:fillColor="@color/icon_ink" android:pathData="M21.6,19a5,5 0 1,0 10,0a5,5 0 1,0 -10,0z" />
+        <path android:fillColor="@color/icon_ink" android:pathData="M21.6,36.2a5,5 0 1,0 10,0a5,5 0 1,0 -10,0z" />
+    </group>
 </vector>

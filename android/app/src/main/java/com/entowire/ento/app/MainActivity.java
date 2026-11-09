@@ -2,7 +2,6 @@ package com.entowire.ento.app;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.net.VpnService;
@@ -11,12 +10,13 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.entowire.ento.mobile.Mobile;
@@ -25,124 +25,120 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * One screen: join with the domain and the words an administrator reads out (`ento admin token
- * --words`; phones take no tokens), or with the QR code of both their admin page shows (ScanActivity),
- * connect or disconnect, sign in, open the admin page (admin and operator devices), and what the
- * agent reports. Sign-in approvals open ApprovalActivity.
+ * The main screen, kept to what a person needs: whether the phone is connected, Connect or
+ * Disconnect, Sign in or Sign out, an exit when one is offered, the admin page (admin and operator
+ * devices), and why the device needs attention. Before joining: scan the QR code of the domain and
+ * the words an administrator's admin page shows, or type them (`ento admin token --words`; phones
+ * take no tokens). The technical details (address, groups, peers, routes, posture, versions) and
+ * Send logs are on AdvancedActivity, behind a discreet link at the bottom. Sign-in approvals open
+ * ApprovalActivity.
  */
 public class MainActivity extends Activity {
     private static final int VPN_PERMISSION = 1;
     private static final int SCAN = 4;
-    private static final int VOID = Color.rgb(0x0b, 0x0c, 0x0e);
-    private static final int INK = Color.rgb(0xe9, 0xea, 0xec);
-    private static final int DIM = Color.rgb(0x8a, 0x8e, 0x96);
-    private static final int SIGNAL = Color.rgb(0x36, 0x56, 0xff);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private TextView state, detail, message;
+    private TextView state, detail, message, typeInstead;
     private EditText adminCode, joinDomain, joinWords;
-    private Button connect, signIn, adminPage, adminApprove, scan, lookUp, join, exit, sendLogs;
+    private Button connect, account, adminPage, adminApprove, scan, lookUp, join, exit;
     private String exitChoice = ""; // what the exit button chooses: a route's name or "off"
-    private TextView joinHeading, joinInfo;
+    private boolean signedIn; // what the account button does: sign out (true) or sign in
+    private String lastLogin = ""; // the sign-in outcome last shown, so it shows once
+    private TextView joinInfo;
     private String joinRecord; // the network record found for joinDomain, for the words
 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(20);
-        root.setBackgroundColor(VOID);
 
-        TextView word = text("ento", 28, INK);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView mark = new ImageView(this);
+        mark.setImageResource(R.drawable.mark);
+        header.addView(mark);
+        TextView word = Ui.text(this, "ento", 24, R.color.fg);
         word.setTypeface(Typeface.DEFAULT_BOLD);
-        root.addView(word);
-        state = text("", 22, INK);
-        state.setPadding(0, dp(28), 0, 0);
+        word.setPadding(dp(10), 0, 0, 0);
+        header.addView(word);
+        root.addView(header);
+
+        state = Ui.text(this, "", 26, R.color.fg);
+        state.setTypeface(Typeface.DEFAULT_BOLD);
+        state.setPadding(0, dp(36), 0, dp(4));
         root.addView(state);
-        detail = text("", 15, DIM);
+        detail = Ui.text(this, "", 16, R.color.muted);
         root.addView(detail);
 
-        // Enrollment by words: the domain and five words an administrator reads out, or the QR code
-        // of both that their admin page shows.
-        scan = button("Scan the QR code", v -> startActivityForResult(new Intent(this, ScanActivity.class), SCAN));
+        // Joining: the QR code of the domain and the words, or both typed.
+        scan = Ui.button(this, "Scan the QR code", v -> startActivityForResult(new Intent(this, ScanActivity.class), SCAN));
+        ((LinearLayout.LayoutParams) scan.getLayoutParams()).topMargin = dp(28);
         root.addView(scan);
-        joinHeading = text("Or type the domain and the words your administrator reads out:", 15, DIM);
-        joinHeading.setPadding(0, dp(20), 0, 0);
-        root.addView(joinHeading);
-        joinDomain = new EditText(this);
-        joinDomain.setHint("Domain (e.g. example.com)");
-        joinDomain.setTextColor(INK);
-        joinDomain.setHintTextColor(DIM);
-        joinDomain.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        root.addView(joinDomain, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        lookUp = button("Find the network", v -> lookUp(joinDomain.getText().toString(), null, null));
+        typeInstead = Ui.link(this, "Type the domain and the words instead", v -> {
+            joinDomain.setVisibility(View.VISIBLE);
+            lookUp.setVisibility(View.VISIBLE);
+            typeInstead.setVisibility(View.GONE);
+            joinDomain.requestFocus();
+        });
+        root.addView(typeInstead);
+        joinDomain = Ui.field(this, "Domain (e.g. example.com)", InputType.TYPE_TEXT_VARIATION_URI | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        joinDomain.setVisibility(View.GONE);
+        root.addView(joinDomain);
+        lookUp = Ui.button(this, "Find the network", v -> lookUp(joinDomain.getText().toString(), null, null));
+        Ui.setPrimary(lookUp, false);
+        lookUp.setVisibility(View.GONE);
         root.addView(lookUp);
-        joinInfo = text("", 15, INK);
-        joinInfo.setVisibility(android.view.View.GONE);
+        joinInfo = Ui.text(this, "", 15, R.color.fg);
+        joinInfo.setPadding(0, dp(16), 0, 0);
+        joinInfo.setVisibility(View.GONE);
         root.addView(joinInfo);
-        joinWords = new EditText(this);
-        joinWords.setHint("The five words");
-        joinWords.setTextColor(INK);
-        joinWords.setHintTextColor(DIM);
-        joinWords.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
-        joinWords.setVisibility(android.view.View.GONE);
-        root.addView(joinWords, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        join = button("Join", v -> joinWithWords(joinWords.getText().toString()));
-        join.setVisibility(android.view.View.GONE);
+        joinWords = Ui.field(this, "The five words", InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        joinWords.setVisibility(View.GONE);
+        root.addView(joinWords);
+        join = Ui.button(this, "Join", v -> joinWithWords(joinWords.getText().toString()));
+        join.setVisibility(View.GONE);
         root.addView(join);
-        connect = button("Connect", v -> toggle());
+
+        // Joined.
+        connect = Ui.button(this, "Connect", v -> toggle());
+        ((LinearLayout.LayoutParams) connect.getLayoutParams()).topMargin = dp(28);
         root.addView(connect);
-        signIn = button("Sign in", v -> signIn());
-        root.addView(signIn);
+        account = Ui.button(this, "Sign in", v -> {
+            if (signedIn) signOut();
+            else signIn();
+        });
+        root.addView(account);
         // An exit an administrator offers: all internet traffic through an office's gateway.
-        exit = button("", v -> chooseExit());
-        exit.setVisibility(android.view.View.GONE);
+        exit = Ui.button(this, "", v -> chooseExit());
+        Ui.setPrimary(exit, false);
+        exit.setVisibility(View.GONE);
         root.addView(exit);
-        adminPage = button("Open the admin page", v -> openAdminPage());
+        adminPage = Ui.button(this, "Open the admin page", v -> openAdminPage());
+        Ui.setPrimary(adminPage, false);
         root.addView(adminPage);
-        adminCode = new EditText(this);
-        adminCode.setHint("Code the admin page shows");
-        adminCode.setTextColor(INK);
-        adminCode.setHintTextColor(DIM);
-        adminCode.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        adminCode.setVisibility(android.view.View.GONE);
-        root.addView(adminCode, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        adminApprove = button("Approve", v -> approveAdminPage(adminCode.getText().toString()));
-        adminApprove.setVisibility(android.view.View.GONE);
+        adminCode = Ui.field(this, "Code the admin page shows", InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        adminCode.setVisibility(View.GONE);
+        root.addView(adminCode);
+        adminApprove = Ui.button(this, "Approve", v -> approveAdminPage(adminCode.getText().toString()));
+        adminApprove.setVisibility(View.GONE);
         root.addView(adminApprove);
-        message = text("", 14, DIM);
+        message = Ui.text(this, "", 15, R.color.muted);
         message.setTextIsSelectable(true);
         message.setPadding(0, dp(16), 0, 0);
         root.addView(message);
-        // What the app logged, its crash reports and why Android ended it, for whoever helps.
-        sendLogs = button("Send logs", v -> sendLogs());
-        sendLogs.setBackgroundColor(Color.rgb(0x2a, 0x2d, 0x33));
-        ((LinearLayout.LayoutParams) sendLogs.getLayoutParams()).topMargin = dp(32);
-        root.addView(sendLogs);
-        // Which version this is, at a glance (when someone asks, or before sending logs).
-        String version = "?";
-        try {
-            version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-        } catch (Exception ignored) {
-        }
-        TextView versionLine = text("ento " + version, 12, DIM);
-        versionLine.setPadding(0, dp(12), 0, 0);
-        root.addView(versionLine);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(VOID);
-        scroll.addView(root);
-        // The window is edge to edge: keep the content clear of the status and navigation bars.
-        root.setPadding(pad, dp(24), pad, pad);
-        if (Build.VERSION.SDK_INT >= 30) {
-            scroll.setOnApplyWindowInsetsListener((v, insets) -> {
-                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
-                root.setPadding(pad + bars.left, dp(24) + bars.top, pad + bars.right, pad + bars.bottom);
-                return WindowInsets.CONSUMED;
-            });
-        }
-        setContentView(scroll);
+        // The details and Send logs, out of the way.
+        View spacer = new View(this);
+        root.addView(spacer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        TextView advanced = Ui.link(this, "Advanced", v -> startActivity(new Intent(this, AdvancedActivity.class)));
+        advanced.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ap.gravity = Gravity.CENTER_HORIZONTAL;
+        ap.topMargin = dp(24);
+        root.addView(advanced, ap);
+
+        setContentView(Ui.page(this, root));
     }
 
     @Override
@@ -176,82 +172,96 @@ public class MainActivity extends Activity {
         }
     };
 
+    private static int shown(boolean b) {
+        return b ? View.VISIBLE : View.GONE;
+    }
+
     private void show() {
         try {
             JSONObject s = new JSONObject(Mobile.status(Agent.stateDir(this)));
             boolean enrolled = s.getBoolean("enrolled"), running = s.getBoolean("running");
-            int joining = enrolled ? android.view.View.GONE : android.view.View.VISIBLE;
-            scan.setVisibility(joining);
-            joinHeading.setVisibility(joining);
-            joinDomain.setVisibility(joining);
-            lookUp.setVisibility(joining);
+            scan.setVisibility(shown(!enrolled));
+            if (enrolled) {
+                typeInstead.setVisibility(View.GONE);
+                joinDomain.setVisibility(View.GONE);
+                lookUp.setVisibility(View.GONE);
+            }
             if (enrolled || joinRecord == null) {
-                joinInfo.setVisibility(enrolled ? android.view.View.GONE : joinInfo.getVisibility());
-                joinWords.setVisibility(android.view.View.GONE);
-                join.setVisibility(android.view.View.GONE);
+                if (enrolled) joinInfo.setVisibility(View.GONE);
+                joinWords.setVisibility(View.GONE);
+                join.setVisibility(View.GONE);
             }
-            connect.setVisibility(enrolled ? android.view.View.VISIBLE : android.view.View.GONE);
-            // Sign in only helps a device that is not (or no longer) approved.
-            boolean known = s.has("approved");
-            boolean needsSignIn = running && (s.getBoolean("login_required") || (known && !s.getBoolean("approved")));
-            signIn.setVisibility(needsSignIn ? android.view.View.VISIBLE : android.view.View.GONE);
-            boolean administers = running && s.optBoolean("administers", false);
-            adminPage.setVisibility(administers ? android.view.View.VISIBLE : android.view.View.GONE);
-            if (!administers) {
-                adminCode.setVisibility(android.view.View.GONE);
-                adminApprove.setVisibility(android.view.View.GONE);
+            connect.setVisibility(shown(enrolled));
+            String login = Mobile.loginState();
+            if (!login.equals(lastLogin)) {
+                lastLogin = login;
+                if (login.startsWith("done: ")) message.setText(login.substring(6));
+                else if (login.startsWith("failed: ")) message.setText("Sign-in failed: " + login.substring(8));
             }
-            connect.setText(running ? "Disconnect" : "Connect");
-            showExit(s, running);
             if (!enrolled) {
-                state.setText("Not enrolled");
-                detail.setText("Your administrator shows you a QR code, or gives you a domain and five words.");
+                account.setVisibility(View.GONE);
+                adminPage.setVisibility(View.GONE);
+                exit.setVisibility(View.GONE);
+                state.setText("Join your network");
+                detail.setText("Scan the QR code your administrator shows you, or type the domain and the five words they give you.");
                 return;
             }
-            StringBuilder d = new StringBuilder(s.getString("address"));
-            if (!s.optString("user").isEmpty()) d.append("\nsigned in as ").append(s.getString("user"));
-            if (!s.optString("exit").isEmpty()) d.append("\nall internet traffic goes through exit ").append(s.getString("exit"));
-            JSONArray peers = s.optJSONArray("peers");
+
+            boolean known = s.has("approved");
+            boolean loginRequired = s.getBoolean("login_required");
+            boolean waiting = known && !s.getBoolean("approved");
+            String user = s.optString("user");
+            JSONArray failing = s.optJSONArray("posture_failing");
+            boolean limited = failing != null && failing.length() > 0;
             int reachable = 0;
+            JSONArray peers = s.optJSONArray("peers");
             if (peers != null) {
                 for (int i = 0; i < peers.length(); i++) {
                     int ago = peers.getJSONObject(i).getInt("handshake_seconds_ago");
                     if (ago >= 0 && ago < 180) reachable++;
                 }
-                d.append("\n").append(reachable).append(" of ").append(peers.length()).append(" peers connected");
             }
-            JSONArray groups = s.optJSONArray("groups");
-            if (groups != null && groups.length() > 0) {
-                d.append("\ngroups: ");
-                for (int i = 0; i < groups.length(); i++) d.append(i > 0 ? ", " : "").append(groups.getString(i));
-            }
-            JSONArray failing = s.optJSONArray("posture_failing");
-            if (failing != null) {
-                for (int i = 0; i < failing.length(); i++) {
-                    JSONObject f = failing.getJSONObject(i);
-                    d.append("\nThis device needs attention: ").append(f.optString("reason"))
-                            .append(" (check ").append(f.optString("check")).append(")");
-                }
-            }
-            if (!s.optString("posture").isEmpty()) d.append("\nposture: ").append(s.getString("posture"));
-            if (!s.getString("error").isEmpty()) d.append("\n").append(s.getString("error"));
-            d.append("\nagent ").append(s.getString("version"));
-            detail.setText(d);
+
             if (!running) state.setText("Disconnected");
-            else if (s.getBoolean("login_required")) state.setText("Signed out: sign in again");
-            else if (known && !s.getBoolean("approved")) state.setText("Waiting for approval: sign in");
-            else if (failing != null && failing.length() > 0) state.setText("Limited: this device fails a check");
+            else if (loginRequired) state.setText("Sign in to continue");
+            else if (waiting) state.setText("Waiting for approval");
+            else if (limited) state.setText("Limited: this device fails a check");
             else state.setText(reachable > 0 ? "Connected" : "Connecting");
-            String login = Mobile.loginState();
-            if (login.startsWith("done: ")) message.setText(login.substring(6));
-            else if (login.startsWith("failed: ")) message.setText("Sign-in failed: " + login.substring(8));
+
+            StringBuilder d = new StringBuilder();
+            if (running && !user.isEmpty()) line(d, "Signed in as " + user);
+            if (running && !s.optString("exit").isEmpty()) line(d, "All internet traffic goes through " + s.getString("exit"));
+            if (running && waiting && user.isEmpty()) line(d, "Sign in, or ask your administrator to approve this phone.");
+            if (limited) {
+                for (int i = 0; i < failing.length(); i++) line(d, "Needs attention: " + failing.getJSONObject(i).optString("reason"));
+            }
+            if (!s.getString("error").isEmpty()) line(d, s.getString("error"));
+            detail.setText(d);
+
+            connect.setText(running ? "Disconnect" : "Connect");
+            Ui.setPrimary(connect, !running);
+            // Sign in or out once connected: the sign-in runs through the network.
+            signedIn = !user.isEmpty();
+            account.setVisibility(shown(running));
+            account.setText(signedIn ? "Sign out" : "Sign in");
+            Ui.setPrimary(account, !signedIn && (loginRequired || waiting));
+            boolean administers = running && s.optBoolean("administers", false);
+            adminPage.setVisibility(shown(administers));
+            if (!administers) {
+                adminCode.setVisibility(View.GONE);
+                adminApprove.setVisibility(View.GONE);
+            }
+            showExit(s, running);
         } catch (Exception e) {
             state.setText("Error");
             detail.setText(String.valueOf(e.getMessage()));
         }
     }
 
-
+    private static void line(StringBuilder d, String s) {
+        if (d.length() > 0) d.append('\n');
+        d.append(s);
+    }
 
     /**
      * Shows the exit button when an exit is offered: it stops the one in use, or starts the first
@@ -260,7 +270,7 @@ public class MainActivity extends Activity {
     private void showExit(JSONObject s, boolean running) throws org.json.JSONException {
         JSONArray exits = running ? s.optJSONArray("exits") : null;
         if (exits == null || exits.length() == 0) {
-            exit.setVisibility(android.view.View.GONE);
+            exit.setVisibility(View.GONE);
             return;
         }
         JSONObject first = exits.getJSONObject(0), inUse = null;
@@ -274,7 +284,7 @@ public class MainActivity extends Activity {
             exitChoice = first.optString("route");
             exit.setText("Send all traffic through " + first.optString("via"));
         }
-        exit.setVisibility(android.view.View.VISIBLE);
+        exit.setVisibility(View.VISIBLE);
     }
 
     private void chooseExit() {
@@ -295,10 +305,10 @@ public class MainActivity extends Activity {
         String d = domain.trim();
         if (d.isEmpty()) return;
         joinRecord = null;
-        joinInfo.setVisibility(android.view.View.VISIBLE);
+        joinInfo.setVisibility(View.VISIBLE);
         joinInfo.setText("Looking up " + d + "...");
-        joinWords.setVisibility(android.view.View.GONE);
-        join.setVisibility(android.view.View.GONE);
+        joinWords.setVisibility(View.GONE);
+        join.setVisibility(View.GONE);
         String dns = dnsServers();
         new Thread(() -> {
             String info, record = null;
@@ -324,7 +334,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 joinRecord = rec;
                 joinInfo.setText(i);
-                int shown = rec == null ? android.view.View.GONE : android.view.View.VISIBLE;
+                int shown = rec == null ? View.GONE : View.VISIBLE;
                 joinWords.setVisibility(shown);
                 join.setVisibility(shown);
                 join.setText(rec != null && words != null ? "Join " + d : "Join");
@@ -379,7 +389,7 @@ public class MainActivity extends Activity {
                 if (r.startsWith("Enrolled")) {
                     joinWords.setText("");
                     joinRecord = null;
-                    joinInfo.setVisibility(android.view.View.GONE);
+                    joinInfo.setVisibility(View.GONE);
                 }
                 show();
             });
@@ -432,6 +442,23 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /** Signs the person out; the phone stays in the network as itself (what its own group allows). */
+    private void signOut() {
+        message.setText("Signing out...");
+        new Thread(() -> {
+            String result;
+            try {
+                result = Mobile.logout(Agent.stateDir(this))
+                        ? "Signed out."
+                        : "Signed out on this phone; the network hears of it once it can be reached.";
+            } catch (Exception e) {
+                result = "Sign-out failed: " + e.getMessage();
+            }
+            String r = result;
+            runOnUiThread(() -> message.setText(r));
+        }).start();
+    }
+
     /**
      * The admin page shows a code; approving it here (a request signed with the device's key, which
      * only this app holds) opens the page. Other apps on the phone reach the network, never its
@@ -445,8 +472,8 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     message.setText("Type the code the page shows below, then Approve.");
                     adminCode.setText("");
-                    adminCode.setVisibility(android.view.View.VISIBLE);
-                    adminApprove.setVisibility(android.view.View.VISIBLE);
+                    adminCode.setVisibility(View.VISIBLE);
+                    adminApprove.setVisibility(View.VISIBLE);
                     try {
                         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                     } catch (android.content.ActivityNotFoundException e) {
@@ -474,69 +501,14 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 message.setText(r);
                 if (r.startsWith("Approved")) {
-                    adminCode.setVisibility(android.view.View.GONE);
-                    adminApprove.setVisibility(android.view.View.GONE);
+                    adminCode.setVisibility(View.GONE);
+                    adminApprove.setVisibility(View.GONE);
                 }
             });
         }).start();
     }
 
-    /**
-     * Shares the logs (Mobile.logs: crash reports, Android's exit reasons, the log file) with the
-     * device's description and the agent's status, through Android's share sheet, as a file the
-     * person sends where they choose. Nothing leaves the phone otherwise.
-     */
-    private void sendLogs() {
-        message.setText("Collecting the logs...");
-        new Thread(() -> {
-            try {
-                StringBuilder sb = new StringBuilder();
-                sb.append("ento logs, ").append(java.time.Instant.now()).append('\n')
-                        .append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append(", Android ").append(Build.VERSION.RELEASE)
-                        .append(" (SDK ").append(Build.VERSION.SDK_INT).append(", patch ").append(Build.VERSION.SECURITY_PATCH).append(")\n")
-                        .append("status: ").append(Mobile.status(Agent.stateDir(this))).append("\n\n")
-                        .append(Mobile.logs());
-                try (java.io.FileOutputStream out = new java.io.FileOutputStream(LogsProvider.file(this))) {
-                    out.write(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                }
-                Uri uri = LogsProvider.uri();
-                Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                        .putExtra(Intent.EXTRA_STREAM, uri)
-                        .putExtra(Intent.EXTRA_SUBJECT, "ento logs from " + Agent.hostname(this))
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                send.setClipData(android.content.ClipData.newRawUri("", uri));
-                runOnUiThread(() -> {
-                    message.setText("");
-                    startActivity(Intent.createChooser(send, "Send the logs to"));
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> message.setText("Logs: " + e.getMessage()));
-            }
-        }).start();
-    }
-
-    private TextView text(String s, int sp, int color) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextSize(sp);
-        t.setTextColor(color);
-        return t;
-    }
-
-    private Button button(String label, android.view.View.OnClickListener l) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setAllCaps(false);
-        b.setTextColor(Color.WHITE);
-        b.setBackgroundColor(SIGNAL);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        p.topMargin = dp(12);
-        b.setLayoutParams(p);
-        b.setOnClickListener(l);
-        return b;
-    }
-
     private int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
+        return Ui.dp(this, v);
     }
 }

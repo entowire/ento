@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The website's dark palette. -->
+    <color name="bg">#262626</color>
+    <color name="fg">#f2f2f2</color>
+    <color name="muted">#a5a5a5</color>
+    <color name="line">#3a3a3a</color>
+    <color name="accent">#3366cc</color>
+    <color name="accent_ink">#ffffff</color>
+    <color name="warn">#ff453a</color>
+</resources>

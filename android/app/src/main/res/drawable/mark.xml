@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- entowire's mark (site/favicon.svg) cropped to itself, in the screen's ink: the header's. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="22.5dp" android:viewportWidth="31.6" android:viewportHeight="44.4">
+    <group android:translateY="3.2">
+        <path android:strokeColor="@color/fg" android:strokeWidth="3.6" android:strokeLineCap="round" android:pathData="M26.6,1.8H7A5.2,5.2 0 0,0 1.8,7V31A5.2,5.2 0 0,0 7,36.2H26.6M1.8,19H26.6" />
+        <path android:fillColor="@color/fg" android:pathData="M21.6,1.8a5,5 0 1,0 10,0a5,5 0 1,0 -10,0z" />
+        <path android:fillColor="@color/fg" android:pathData="M21.6,19a5,5 0 1,0 10,0a5,5 0 1,0 -10,0z" />
+        <path android:fillColor="@color/fg" android:pathData="M21.6,36.2a5,5 0 1,0 10,0a5,5 0 1,0 -10,0z" />
+    </group>
+</vector>

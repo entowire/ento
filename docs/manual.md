@@ -93,16 +93,25 @@ first, see below), join with the domain and the words your administrator reads o
 since 0.23.3), or **Scan the QR code** of both their admin page shows (0.30; the app looks the
 domain's record up as for typed words and refuses it unless its fingerprint is the code's, then
 shows **Join DOMAIN**), **Connect** (Android asks once to allow the VPN), then **Sign in** if
-the deployment uses single sign-on (the button is there only while the device is not approved or
-its sign-in has ended; the app shows the device's groups once it is). Only the network's own range goes through
+the deployment uses single sign-on (0.55.1: there whenever the phone is connected and no one is
+signed in, highlighted while the device waits for approval or its sign-in has ended; **Sign out**
+once someone is). Only the network's own range goes through
 the VPN; the phone's other traffic is untouched. Always-on VPN (Android settings) works too.
 
 ## Android app
 
 `android/` is a small Java app: `EntoVpnService` creates the VPN interface with the device's
 address and the network's route and hands its file descriptor to the agent; `MainActivity` enrolls
-with the domain and the words an administrator reads out, or with the QR code of both
-(`ScanActivity`), connects and signs in. Its one library is ZXing's core (0.30, a single jar without
+with the QR code of the domain and the words an administrator's admin page shows (`ScanActivity`),
+or with both typed (**Type the domain and the words instead**), connects, and signs in or out.
+Since 0.55.1 the main screen holds only what a person needs: the state (connected, signed in as
+whom, an exit in use, a check the device fails and why, an error), Connect or Disconnect, Sign in
+or Sign out, the exit an administrator offers, and the admin page on admin and operator devices.
+The technical details (address and network, approval, groups, role, peers with their last
+handshakes, routes, DNS server, exits, posture, failing checks, attestation, last error, the agent's
+and the app's versions) and **Send logs** are on `AdvancedActivity`, behind **Advanced**, a small
+link at the bottom of the main screen. The screens use the website's colours, light or dark as the
+phone is (`res/values/colors.xml`, `res/values-night/`). Its one library is ZXing's core (0.30, a single jar without
 dependencies), which decodes the camera's frames; the camera code is the app's own (Camera2, no
 `androidx`), and the camera permission is asked for when someone scans. Every artifact
 Gradle downloads, the build plugin included, is checked against the SHA-256 in
@@ -133,7 +142,7 @@ other platforms, bound with gomobile (`mobile/`, pinned in `go.mod`):
   later: crash, native crash, not responding with its trace, low memory, killed) in `exits.txt`.
   **Send logs** shares all of it, with the device's description and the agent's status, as one
   file through Android's share sheet (`LogsProvider`, no library); nothing leaves the phone
-  otherwise; the app's version is shown at the bottom of its screen;
+  otherwise (both under Advanced, with the app's version);
 - Android fixes a VPN's routes and DNS server when it is created, so the service creates it again
   when the agent wants others (an exit, a route, its resolver as DNS server). Since 0.30.5 it starts
   with the routes and DNS server of this enrollment's last session, so a connection no longer comes
@@ -146,15 +155,21 @@ other platforms, bound with gomobile (`mobile/`, pinned in `go.mod`):
   to a control node open. An idle peer without a session is not counted as a failed direct path:
   a peer is relayed only when something was sent to it and no handshake followed within 20 s. A
   phone that has not spoken to a peer for a while is reached through a fresh handshake, which costs
-  the first packet a round trip, or the relay when its NAT refuses the peer.
+  the first packet a round trip, or the relay when its NAT refuses the peer;
+- the launcher icon (0.55.1) is entowire's mark, the E with three dots of `site/favicon.svg`, in
+  the logo's ink (#262626) on white, an adaptive icon drawn as a vector (`res/drawable/
+  ic_launcher_foreground.xml`, also the themed icon of Android 13 and later).
 
 Build (toolchain pinned in `scripts/android.env`: JDK 21, Android SDK 36, NDK, Gradle):
 
     scripts/android-toolchain.sh        # once: ~/opt/android (or $ANDROID_TOOLCHAIN)
     scripts/build-android.sh            # dist/ento-android-<version>.apk
 
-With `ENTO_ANDROID_KEYSTORE_B64` and `ENTO_ANDROID_KEYSTORE_PASSWORD` in the environment the APK is
-release-signed (key `ento`, PKCS#12); without them it is debug-signed, for testing only. Android
+Without settings the APK is debug-signed, for testing only. With `ENTO_ANDROID_RELEASE=1` the
+release APK is built unsigned and signed afterwards with apksigner (key `ento`, PKCS#12, from
+`ENTO_ANDROID_KEYSTORE_B64` and `ENTO_ANDROID_KEYSTORE_PASSWORD`; entowire's `publish-site.sh` does
+it with the keystore in memory only); the build refuses to run with a key in its environment, so no
+build step, plugin or module ever sees it. Android
 only accepts updates signed with the same key. The published APK's certificate SHA-256 is in
 `android-signing.sha256`; check it before installing:
 
@@ -319,7 +334,7 @@ What protects the words:
   else would sign in there with passkeys bound to the real identity provider's name, which fail.
 - In a DNSSEC-signed zone, a validating resolver refuses a forged record.
 
-In the Android app (0.21.1): **Or join with the words**, the domain, **Find the network** (it shows
+In the Android app (0.21.1; since 0.55.1 **Type the domain and the words instead**): the domain, **Find the network** (it shows
 the fingerprint), then the words and **Join**. Go cannot find Android's DNS servers by itself, so
 the app passes those of the phone's active network (`agent.ResolverVia`); the phone's resolver, not
 the app, decides whether DNSSEC is checked, so the fingerprint is the check there.

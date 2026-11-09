@@ -3,7 +3,6 @@ package com.entowire.ento.app;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Intent;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
@@ -33,9 +32,6 @@ import java.time.Instant;
 public class ApprovalActivity extends Activity {
     static final String EXTRA = "approval";
     private static final int CONFIRM = 1;
-    private static final int VOID = Color.rgb(0x0b, 0x0c, 0x0e);
-    private static final int INK = Color.rgb(0xe9, 0xea, 0xec);
-    private static final int DIM = Color.rgb(0x8a, 0x8e, 0x96);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private String id, device, user, service;
@@ -50,7 +46,7 @@ public class ApprovalActivity extends Activity {
         super.onCreate(saved);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(VOID);
+        root.setBackgroundColor(getColor(R.color.bg));
         root.setPadding(dp(24), dp(48), dp(24), dp(24));
         try {
             JSONObject a = new JSONObject(getIntent().getStringExtra(EXTRA));
@@ -59,11 +55,11 @@ public class ApprovalActivity extends Activity {
             user = a.getString("user");
             service = a.getString("service");
             expires = Instant.parse(a.getString("expires_at")).toEpochMilli();
-            TextView title = text("Sign in to " + device + "?", 24, INK);
+            TextView title = text("Sign in to " + device + "?", 24, R.color.fg);
             title.setTypeface(Typeface.DEFAULT_BOLD);
             root.addView(title);
             root.addView(text("As " + user + ", for " + service + ".\n\nPick the number " + device
-                    + " shows. If it shows none, or you did not just sign in there, deny.", 16, DIM));
+                    + " shows. If it shows none, or you did not just sign in there, deny.", 16, R.color.muted));
             numbers = new LinearLayout(this);
             numbers.setOrientation(LinearLayout.HORIZONTAL);
             numbers.setGravity(Gravity.CENTER);
@@ -71,23 +67,21 @@ public class ApprovalActivity extends Activity {
             JSONArray choices = a.getJSONArray("choices");
             for (int i = 0; i < choices.length(); i++) {
                 int n = choices.getInt(i);
-                Button b = new Button(this);
-                b.setText(String.valueOf(n));
+                Button b = Ui.button(this, String.valueOf(n), v -> pick(n));
+                Ui.setPrimary(b, false);
                 b.setTextSize(32);
-                b.setOnClickListener(v -> pick(n));
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(96), 1);
                 lp.setMargins(dp(6), 0, dp(6), 0);
                 numbers.addView(b, lp);
             }
             root.addView(numbers);
-            deny = new Button(this);
-            deny.setText("Deny");
-            deny.setOnClickListener(v -> answer(0, false));
+            deny = Ui.button(this, "Deny", v -> answer(0, false));
+            Ui.setPrimary(deny, false);
             root.addView(deny);
         } catch (Exception e) {
-            root.addView(text("This request could not be read.", 16, INK));
+            root.addView(text("This request could not be read.", 16, R.color.fg));
         }
-        message = text("", 16, INK);
+        message = text("", 16, R.color.fg);
         message.setPadding(0, dp(20), 0, 0);
         root.addView(message);
         setContentView(root);
@@ -189,12 +183,8 @@ public class ApprovalActivity extends Activity {
         if (deny != null) deny.setEnabled(on);
     }
 
-    private TextView text(String s, int sp, int color) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextSize(sp);
-        t.setTextColor(color);
-        return t;
+    private TextView text(String s, int sp, int colorId) {
+        return Ui.text(this, s, sp, colorId);
     }
 
     private int dp(int v) {

@@ -86,12 +86,12 @@ public class ScanActivity extends Activity {
         root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.VERTICAL);
-        bar.setBackgroundColor(Color.argb(0xcc, 0x0b, 0x0c, 0x0e));
+        bar.setBackgroundColor(Color.argb(0xcc, 0x26, 0x26, 0x26));
         int pad = Math.round(20 * getResources().getDisplayMetrics().density);
         bar.setPadding(pad, pad, pad, pad * 2);
         hint = new TextView(this);
         hint.setText("Point the camera at the QR code your administrator shows.");
-        hint.setTextColor(Color.rgb(0xe9, 0xea, 0xec));
+        hint.setTextColor(Color.rgb(0xf2, 0xf2, 0xf2));
         hint.setTextSize(16);
         bar.addView(hint);
         Button cancel = new Button(this);
