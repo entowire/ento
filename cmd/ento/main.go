@@ -957,6 +957,10 @@ func agentCmd(ctx context.Context, args []string) error {
 				cfg.LogDropsOff = true
 			}
 		})
+		// Before the words or the token: without a service manager they would be asked for nothing.
+		if err := agent.ServiceSupported(); err != nil {
+			return err
+		}
 		var tok string
 		var err error
 		if join.set() {
@@ -1442,25 +1446,71 @@ func cell(s string) string {
 	}, s)
 }
 
+// takeFlag removes --name VALUE (or -name, or =VALUE) from anywhere in args and returns its value
+// ("" if absent). A flag given twice, or without a value, is an error.
+func takeFlag(args []string, name string) (string, []string, error) {
+	value, found := "", false
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		v, ok := "", false
+		for _, f := range []string{"--" + name, "-" + name} {
+			if a == f {
+				if i+1 >= len(args) {
+					return "", nil, fmt.Errorf("%s needs a value", f)
+				}
+				v, ok = args[i+1], true
+				i++
+			} else if after, cut := strings.CutPrefix(a, f+"="); cut {
+				v, ok = after, true
+			}
+		}
+		if !ok {
+			rest = append(rest, a)
+			continue
+		}
+		if found {
+			return "", nil, fmt.Errorf("--%s given twice", name)
+		}
+		if v == "" {
+			return "", nil, fmt.Errorf("--%s needs a value", name)
+		}
+		value, found = v, true
+	}
+	return value, rest, nil
+}
+
 func adminCmd(ctx context.Context, args []string) error {
 	stateDir := os.Getenv("ENTO_STATE_DIR")
 	if stateDir == "" {
 		stateDir = agent.DefaultStateDir
 	}
 	// --link NAME: administer a linked network, as this device's membership there (its key, its
-	// namespace), where that network made it an administrator.
-	link := ""
-	if len(args) >= 2 && args[0] == "--link" {
-		link, args = args[1], args[2:]
+	// namespace), where that network made it an administrator. --network DOMAIN: administer another
+	// network the device joined (ento agent join), with its key there. Both are taken anywhere on the
+	// line: before 0.56.6 only right after `admin`, and `ento admin peers --network D` silently
+	// administered the first network.
+	link, args, err := takeFlag(args, "link")
+	if err != nil {
+		return err
 	}
-	// --network DOMAIN: administer another network the device joined (ento agent join), with its key
-	// there.
-	if len(args) >= 2 && (args[0] == "--network" || args[0] == "-network") && link == "" {
-		dir, err := agent.NetworkStateDir(stateDir, args[1])
+	network, args, err := takeFlag(args, "network")
+	if err != nil {
+		return err
+	}
+	if link != "" && network != "" {
+		return errors.New("--link or --network, not both")
+	}
+	if network != "" {
+		dir, err := agent.NetworkStateDir(stateDir, network)
 		if err != nil {
 			return err
 		}
-		stateDir, args = dir, args[2:]
+		stateDir = dir
 	}
 	cmd, rest := sub(args)
 	var c *agent.AdminClient

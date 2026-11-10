@@ -37,6 +37,7 @@ the tunnel. One binary, `ento`, is the control node, the agent and the administr
 | Android 8+ | inside the app (Android's VPN service) | the app |
 
 macOS, Windows and Android are newer and tested less than Linux; iOS is next.
+Linux without systemd (QNAP's QTS, Alpine, OpenWrt) is not supported: `ento agent install` refuses there.
 
 ## Quick start
 

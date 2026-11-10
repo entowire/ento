@@ -37,6 +37,14 @@ supplementary group, so its hardware key can open the TPM despite the service's 
 set (0.38.2; before, `ento agent status` showed `hw key: unusable: ... permission denied`). Run
 `sudo ento agent install` once to rewrite the unit of an agent installed before.
 
+On Linux the agent is a systemd service, and nothing else: on a system without systemd (QNAP's
+QTS, Alpine, OpenWrt; `/run/systemd/system` is missing) `ento agent install` refuses before it asks
+for the words or reads the token, and changes nothing (0.56.6); `install.sh` with `ENTO_JOIN` or
+`ENTO_TOKEN_FILE` stops there before downloading. Before, install stopped only at writing the unit
+(`open /etc/systemd/system/ento-agent.service: no such file or directory`), after the words had been
+typed; found on a QNAP NAS (QTS 5.2), whose root file system is also rebuilt at every boot and whose
+kernel has no nftables, which the inbound filter needs with the kernel's WireGuard.
+
 Help: `ento` alone lists what a device's person and an administrator need most; `ento help` shows
 every command, and `ento help agent`, `admin`, `control` or `update` (or `ento agent` alone, and so
 on) one part.
@@ -1557,7 +1565,9 @@ internal DNS (its resolver on its own address; systemd-resolved sends its names 
 is `/var/lib/ento/networks/<domain>/`. The running agent acts on `join` and `leave` without a
 restart; an agent started before 0.51 is restarted first (`sudo systemctl restart ento-agent`).
 Commands for one network take `--network DOMAIN`: `status`, `login`, `logout`, `whoami`, `approve`
-and `approvals` (and `ento admin --network DOMAIN ...`); without it they are the first network's. They read
+and `approvals`, and every `ento admin` command (`--network` anywhere on its line, as `--link`: before
+0.56.6 only right after `admin`, and `ento admin peers --network DOMAIN` silently listed the first
+network's devices); without it they are the first network's. They read
 the agent's state, which is root's, so they run with `sudo` (only the first network's `login`,
 `logout` and `whoami` go through the running agent for other users); without it `--network` says so
 (0.53.1; before, it said the device was in no network).

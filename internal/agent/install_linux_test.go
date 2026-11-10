@@ -83,3 +83,20 @@ func TestTPMGroupLine(t *testing.T) {
 		t.Error("the line is not in the unit")
 	}
 }
+
+// Without systemd, install refuses before anything is asked or written (0.56.6, a QNAP NAS).
+func TestServiceSupported(t *testing.T) {
+	old := systemdDir
+	defer func() { systemdDir = old }()
+	systemdDir = t.TempDir()
+	if err := ServiceSupported(); err != nil {
+		t.Fatalf("with systemd: %v", err)
+	}
+	systemdDir = filepath.Join(systemdDir, "missing")
+	if err := ServiceSupported(); err == nil || !strings.Contains(err.Error(), "systemd") {
+		t.Fatalf("without systemd: %v", err)
+	}
+	if err := Install(Config{StateDir: t.TempDir()}, "token", false); err == nil || !strings.Contains(err.Error(), "systemd") {
+		t.Fatalf("Install without systemd: %v", err)
+	}
+}

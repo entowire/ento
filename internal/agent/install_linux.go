@@ -82,6 +82,9 @@ WantedBy=multi-user.target
 // token is refused, unless force: then the old enrollment is removed first (checkEnrollment).
 func Install(cfg Config, token string, force bool) error {
 	cfg.defaults()
+	if err := ServiceSupported(); err != nil {
+		return err
+	}
 	if os.Geteuid() != 0 {
 		return errors.New("install must run as root")
 	}
@@ -134,6 +137,22 @@ func Install(cfg Config, token string, force bool) error {
 	}
 	// Restart rather than start: re-running install is how a device picks up a new binary or unit.
 	return systemctl("restart", unitName)
+}
+
+// systemdDir exists only on a system booted with systemd (sd_booted(3)).
+var systemdDir = "/run/systemd/system"
+
+// ServiceSupported tells why the agent cannot be installed as a service here: on Linux it is a
+// systemd service, and some systems run another init (QNAP's QTS, Alpine, OpenWrt, containers).
+// install asks it before the words, so that nobody types them for nothing (0.56.6; before, install
+// stopped at writing the unit, after the words: "open /etc/systemd/system/ento-agent.service: no
+// such file or directory", found on a QNAP NAS).
+func ServiceSupported() error {
+	if _, err := os.Stat(systemdDir); err != nil {
+		return errors.New("this system does not run systemd (" + systemdDir + " is missing), and on Linux the ento agent " +
+			"is installed as a systemd service; nothing was installed or changed")
+	}
+	return nil
 }
 
 // ServiceInstalled reports whether the agent's systemd unit is installed for stateDir.

@@ -81,6 +81,9 @@ func Install(cfg Config, token string, force bool) error {
 	return launchctl("bootstrap", "system", plistPath)
 }
 
+// ServiceSupported: launchd is always there.
+func ServiceSupported() error { return nil }
+
 // ServiceInstalled reports whether the agent's launchd daemon is installed for stateDir.
 func ServiceInstalled(stateDir string) bool {
 	b, err := os.ReadFile(plistPath)

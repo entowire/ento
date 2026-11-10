@@ -120,6 +120,9 @@ func Install(cfg Config, token string, force bool) error {
 	return s.Start()
 }
 
+// ServiceSupported: the service manager is always there.
+func ServiceSupported() error { return nil }
+
 // ServiceInstalled reports whether the agent's service is installed for stateDir. It needs no
 // Administrator rights: reading a service's configuration is open to every user.
 func ServiceInstalled(stateDir string) bool {
