@@ -90,7 +90,7 @@ func (c *Config) defaults() {
 		c.Interface = "ento0"
 	}
 	if c.ListenPort == 0 {
-		c.ListenPort = 51830
+		c.ListenPort = DefaultListenPort
 	}
 	if c.MTU == 0 {
 		c.MTU = 1380
@@ -270,6 +270,9 @@ func startNetwork(cfg Config, env netEnv, st State, onApply func(api.NetMap), me
 	if err := ifc.SetAddress(netip.PrefixFrom(st.Address, st.Network.Bits())); err != nil {
 		ifc.Close()
 		return nil, err
+	}
+	if p, ok := ifc.(interface{ ListenPort() int }); ok {
+		cfg.ListenPort = p.ListenPort() // the port WireGuard could bind, which relayed packets go to
 	}
 	rel, err := newRelayer(st.Address, cfg.ListenPort, cfg.Logf, env.listenUDP)
 	if err != nil {
@@ -831,6 +834,9 @@ func (a *runner) choosePath(pc *PeerConfig, p api.Peer, st PeerStatus) error {
 	}
 	if ps.relayed {
 		ep, err := a.relay.Endpoint(pc.PublicKey)
+		if errors.Is(err, errNoRelay) {
+			return nil // the direct endpoint stays: the only path there is
+		}
 		if err != nil {
 			return err
 		}

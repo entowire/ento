@@ -45,7 +45,17 @@ func openUserspace(name string, port, mtu int, logf func(string, ...any)) (*user
 	}
 	ft := newFilterTUN(t)
 	u := &userTunnel{name: real, port: port, tun: ft, dev: device.NewDevice(ft, newBind(), logger)}
-	if err := u.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port)); err != nil {
+	// A port free when ChooseListenPort looked can still be refused: on Windows with WSL's
+	// mirrored networking, a port WSL holds is not listed as in use, yet binding it fails (0.56.5;
+	// the agent had stopped). The next free one is taken, as there.
+	err = u.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port))
+	for p := port + 1; err != nil && p <= port+100 && p <= 65535; p++ {
+		if err = u.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", p)); err == nil {
+			logf("WireGuard port %d could not be bound: using %d", port, p)
+			u.port = p
+		}
+	}
+	if err != nil {
 		u.dev.Close()
 		return nil, fmt.Errorf("listen on UDP %d: %w", port, err)
 	}
@@ -162,6 +172,9 @@ func (u *userTunnel) Close() error {
 func (u *userTunnel) Delete() error { return u.Close() }
 
 func (u *userTunnel) IfName() string { return u.name }
+
+// ListenPort is the UDP port WireGuard is bound to (openUserspace may have moved it).
+func (u *userTunnel) ListenPort() int { return u.port }
 
 // PersonTraffic counts what the filter takes for the person's traffic (it only grows).
 func (u *userTunnel) PersonTraffic() (uint64, error) { return u.tun.person.Load(), nil }

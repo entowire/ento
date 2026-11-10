@@ -2,7 +2,6 @@ package agent
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"net"
 	"net/netip"
@@ -39,21 +38,31 @@ const maxRelaySockets = 1024
 // sockets the kernel sends relayed packets to stay in the agent's namespace, where the WireGuard
 // interface's own socket lives.
 func newRelayer(address netip.Addr, wgPort int, logf func(string, ...any), listen func(*net.UDPAddr) (*net.UDPConn, error)) (*relayer, error) {
+	r := &relayer{wgPort: wgPort, logf: logf, sockets: map[wgtypes.Key]*net.UDPConn{}, closed: make(chan struct{})}
 	conn, err := listen(&net.UDPAddr{IP: address.AsSlice(), Port: api.RelayPort})
 	if err != nil {
-		return nil, fmt.Errorf("relay socket: %w", err)
+		// Something else on the machine holds the port: WSL's mirrored networking shares one port
+		// space between Windows and Linux, so Windows' ento and WSL's collide on it (0.56.5; WSL's
+		// agent had exited and been restarted for ever). Peers are then reached directly only.
+		logf("relay socket: %v: peers without a direct path are not reachable", err)
+		return r, nil
 	}
-	r := &relayer{overlay: conn, wgPort: wgPort, logf: logf, sockets: map[wgtypes.Key]*net.UDPConn{}, closed: make(chan struct{})}
+	r.overlay = conn
 	go r.fromControl()
 	return r, nil
 }
+
+// errNoRelay: the relay socket could not be bound (newRelayer).
+var errNoRelay = errors.New("no relay on this device")
 
 // SetControl selects the control node that relays outgoing packets.
 func (r *relayer) SetControl(a netip.Addr) { r.control.Store(&a) }
 
 func (r *relayer) Close() {
 	close(r.closed)
-	r.overlay.Close()
+	if r.overlay != nil {
+		r.overlay.Close()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, s := range r.sockets {
@@ -63,6 +72,9 @@ func (r *relayer) Close() {
 
 // Endpoint returns the local endpoint the kernel must use for a relayed peer.
 func (r *relayer) Endpoint(peer wgtypes.Key) (string, error) {
+	if r.overlay == nil {
+		return "", errNoRelay
+	}
 	s, err := r.socket(peer)
 	if err != nil {
 		return "", err

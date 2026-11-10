@@ -716,7 +716,7 @@ func agentFlags(fs *flag.FlagSet) *agent.Config {
 	cfg := &agent.Config{Version: version}
 	fs.StringVar(&cfg.StateDir, "state-dir", agent.DefaultStateDir, "directory holding the agent state")
 	fs.StringVar(&cfg.Interface, "interface", "ento0", "WireGuard interface name")
-	fs.IntVar(&cfg.ListenPort, "listen-port", 51830, "WireGuard UDP port")
+	fs.IntVar(&cfg.ListenPort, "listen-port", agent.DefaultListenPort, "WireGuard UDP port (inside WSL 51830 means 51880, apart from Windows' own ento)")
 	fs.IntVar(&cfg.MTU, "mtu", 1380, "interface MTU")
 	fs.BoolVar(&cfg.Userspace, "userspace", false, "run WireGuard inside the agent even where the kernel has it (Linux); always so on other systems")
 	fs.DurationVar(&cfg.LinkIdle, "link-idle", 7*24*time.Hour, "leave a linked network nothing was sent to for this long (0: never); ento agent link joins it again")

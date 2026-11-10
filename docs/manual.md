@@ -19,6 +19,19 @@ Two WireGuard clients on one machine (since 0.38.2): if the agent's UDP port (51
 another network's agent or wg-quick, it takes the next free one and logs it, instead of failing to
 start. The port only serves direct connections; peers learn it from the control nodes.
 
+Windows and WSL together (0.56.5): inside WSL the agent's default port is 51880, not 51830, also for
+an agent installed earlier with 51830 in its service, so that the ento on Windows and the one in
+WSL never share a port. With WSL's mirrored networking (`networkingMode=mirrored` in `.wslconfig`;
+its sign is a `vEthernet (FSE HostVnic)` adapter) Windows and Linux share one port space, yet
+neither lists the other's sockets as in use: on canti a Windows laptop whose WSL already ran ento
+sent its handshakes on 51830 and never got an answer (the replies most likely went to WSL), and in the lab the
+Windows agent could not bind 51830 at all and stopped. Two more safeguards came with it:
+where WireGuard runs in the agent (Windows, macOS, `--userspace`), a port that cannot be bound is replaced by the
+next free one (logged) instead of stopping the agent; and when the relay port (3479 on the overlay
+address) is held elsewhere, as by the other side of mirrored WSL, the agent runs without relaying
+(logged: peers without a direct path are then not reachable) instead of exiting and being restarted
+for ever.
+
 On Linux the installed service gets the TPM's group (`/dev/tpmrm0`, usually `tss`) as a
 supplementary group, so its hardware key can open the TPM despite the service's narrow capability
 set (0.38.2; before, `ento agent status` showed `hw key: unusable: ... permission denied`). Run
@@ -1485,7 +1498,10 @@ wireguard-go's default on Windows, Registered I/O (RIO): network filter drivers 
 products can break RIO without an error, so the handshakes count as sent and never leave the
 machine. Found on canti: with NordVPN, FortiClient and Cisco AnyConnect installed (all
 disconnected), joining timed out (`redeem via 100.83.0.1: ... i/o timeout`, `tx_bytes` rising,
-nothing at the control nodes), while a plain socket's packets to the same port arrived.
+nothing at the control nodes), while a plain socket's packets to the same port arrived. That
+diagnosis was wrong: captures at the control nodes later showed the handshakes arriving and answered,
+and the lab (`tools/lab`) found the cause in WSL's mirrored networking (0.56.5, above under
+installing). The plain socket stays: it works everywhere RIO does.
 
 ### Signing in on Windows
 
