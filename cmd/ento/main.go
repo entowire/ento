@@ -50,7 +50,8 @@ func main() {
 		os.Exit(2)
 	}
 	// `ento agent` (and admin, control, update) alone, or with only --help: that part of the help.
-	if t, ok := helpTopics[os.Args[1]]; ok && isHelp(os.Args[2:]) {
+	// `ento update` alone updates (0.58): its help only with --help.
+	if t, ok := helpTopics[os.Args[1]]; ok && isHelp(os.Args[2:]) && !(os.Args[1] == "update" && len(os.Args) == 2) {
 		fmt.Fprint(os.Stderr, usageHeader+strings.TrimRight(t, "\n")+"\n")
 		os.Exit(2)
 	}

@@ -24,6 +24,7 @@ Administrators:
   ento admin token --words           words for a new device to join with
 
   ento version                       this ento's version
+  ento update                        install the newest release (sudo), then restart the agent
   ento update check                  whether a newer release is out
 
 Everything: ento help    One part: ento help agent | admin | control | update
@@ -178,6 +179,8 @@ Linked networks, in the linked network (which admits another network's devices):
 
 const usageOther = `Other:
   ento version          print the version
+  ento update           install the newest signed release if it is newer (never older), then start
+                         the agent again with it (Linux and macOS; Windows: the installer again)
   ento update check [--short]  whether a newer release is signed and published (exit 10: yes)
   ento update install --version V [--dir DIR]  replace this binary with signed release V (never older;
                          the previous one kept: ento update rollback)

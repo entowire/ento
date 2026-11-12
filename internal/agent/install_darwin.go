@@ -174,3 +174,13 @@ func Uninstall(cfg Config, purge bool) error {
 	}
 	return setDown(cfg.StateDir, false)
 }
+
+// Restart starts the daemon again, with whatever binary is in place now (`ento update`): only when
+// it is installed and not turned off.
+func Restart(cfg Config) (bool, error) {
+	cfg.defaults()
+	if !ServiceInstalled(cfg.StateDir) || IsDown(cfg.StateDir) {
+		return false, nil
+	}
+	return true, launchctl("kickstart", "-k", "system/"+launchdLabel)
+}

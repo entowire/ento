@@ -76,7 +76,10 @@ checks it with the keys built into the installed binary, never with keys fetched
 never takes an older version as an update (`internal/update`; `ento update keys` prints the keys'
 fingerprints). From 0.37 on, control nodes with `--updates-dir` offer their own release to the
 network's devices (`ento admin updates`), and Linux and macOS agents install it themselves, checked
-the same way, with a rollback if it does not come up. On Linux that takes the service of 0.50 or
+the same way, with a rollback if it does not come up. `sudo ento update` (0.58) updates now, whatever
+the network's rollout says: the newest published release, checked the same way and only if newer,
+over the running binary (the previous one kept for `ento update rollback`), then the agent's service
+started again with it (Linux and macOS; on Windows it says to run the installer again). On Linux that takes the service of 0.50 or
 later: `ento agent install` keeps the binary in `/usr/local/lib/ento/` (root's alone, which the
 service may write) with `/usr/local/bin/ento` a link to it; older services kept it read-only, so
 their agents could never update themselves. A device installed before 0.50 updates once by hand
@@ -845,7 +848,8 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   authenticator app on the identity provider's account page, which their name at the bottom of
   the dashboard's side bar opens (after a full sign-in there, and none that would leave them
   without a way to sign in their groups allow).
-- **Devices**: every device with its state, checks and last contact, filtered (online, waiting,
+- **Devices**: every device with its state, checks, last contact and the ento version it reported
+  (0.58; marked **old** when older than the control node's, and searchable), filtered (online, waiting,
   failing a check, suspended, admins) and searched; a device's panel shows its groups, its posture
   report and each check, and does what the admin commands do: approve and unapprove (**Sign out**
   for a device bound to a person, who gets it back by signing in again; **Unapprove** for others),

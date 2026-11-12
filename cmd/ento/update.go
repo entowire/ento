@@ -25,6 +25,9 @@ import (
 const defaultReleases = update.DefaultReleases
 
 func updateCmd(ctx context.Context, args []string) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return updateNow(ctx, args)
+	}
 	switch cmd, args := sub(args); cmd {
 	case "check":
 		return updateCheck(ctx, args)
@@ -39,7 +42,7 @@ func updateCmd(ctx context.Context, args []string) error {
 		fmt.Printf("release keys built into this binary:\n  ssh   %s\n  p256  %s\n", s, p)
 		return nil
 	default:
-		return errors.New("usage: ento update check [--from URL] [--short] | install --version V [--dir DIR] [--from URL] | rollback [--dir DIR] | verify DIR | keys")
+		return errors.New("usage: ento update [--from URL] | check [--from URL] [--short] | install --version V [--dir DIR] [--from URL] | rollback [--dir DIR] | verify DIR | keys")
 	}
 }
 
@@ -147,6 +150,48 @@ func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
 // platform names this binary's file in a manifest.
 func platform() string { return runtime.GOOS + "-" + runtime.GOARCH }
 
+// updateNow installs the newest published release, if it is newer than this one, and starts the
+// agent again with it (0.58): what `ento update check` finds, with no version to type. The
+// network's own rollout (ento admin updates) decides when its devices update by themselves; this
+// is root's choice to update now, as update install always was.
+func updateNow(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	from := fs.String("from", defaultReleases, "where releases are published")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("usage: ento update [--from URL]")
+	}
+	if runtime.GOOS == "windows" {
+		return errors.New("on Windows, run the installer again, in a PowerShell run as administrator: irm https://entowire.com/install.ps1 | iex")
+	}
+	base := strings.TrimRight(*from, "/")
+	m, err := fetchManifest(func(name string) ([]byte, error) { return fetch(ctx, base+"/"+name, 1<<20) })
+	if err != nil {
+		return err
+	}
+	if !update.Newer(m.Version, version) {
+		fmt.Printf("ento %s is up to date (the newest release is %s)\n", version, m.Version)
+		return nil
+	}
+	fmt.Printf("updating ento %s to %s...\n", version, m.Version)
+	if err := installRelease(ctx, *from, "", m.Version); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("%w (run it with sudo)", err)
+		}
+		return err
+	}
+	restarted, err := agent.Restart(agent.Config{})
+	switch {
+	case err != nil:
+		return fmt.Errorf("installed, but the agent did not start again: %w (sudo ento up, or restart its service)", err)
+	case restarted:
+		fmt.Printf("the agent runs %s now\n", m.Version)
+	}
+	return nil
+}
+
 // updateInstall replaces this binary (or DIR/ento) with release VERSION: its manifest checked with the
 // keys built into the running binary, the version newer than the running one, the file's SHA-256
 // and size as the manifest says, and the new binary answering with that version, before it is
@@ -160,31 +205,37 @@ func updateInstall(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	return installRelease(ctx, *from, *dir, *want)
+}
+
+// installRelease is update install's work: release want, from where releases are published, over
+// this binary (or dir/ento).
+func installRelease(ctx context.Context, from, dir, want string) error {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		return errors.New("update install: Linux and macOS only for now")
 	}
-	target, err := binaryPath(*dir)
+	target, err := binaryPath(dir)
 	if err != nil {
 		return err
 	}
-	if *want == version {
+	if want == version {
 		fmt.Printf("%s is installed already\n", version)
 		return nil
 	}
-	if !update.Newer(*want, version) {
-		return fmt.Errorf("update install: %s is not newer than %s (never downgraded)", *want, version)
+	if !update.Newer(want, version) {
+		return fmt.Errorf("update install: %s is not newer than %s (never downgraded)", want, version)
 	}
-	base := strings.TrimRight(*from, "/") + "/" + *want
+	base := strings.TrimRight(from, "/") + "/" + want
 	m, err := fetchManifest(func(name string) ([]byte, error) { return fetch(ctx, base+"/"+name, 1<<20) })
 	if err != nil {
 		return err
 	}
-	if m.Version != *want {
-		return fmt.Errorf("update install: the manifest of %s says %s", *want, m.Version)
+	if m.Version != want {
+		return fmt.Errorf("update install: the manifest of %s says %s", want, m.Version)
 	}
 	f, ok := m.Files[platform()]
 	if !ok {
-		return fmt.Errorf("update install: release %s has no file for %s", *want, platform())
+		return fmt.Errorf("update install: release %s has no file for %s", want, platform())
 	}
 	raw, err := fetch(ctx, base+"/"+f.Name, f.Size)
 	if err != nil {
@@ -205,9 +256,9 @@ func updateInstall(ctx context.Context, args []string) error {
 		return err
 	}
 	out, err := exec.CommandContext(ctx, next, "version").Output()
-	if err != nil || strings.TrimSpace(string(out)) != *want {
+	if err != nil || strings.TrimSpace(string(out)) != want {
 		os.Remove(next)
-		return fmt.Errorf("update install: the new binary answers %q (%v), not %s", strings.TrimSpace(string(out)), err, *want)
+		return fmt.Errorf("update install: the new binary answers %q (%v), not %s", strings.TrimSpace(string(out)), err, want)
 	}
 	prev := target + ".prev"
 	os.Remove(prev)
@@ -218,7 +269,7 @@ func updateInstall(ctx context.Context, args []string) error {
 	if err := os.Rename(next, target); err != nil {
 		return err
 	}
-	fmt.Printf("installed %s over %s (previous kept as %s)\n", *want, version, prev)
+	fmt.Printf("installed %s over %s (previous kept as %s)\n", want, version, prev)
 	return nil
 }
 

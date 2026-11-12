@@ -380,3 +380,13 @@ func tpmGroupLine(device string) string {
 	}
 	return "# The TPM's group, for the hardware key (" + device + ").\nSupplementaryGroups=" + g.Name + "\n"
 }
+
+// Restart starts the service again, with whatever binary is in place now (`ento update`): only
+// when it is installed and not turned off. The kernel keeps the interfaces, so nothing is cut.
+func Restart(cfg Config) (bool, error) {
+	cfg.defaults()
+	if !ServiceInstalled(cfg.StateDir) || IsDown(cfg.StateDir) {
+		return false, nil
+	}
+	return true, systemctl("restart", unitName)
+}

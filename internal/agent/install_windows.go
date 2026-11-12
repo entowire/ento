@@ -326,3 +326,6 @@ func stopService(s *mgr.Service) {
 		st, err = s.Query()
 	}
 }
+
+// Restart: `ento update` does not replace the binary on Windows yet (the installer does).
+func Restart(cfg Config) (bool, error) { return false, errors.New("not on Windows yet") }

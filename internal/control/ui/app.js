@@ -791,13 +791,37 @@ function openDevice(id) {
   else location.hash = "#devices";
 }
 
+// versionParts reads X.Y.Z, and only that (a build's -N-gHASH is the same release); null when it
+// is not one.
+function versionParts(v) {
+  const m = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(v || "");
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+
+function olderVersion(a, b) {
+  const x = versionParts(a), y = versionParts(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+}
+
+// The ento a device reported (with its posture), and whether it is older than the control node's.
+function versionOf(p) {
+  const v = p.posture && p.posture.agent;
+  if (!v) return el("span", { class: "dim", title: "no report from this device yet" }, "–");
+  if (olderVersion(v, info.version)) {
+    return el("span", { class: "mono", title: `older than the control node's ento ${info.version}` }, v, " ", badge("old", "warn"));
+  }
+  return el("span", { class: "mono" }, v);
+}
+
 function renderDevices() {
   const pending = pendingOf().length;
   $("dev-sub").textContent = `${plural(peers.length, "device")} · ${peers.filter(online).length} online` + (pending ? ` · ${pending} waiting for you` : "");
   filterChips($("device-filter"), deviceFilters, peers, ui.deviceFilter, (v) => { ui.deviceFilter = v; renderDevices(); });
   const q = $("device-search").value.trim().toLowerCase();
   const test = deviceFilters.find((f) => f[0] === ui.deviceFilter)[2];
-  const shown = peers.filter((p) => test(p) && (!q || [p.hostname, p.reported_hostname, p.user, p.address, p.os, p.endpoint, p.authority, ...(p.groups || [])]
+  const shown = peers.filter((p) => test(p) && (!q || [p.hostname, p.reported_hostname, p.user, p.address, p.os, p.endpoint, p.authority, p.posture && p.posture.agent, ...(p.groups || [])]
     .some((x) => (x || "").toLowerCase().includes(q))));
   const body = $("device-table").tBodies[0];
   put(body, ...(shown.length ? shown.map((p) => {
@@ -809,10 +833,11 @@ function renderDevices() {
         el("small", { class: "seen", title: when(p.last_seen) }, el("span", { class: "dot" + (online(p) ? " on" : "") }), online(p) ? "online" : "seen " + ago(p.last_seen), systemOf(p) ? " · " + systemOf(p) : "")))),
       el("td", {}, p.user || (p.authority ? "via " + p.authority : el("span", { class: "dim" }, "–"))),
       el("td", { class: "mono" }, p.address),
+      el("td", {}, versionOf(p)),
       el("td", {}, el("div", { class: "tags" }, stateOf(p), roleBadge(p))),
       el("td", {}, checksOf(p)),
       el("td", { class: "right" }, (isIsolated(p) || !machineApproved) && !p.suspended && mayChange(p) ? button("Let in…", () => letIn(p), "btn xs primary") : null));
-  }) : [el("tr", {}, el("td", { colspan: 6 }, empty("No devices match.")))]));
+  }) : [el("tr", {}, el("td", { colspan: 7 }, empty("No devices match.")))]));
   renderDeviceSide();
 }
 
