@@ -12,7 +12,7 @@ const shortUsage = `ento: a private WireGuard network.
 
 This device:
   ento agent install --join DOMAIN   join a network (asks for the words an administrator reads out)
-  ento join DOMAIN                   join another network too (Linux; leave DOMAIN forgets it)
+  ento join|leave|network DOMAIN     join another network too, forget it, or make it the default
   ento status                        the connection, peers and this device's checks
   ento login | logout                sign in or out as yourself
   ento up | down                     turn the tunnel on or off
@@ -78,9 +78,14 @@ status, whoami, join, leave, up, down and exit; ento agent login and the others 
                          join another network besides the first, with the words an administrator
                          there reads out (Linux): its own interface (ento1, ...), key and rights,
                          reached by every program; status, login, logout, whoami, approve and
-                         approvals then take --network DOMAIN (default: the first network), and
-                         ento admin --network DOMAIN administers it; exits and releases stay the
-                         first network's
+                         approvals then take --network DOMAIN (default: the first network, or the
+                         one ento network DOMAIN chose), and ento admin --network DOMAIN
+                         administers it; exits and releases stay the first network's
+  ento network [DOMAIN]
+                         list the device's networks; with DOMAIN (sudo), make it the default:
+                         status, login, logout, whoami, approvals answer and admin act for it
+                         without --network (the first network's domain puts it back; leaving it
+                         too); sign-in approvals by PAM, exits and releases stay the first's
   ento leave DOMAIN
                          forget a network joined so (that network keeps the device until an
                          administrator there deletes it)

@@ -221,3 +221,60 @@ func approvalsEveryNetwork(ctx context.Context, cfg agent.Config, wait time.Dura
 	fmt.Println("answer with: ento agent approvals answer [--network DOMAIN] ID NUMBER (the number the device shows; answer --deny ID NUMBER refuses)")
 	return nil
 }
+
+// chosenNetwork is --network's value, or else the network `ento network DOMAIN` made the default
+// ("" for the first).
+func chosenNetwork(stateDir, flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return agent.DefaultNetwork(stateDir)
+}
+
+// networkCmd: `ento network` lists the device's networks and which one commands act for without
+// --network; `ento network DOMAIN` makes that one the default (the first network's domain puts it
+// back to the first).
+func networkCmd(args []string) error {
+	fs := flag.NewFlagSet("network", flag.ExitOnError)
+	cfg := agentFlags(fs)
+	_ = fs.Parse(args)
+	if fs.NArg() > 1 {
+		return errors.New("usage: ento network [DOMAIN] (none: list the device's networks)")
+	}
+	if _, err := agent.LoadState(cfg.StateDir); errors.Is(err, os.ErrPermission) {
+		return errors.New("the device's networks are in the agent's state, which is root's: run it with sudo")
+	} else if err != nil {
+		return errors.New("this device is in no network yet")
+	}
+	if fs.NArg() == 1 {
+		if os.Geteuid() != 0 {
+			return errors.New("network DOMAIN must run as root (sudo): the agent's state is root's")
+		}
+		if err := agent.SetDefaultNetwork(cfg.StateDir, fs.Arg(0)); err != nil {
+			return err
+		}
+	}
+	first := agent.FirstDomain(cfg.StateDir)
+	dflt := agent.DefaultNetwork(cfg.StateDir)
+	if dflt == "" {
+		dflt = first
+	}
+	for _, d := range append([]string{first}, agent.Networks(cfg.StateDir)...) {
+		var notes []string
+		if d == first {
+			notes = append(notes, "first: its exits and releases are the device's")
+		}
+		if d == dflt {
+			notes = append(notes, "default: commands act for it without --network")
+		}
+		if len(notes) > 0 {
+			fmt.Printf("%s  (%s)\n", d, strings.Join(notes, "; "))
+		} else {
+			fmt.Println(d)
+		}
+	}
+	if fs.NArg() == 0 && len(agent.Networks(cfg.StateDir)) > 0 {
+		fmt.Println("sudo ento network DOMAIN makes another the default")
+	}
+	return nil
+}

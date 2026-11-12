@@ -246,6 +246,46 @@ func RequestLeave(stateDir, domain string) error {
 	return os.WriteFile(filepath.Join(NetworkDir(stateDir, domain), "remove"), nil, 0o600)
 }
 
+// defaultNetworkFile names the network commands act for without --network (`ento network DOMAIN`).
+const defaultNetworkFile = "default-network"
+
+// DefaultNetwork is the domain of the network commands act for when --network is not given: the
+// one `ento network DOMAIN` chose while the device is still in it, else "" (the first network).
+// Only a person-facing choice: the agent, exits, releases and sign-in approvals by PAM keep the
+// first network.
+func DefaultNetwork(stateDir string) string {
+	b, err := os.ReadFile(filepath.Join(stateDir, defaultNetworkFile))
+	if err != nil {
+		return ""
+	}
+	d := strings.TrimSpace(string(b))
+	if !ValidDomain(d) || !exists(filepath.Join(NetworkDir(stateDir, d), membershipFile)) {
+		return ""
+	}
+	return d
+}
+
+// SetDefaultNetwork makes domain the network commands act for without --network; the first
+// network's domain (or "") puts it back to the first.
+func SetDefaultNetwork(stateDir, domain string) error {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	dir, err := NetworkStateDir(stateDir, domain)
+	if err != nil {
+		return err
+	}
+	p := filepath.Join(stateDir, defaultNetworkFile)
+	if dir == stateDir {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if err := os.WriteFile(p+".tmp", []byte(domain+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(p+".tmp", p)
+}
+
 // JoinError returns why the last attempt to join the network failed, "" for nothing.
 func JoinError(stateDir, domain string) string {
 	b, _ := os.ReadFile(filepath.Join(NetworkDir(stateDir, domain), "error"))

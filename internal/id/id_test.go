@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+
 	"entowire.com/ento/internal/id/idtest"
 	"entowire.com/ento/internal/ipam"
 	"entowire.com/ento/internal/store"
@@ -473,5 +475,18 @@ func TestUserCode(t *testing.T) {
 	}
 	if len(seen) < 195 {
 		t.Fatalf("only %d different codes of 200", len(seen))
+	}
+}
+
+// TestUnaskedExtensionOutputs: a client's extension output nobody asked for (Android's passkey manager
+// always returns credProps) does not fail a passkey, which it did with the library's default.
+func TestUnaskedExtensionOutputs(t *testing.T) {
+	f := newFixture(t)
+	if got := f.p.wa.Config.ExtensionsUnsolicitedOutputPolicy; got != protocol.UnsolicitedOutputPolicyIgnore {
+		t.Fatalf("unsolicited extension outputs: policy %v, want ignore", got)
+	}
+	out := protocol.AuthenticationExtensionsClientOutputs{CredProps: &protocol.CredentialPropertiesOutput{}}
+	if err := out.Verify(protocol.SessionExtensions{}, protocol.CreateCeremony, f.p.wa.Config.ExtensionsUnsolicitedOutputPolicy); err != nil {
+		t.Fatalf("credProps unasked: %v", err)
 	}
 }

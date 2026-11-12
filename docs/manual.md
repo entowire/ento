@@ -1171,7 +1171,8 @@ them (`internal/id`):
   `password+passkey` (the password, then a passkey), `password+totp` (the password, then a code
   from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once). Every
   sign-in asks again: the provider keeps no session. The passkeys' relying party is the name
-  (`id.example.com`). Passwords: at least 12 characters, kept as Argon2id hashes (any PHC Argon2id
+  (`id.example.com`); no WebAuthn extension is asked for, and one a passkey manager returns unasked
+  (Android's always adds `credProps`) is ignored, not refused. Passwords: at least 12 characters, kept as Argon2id hashes (any PHC Argon2id
   hash is taken as it is); after 10 wrong passwords or codes in 15 minutes an account takes no more passwords
   until they have passed (its passkeys still work). App secrets are sealed with a key derived from
   `ENTO_ID_KEY`.
@@ -1680,7 +1681,11 @@ restart; an agent started before 0.51 is restarted first (`sudo systemctl restar
 Commands for one network take `--network DOMAIN`: `status`, `login`, `logout`, `whoami`, `approve`
 and `approvals`, and every `ento admin` command (`--network` anywhere on its line, as `--link`: before
 0.56.6 only right after `admin`, and `ento admin peers --network DOMAIN` silently listed the first
-network's devices); without it they are the first network's. They read
+network's devices); without it they are the default network's: the first, unless
+`sudo ento network DOMAIN` made a joined one the default (0.58.4; `ento network` lists the device's
+networks and says which is first and which is the default; the first network's domain puts the
+default back, and leaving the network does too). `approve` (sign-in approvals by PAM), exits and
+releases stay the first network's whatever the default. They read
 the agent's state, which is root's, so they run with `sudo` (only the first network's `login`,
 `logout` and `whoami` go through the running agent for other users); without it `--network` says so
 (0.53.1; before, it said the device was in no network).

@@ -186,6 +186,9 @@ func New(cfg Config) (*Provider, error) {
 			UserVerification:   protocol.VerificationRequired,
 		},
 		AttestationPreference: protocol.PreferNoAttestation,
+		// No extension is asked for and none is relied on, so an output a client adds unasked is ignored:
+		// Android's passkey manager always returns credProps, which would otherwise fail every passkey made there.
+		ExtensionsUnsolicitedOutputPolicy: protocol.UnsolicitedOutputPolicyIgnore,
 		Timeouts: webauthn.TimeoutsConfig{
 			Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: ceremonyLifetime},
 			Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: ceremonyLifetime},

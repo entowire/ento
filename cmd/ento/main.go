@@ -64,7 +64,7 @@ func main() {
 		err = controlCmd(ctx, args)
 	case "agent":
 		err = agentCmd(ctx, args)
-	case "login", "logout", "status", "whoami", "join", "leave", "up", "down", "exit":
+	case "login", "logout", "status", "whoami", "join", "leave", "network", "up", "down", "exit":
 		// The commands people use on their own device, without "agent" (0.58): the same commands.
 		err = agentCmd(ctx, os.Args[1:])
 	case "admin":
@@ -1099,6 +1099,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		noQR := fs.Bool("no-qr", false, "do not draw the sign-in link as a QR code")
 		_ = fs.Parse(args)
 		baseDir := cfg.StateDir
+		*network = chosenNetwork(cfg.StateDir, *network)
 		if err := useNetwork(cfg, *network); err != nil {
 			return err
 		}
@@ -1119,6 +1120,9 @@ func agentCmd(ctx context.Context, args []string) error {
 
 	case "join":
 		return joinCmd(ctx, args)
+
+	case "network":
+		return networkCmd(args)
 
 	case "leave":
 		return leaveCmd(ctx, args)
@@ -1209,6 +1213,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		network := networkFlag(fs)
 		asJSON := fs.Bool("json", false, "print user, user_name and session_active as JSON")
 		_ = fs.Parse(args)
+		*network = chosenNetwork(cfg.StateDir, *network)
 		if err := useNetwork(cfg, *network); err != nil {
 			return exitCode{1, err.Error()}
 		}
@@ -1245,6 +1250,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		network := networkFlag(fs)
 		timeout := fs.Duration("timeout", 5*time.Second, "how long to try telling the control plane before leaving it to the agent")
 		_ = fs.Parse(args)
+		*network = chosenNetwork(cfg.StateDir, *network)
 		if err := useNetwork(cfg, *network); err != nil {
 			return err
 		}
@@ -1288,6 +1294,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		network := networkFlag(fs)
 		_ = fs.Parse(args)
 		baseDir := cfg.StateDir
+		*network = chosenNetwork(cfg.StateDir, *network)
 		if err := useNetwork(cfg, *network); err != nil {
 			return err
 		}
@@ -1589,6 +1596,9 @@ func adminCmd(ctx context.Context, args []string) error {
 	}
 	if link != "" && network != "" {
 		return errors.New("--link or --network, not both")
+	}
+	if link == "" {
+		network = chosenNetwork(stateDir, network)
 	}
 	if network != "" {
 		dir, err := agent.NetworkStateDir(stateDir, network)
@@ -2599,6 +2609,9 @@ func approvalsCmd(ctx context.Context, args []string) error {
 	}
 	_ = fs.Parse(rest)
 	baseDir := cfg.StateDir
+	if op == "answer" {
+		*network = chosenNetwork(baseDir, *network)
+	}
 	if err := useNetwork(cfg, *network); err != nil {
 		return err
 	}
