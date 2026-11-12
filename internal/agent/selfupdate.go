@@ -88,6 +88,23 @@ func CheckPendingUpdate(stateDir, version string, logf func(string, ...any)) {
 	}
 }
 
+// updateFailure is why the last self-update failed, for the check-ins: this run's error, or a
+// release put back because it did not come up (failedUpdateFile).
+func (a *runner) updateFailure() string {
+	a.mu.Lock()
+	why := a.updateErr
+	a.mu.Unlock()
+	if why != "" {
+		return why
+	}
+	if b, err := os.ReadFile(filepath.Join(a.cfg.StateDir, failedUpdateFile)); err == nil {
+		if v := strings.TrimSpace(string(b)); v != "" && v != a.cfg.Version {
+			return fmt.Sprintf("%s: did not come up after %d starts, the previous release put back", v, maxUpdateStarts)
+		}
+	}
+	return ""
+}
+
 // confirmUpdate: the first network map since a self-update proves the new release works.
 func (a *runner) confirmUpdate() {
 	path := filepath.Join(a.cfg.StateDir, pendingUpdateFile)
@@ -117,6 +134,9 @@ func (a *runner) maybeUpdate(ctx context.Context, ctl api.Control, u *api.Update
 		defer updating.Store(false)
 		if err := a.selfUpdate(ctx, ctl, u.Version); err != nil {
 			a.cfg.Logf("update: %s not installed: %v", u.Version, err)
+			a.mu.Lock()
+			a.updateErr = u.Version + ": " + err.Error()
+			a.mu.Unlock()
 			// Asked again with a later map, at most every hour.
 			select {
 			case <-ctx.Done():

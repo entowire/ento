@@ -428,6 +428,9 @@ type runner struct {
 	// hereGuard (under mu): the filter in place keeps everything the device forwards from its control
 	// nodes' sign-in port (filter_linux.go), which the check-ins say (api.CheckInRequest.HereGuard).
 	hereGuard bool
+	// updateErr (under mu): why the last self-update failed ("VERSION: why"; "": none), for the
+	// check-ins (api.CheckInRequest.UpdateFailed).
+	updateErr string
 	// resolver: the agent's resolver (dns.go), nil when nothing needs it; dnsApplied: the system's
 	// DNS settings made for it (dnsSettings.key, "" for none), dnsAt when; dnsNoted the last thing
 	// logged about it.

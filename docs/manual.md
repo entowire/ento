@@ -74,7 +74,8 @@ manifest (`releases/manifest.json`, the current one's): its version, release tim
 SHA-256 and size, signed with both keys (namespace `ento-manifest`). `ento update check` (from 0.36)
 checks it with the keys built into the installed binary, never with keys fetched beside it, and
 never takes an older version as an update (`internal/update`; `ento update keys` prints the keys'
-fingerprints). From 0.37 on, control nodes with `--updates-dir` offer their own release to the
+fingerprints). From 0.37 on, control nodes with `--updates-dir` offer their own release (from 0.58.2, a
+build after a release tag, `X.Y.Z-N-gHASH`, offers release X.Y.Z; before, it offered nothing) to the
 network's devices (`ento admin updates`), and Linux and macOS agents install it themselves, checked
 the same way, with a rollback if it does not come up. `sudo ento update` (0.58) updates now, whatever
 the network's rollout says: the newest published release, checked the same way and only if newer,
@@ -849,7 +850,9 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   the dashboard's side bar opens (after a full sign-in there, and none that would leave them
   without a way to sign in their groups allow).
 - **Devices**: every device with its state, checks, last contact and the ento version it reported
-  (0.58; marked **old** when older than the control node's, and searchable), filtered (online, waiting,
+  (0.58; marked **old** when older than the control node's, **update failed** with the reason its
+  agent gave at its last check-in (0.58.2; also audited as `update_failed` when it changes), and
+  **update by hand** on Windows and Android, which do not update themselves yet; searchable), filtered (online, waiting,
   failing a check, suspended, admins) and searched; a device's panel shows its groups, its posture
   report and each check, and does what the admin commands do: approve and unapprove (**Sign out**
   for a device bound to a person, who gets it back by signing in again; **Unapprove** for others),

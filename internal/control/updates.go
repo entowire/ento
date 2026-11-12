@@ -19,7 +19,8 @@ import (
 	"entowire.com/ento/internal/update"
 )
 
-// Updates (0.37): a control node offers the network's devices the release it runs itself. It keeps
+// Updates (0.37): a control node offers the network's devices the release it runs itself (a build
+// after a release tag: that release, ownRelease). It keeps
 // that release's manifest, its two signatures and every file the manifest lists in
 // Config.UpdatesDir/<version>, downloaded from Config.Releases and checked with the keys built into
 // this binary, and serves them on PathUpdate to enrolled devices, which check them again with their
@@ -29,7 +30,24 @@ import (
 
 const releaseCheckInterval = time.Hour
 
-var releaseRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+var (
+	releaseRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	// buildRe: a build after a release tag (git describe: X.Y.Z-N-gHASH, maybe -dirty).
+	buildRe = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-[0-9]+-g[0-9a-f]+(-dirty)?$`)
+)
+
+// ownRelease is the release this node offers: the one it runs, or, for a build after a release tag,
+// that release (0.58.2: before, such a node offered nothing, and its network's devices stopped
+// updating while it ran). "" for anything else.
+func ownRelease(version string) string {
+	if releaseRe.MatchString(version) {
+		return version
+	}
+	if m := buildRe.FindStringSubmatch(version); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 type releaseCache struct {
 	mu        sync.Mutex
@@ -62,9 +80,9 @@ func (s *Server) setReleaseProblem(p string) {
 
 // prepareRelease makes this node's own release servable: verified on disk, or downloaded.
 func (s *Server) prepareRelease(ctx context.Context) error {
-	v := s.cfg.Version
-	if !releaseRe.MatchString(v) {
-		s.setReleaseProblem("this control node runs " + v + ", not a release")
+	v := ownRelease(s.cfg.Version)
+	if v == "" {
+		s.setReleaseProblem("this control node runs " + s.cfg.Version + ", not a release or a build of one")
 		return nil
 	}
 	s.release.mu.Lock()
@@ -123,8 +141,8 @@ func (s *Server) verifyReleaseDir(dir string) (*update.Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m.Version != s.cfg.Version {
-		return nil, fmt.Errorf("release %s: the manifest says %s", s.cfg.Version, m.Version)
+	if want := ownRelease(s.cfg.Version); m.Version != want {
+		return nil, fmt.Errorf("release %s: the manifest says %s", want, m.Version)
 	}
 	for _, f := range m.Files {
 		r, err := os.Open(filepath.Join(dir, f.Name))

@@ -118,9 +118,11 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request, self stor
 	if hw.signed {
 		suspend = false
 	}
-	var why, lastEndpoint string
+	var why, lastEndpoint, lastFailed string
+	failed := printable(req.UpdateFailed, 200)
 	_, err = s.cfg.Store.UpdateCheckIn(r.Context(), self.ID, func(c store.CheckIn, found bool) (store.CheckIn, error) {
-		why, lastEndpoint = "", c.Endpoint
+		why, lastEndpoint, lastFailed = "", c.Endpoint, c.UpdateFailed
+		c.UpdateFailed = failed
 		presented := ""
 		if req.Token != "" {
 			presented = hashToken(req.Token)
@@ -157,6 +159,10 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request, self stor
 	if err != nil {
 		s.respondStoreErr(w, err)
 		return
+	}
+	if failed != "" && failed != lastFailed {
+		// A self-update that failed, once per reason: administrators see it beside the version too.
+		s.audit(r, &self, "update_failed", peerLabel(self)+": "+failed, "failed")
 	}
 	if why == "" {
 		writeJSON(w, http.StatusOK, api.CheckInResponse{Token: next, RotateKey: hw.rotate})
@@ -268,6 +274,7 @@ func checkInInfo(out []api.PeerInfo, checkIns []store.CheckIn) {
 		if !c.At.IsZero() {
 			out[i].CheckedInAt = c.At.UTC().Format(time.RFC3339)
 		}
+		out[i].UpdateFailed = c.UpdateFailed
 		if c.Suspected != "" {
 			out[i].CloneSuspected = c.Suspected
 			out[i].CloneSuspectedAt = c.SuspectedAt.UTC().Format(time.RFC3339)

@@ -469,6 +469,8 @@ type CheckIn struct {
 	// Suspected says why the identity was last suspected to be in use on another machine, and when.
 	Suspected   string
 	SuspectedAt time.Time
+	// UpdateFailed is why the device's last self-update failed, as it said at its last check-in.
+	UpdateFailed string
 }
 
 // HWKey is a device's hardware-held key (0.31): a P-256 key its TPM keeps, which signs its

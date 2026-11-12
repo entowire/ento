@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS ento_policies (
 	UNIQUE (source, destination)
 );
 ALTER TABLE ento_tokens ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAULT '';
+ALTER TABLE ento_checkins ADD COLUMN IF NOT EXISTS update_failed text NOT NULL DEFAULT '';
 ALTER TABLE ento_peers ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAULT '';
 ALTER TABLE ento_peers ADD COLUMN IF NOT EXISTS approved_until timestamptz;
 ALTER TABLE ento_peers ADD COLUMN IF NOT EXISTS login_at timestamptz;
@@ -1933,12 +1934,12 @@ func (p *Postgres) DeleteApprovalsBefore(ctx context.Context, t time.Time) error
 
 // Check-ins change no network map either.
 
-const checkInColumns = `peer_id, cur, prev, fingerprint, endpoint, at, suspected, suspected_at`
+const checkInColumns = `peer_id, cur, prev, fingerprint, endpoint, at, suspected, suspected_at, update_failed`
 
 func scanCheckIn(row pgx.Row) (CheckIn, error) {
 	var c CheckIn
 	var at, sat *time.Time
-	if err := row.Scan(&c.PeerID, &c.Cur, &c.Prev, &c.Fingerprint, &c.Endpoint, &at, &c.Suspected, &sat); err != nil {
+	if err := row.Scan(&c.PeerID, &c.Cur, &c.Prev, &c.Fingerprint, &c.Endpoint, &at, &c.Suspected, &sat, &c.UpdateFailed); err != nil {
 		return c, err
 	}
 	if at != nil {
@@ -1971,10 +1972,10 @@ func (p *Postgres) UpdateCheckIn(ctx context.Context, peerID int64, fn func(c Ch
 			return err
 		}
 		next.PeerID = peerID
-		_, err = tx.Exec(ctx, `INSERT INTO ento_checkins (`+checkInColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		_, err = tx.Exec(ctx, `INSERT INTO ento_checkins (`+checkInColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT (peer_id) DO UPDATE SET cur = $2, prev = $3, fingerprint = $4, endpoint = $5, at = $6, suspected = $7,
-			suspected_at = $8`, peerID, next.Cur, next.Prev, next.Fingerprint, next.Endpoint, nullTime(next.At), next.Suspected,
-			nullTime(next.SuspectedAt))
+			suspected_at = $8, update_failed = $9`, peerID, next.Cur, next.Prev, next.Fingerprint, next.Endpoint, nullTime(next.At), next.Suspected,
+			nullTime(next.SuspectedAt), next.UpdateFailed)
 		out = next
 		return err
 	})

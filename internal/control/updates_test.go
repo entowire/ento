@@ -199,3 +199,12 @@ func mustPeer(t *testing.T, ctx context.Context, st store.Store, name string) st
 	t.Fatalf("no peer %s", name)
 	return store.Peer{}
 }
+
+func TestOwnRelease(t *testing.T) {
+	for v, want := range map[string]string{"0.58.2": "0.58.2", "0.58.2-3-g241ca5b": "0.58.2", "0.58.2-3-g241ca5b-dirty": "0.58.2",
+		"dev": "", "0.58": "", "0.58.2-rc1": ""} {
+		if got := ownRelease(v); got != want {
+			t.Errorf("ownRelease(%q) = %q, want %q", v, got, want)
+		}
+	}
+}

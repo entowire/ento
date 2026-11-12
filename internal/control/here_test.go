@@ -199,3 +199,42 @@ func TestHereInvitation(t *testing.T) {
 		t.Fatalf("laptop: user %q admin %v", got.User, got.Admin)
 	}
 }
+
+// TestUpdateFailedCheckIn: a device's word that its self-update failed is kept with its check-in
+// (for the dashboard), audited once per reason, and cleared when it no longer says so.
+func TestUpdateFailedCheckIn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv, st, logs := idNode(t, ctx)
+	tok, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true})
+	srv.checkVersion(ctx)
+	dev, res := enroll(t, tok, "laptop")
+	failed := func() string {
+		cs, err := st.CheckIns(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range cs {
+			if c.PeerID == peerAt(t, st, res.Address).ID {
+				return c.UpdateFailed
+			}
+		}
+		return "?"
+	}
+	var out api.CheckInResponse
+	for i := 0; i < 2; i++ {
+		if code := dev.do(t, "POST", api.PathCheckIn, api.CheckInRequest{Token: out.Token, UpdateFailed: "0.58.2: write /usr/local/bin/ento.new: read-only file system"}, &out); code != 200 {
+			t.Fatalf("check-in: %d", code)
+		}
+	}
+	if got := failed(); !strings.Contains(got, "read-only") {
+		t.Fatalf("stored %q", got)
+	}
+	if n := logs.count("action=update_failed"); n != 1 {
+		t.Fatalf("audited %d times, want once", n)
+	}
+	dev.do(t, "POST", api.PathCheckIn, api.CheckInRequest{Token: out.Token}, &out)
+	if got := failed(); got != "" {
+		t.Fatalf("not cleared: %q", got)
+	}
+}

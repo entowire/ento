@@ -15,4 +15,6 @@ func CheckPendingUpdate(stateDir, version string, logf func(string, ...any)) {}
 
 func (a *runner) confirmUpdate() {}
 
+func (a *runner) updateFailure() string { return "" }
+
 func (a *runner) maybeUpdate(ctx context.Context, ctl api.Control, u *api.Update) {}

@@ -116,6 +116,10 @@ func (a *runner) checkIns(ctx context.Context) {
 		req.FilterFailed = a.filterErr
 		req.HereGuard = a.hereGuard
 		a.mu.Unlock()
+		req.UpdateFailed = a.updateFailure()
+		if len(req.UpdateFailed) > 200 {
+			req.UpdateFailed = req.UpdateFailed[:200]
+		}
 		if len(req.FilterFailed) > 200 {
 			req.FilterFailed = req.FilterFailed[:200]
 		}

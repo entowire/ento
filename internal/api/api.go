@@ -470,6 +470,9 @@ type PeerInfo struct {
 	// Posture is the device's latest report (none yet: nil), received at PostureReportedAt.
 	Posture           *Posture `json:"posture,omitempty"`
 	PostureReportedAt string   `json:"posture_reported_at,omitempty"`
+	// UpdateFailed: why the device's last self-update failed, as it said at its last check-in
+	// (0.58.2; "": none, or an agent that does not say).
+	UpdateFailed string `json:"update_failed,omitempty"`
 	// PostureChecks is how the device does on every check of the network, now.
 	PostureChecks []PostureCheckResult `json:"posture_checks,omitempty"`
 }
@@ -920,6 +923,9 @@ type CheckInRequest struct {
 	// that only the device itself reaches its own sign-in there (0.57; constitution 2.5). Until a
 	// device says so (an older agent, or one that cannot), that sign-in refuses it.
 	HereGuard bool `json:"here_guard,omitempty"`
+	// UpdateFailed says why the device's last self-update failed (0.58.2; "VERSION: why", up to 200
+	// characters; "": none): shown to administrators beside its version, audited when it changes.
+	UpdateFailed string `json:"update_failed,omitempty"`
 }
 
 // HWKeyRequest binds a device's hardware-held key (0.31): its public key (PKIX DER, base64) and

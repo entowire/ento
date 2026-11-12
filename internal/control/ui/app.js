@@ -805,11 +805,21 @@ function olderVersion(a, b) {
   return false;
 }
 
-// The ento a device reported (with its posture), and whether it is older than the control node's.
+// The ento a device reported (with its posture), whether it is older than the control node's and,
+// if so, why it does not update: its last self-update failed (it says why at its check-ins), or it
+// is a kind of device that is updated by hand (Windows, phones).
 function versionOf(p) {
   const v = p.posture && p.posture.agent;
   if (!v) return el("span", { class: "dim", title: "no report from this device yet" }, "–");
+  if (p.update_failed) {
+    return el("span", { class: "mono" }, v, " ", badge("update failed", "bad", { title: p.update_failed }));
+  }
   if (olderVersion(v, info.version)) {
+    const os = ((p.posture && p.posture.os) || p.os || "").toLowerCase();
+    if (os === "windows" || os === "android") {
+      const how = os === "windows" ? "run the installer again on it" : "install the app's new version from entowire.com";
+      return el("span", { class: "mono" }, v, " ", badge("update by hand", "warn", { title: `${systemNames[os] || os} does not update by itself yet: ${how}` }));
+    }
     return el("span", { class: "mono", title: `older than the control node's ento ${info.version}` }, v, " ", badge("old", "warn"));
   }
   return el("span", { class: "mono" }, v);
