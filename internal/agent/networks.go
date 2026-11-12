@@ -16,12 +16,12 @@ import (
 
 // Several networks on one device (0.51). Besides the network the agent was installed with (the
 // first: its state is the state directory itself), each network the device joined with
-// `ento agent join DOMAIN` has a state directory of its own, <state dir>/networks/<domain>/:
+// `ento join DOMAIN` has a state directory of its own, <state dir>/networks/<domain>/:
 //
 //	network.json  the membership: its domain, range, interface and WireGuard port (written by join)
 //	enroll.token  the invitation, until the agent has redeemed it
 //	error         why the last enrollment failed
-//	remove        written by `ento agent leave`: forget the network on this device
+//	remove        written by `ento leave`: forget the network on this device
 //	state.json, agent.json, ...  what the first network keeps in the state directory, for this one
 //
 // Each network runs in the device's own namespace on an interface of its own, as an equal of the
@@ -180,7 +180,7 @@ func CheckJoin(stateDir, domain string, network netip.Prefix) error {
 		}
 	}
 	if exists(NetworkDir(stateDir, domain)) {
-		return fmt.Errorf("%s is being joined already (ento agent leave %s gives up)", domain, domain)
+		return fmt.Errorf("%s is being joined already (ento leave %s gives up)", domain, domain)
 	}
 	return nil
 }

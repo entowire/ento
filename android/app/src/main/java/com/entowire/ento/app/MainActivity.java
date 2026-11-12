@@ -413,7 +413,7 @@ public class MainActivity extends Activity {
             String result;
             try {
                 Mobile.enrollWords(Agent.stateDir(this), record, words, Agent.hostname(this));
-                result = "Enrolled. Now connect.";
+                result = "Enrolled. Connecting...";
             } catch (Exception e) {
                 result = "Joining failed: " + e.getMessage();
             }
@@ -425,6 +425,10 @@ public class MainActivity extends Activity {
                     joinWords.setText("");
                     joinRecord = null;
                     joinInfo.setVisibility(View.GONE);
+                    // Joined with words: connect and sign in, in one go (0.57). For a network's first
+                    // administrator the sign-in is their account's setup, which ends signed in.
+                    signInOnceConnected = true;
+                    toggle();
                 }
                 show();
             });
@@ -455,6 +459,34 @@ public class MainActivity extends Activity {
 
     private void startVpn() {
         startService(new Intent(this, EntoVpnService.class).setAction(EntoVpnService.START));
+        if (signInOnceConnected) {
+            signInOnceConnected = false;
+            signInWhenReady();
+        }
+    }
+
+    /** Set when the phone just joined with words: the sign-in starts once it is connected. */
+    private boolean signInOnceConnected;
+
+    /** Waits (at most a minute) until the agent runs and has its network map, then signs in. */
+    private void signInWhenReady() {
+        message.setText("Connecting, then signing in...");
+        new Thread(() -> {
+            for (int i = 0; i < 120; i++) {
+                try {
+                    JSONObject st = new JSONObject(Mobile.status(Agent.stateDir(this)));
+                    if (st.optBoolean("running") && st.has("approved")) {
+                        if (st.optString("user").isEmpty()) runOnUiThread(this::signIn);
+                        return;
+                    }
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Exception ignored) {
+                }
+            }
+            runOnUiThread(() -> message.setText("Connected? Tap Sign in when the phone is."));
+        }).start();
     }
 
     private void signIn() {

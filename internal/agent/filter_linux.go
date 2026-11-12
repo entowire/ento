@@ -15,6 +15,7 @@ import (
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 
+	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/ports"
 )
 
@@ -272,6 +273,18 @@ func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) erro
 				&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(dir[1])},
 				&expr.Counter{}, &expr.Verdict{Kind: expr.VerdictDrop}}})
 		}
+	}
+	// Nothing the device forwards (from containers, virtual machines, a network behind it) reaches
+	// its control nodes' sign-in port: a person signed in there is signed in on this device, so only
+	for _, a := range controls {
+		c.AddRule(&nftables.Rule{Table: t, Chain: forward(), Exprs: slices.Concat(
+			[]expr.Any{&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(ifName)},
+				&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.NFPROTO_IPV4}}},
+			to(netip.PrefixFrom(a, 32)),
+			[]expr.Any{&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.IPPROTO_TCP}}},
+			[]expr.Any{&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryutil.BigEndian.PutUint16(api.SignInPort)},
+				&expr.Counter{}, &expr.Verdict{Kind: expr.VerdictDrop}})})
 	}
 	if (len(f.serves) > 0 || len(exiting) > 0) && f.overlay.IsValid() {
 		// Forwarded traffic leaves with the gateway's own LAN address, so the LAN needs no route back;

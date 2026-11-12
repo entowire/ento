@@ -149,6 +149,9 @@ type deviceLogin struct {
 	errMsg  string
 	expires time.Time
 
+	// here: a sign-in on the device's own page (here.go), which tells the store when it is done.
+	here bool
+
 	// A sign-in for an app (startApp): what finishApp checks and sends to the token endpoint. The
 	// verifier and the nonce never leave the control node.
 	app      bool
@@ -230,7 +233,7 @@ func (o *oidcProvider) postForm(ctx context.Context, endpoint string, form url.V
 }
 
 // start begins a device login for a peer and polls the token endpoint in the background.
-func (o *oidcProvider) start(ctx context.Context, peerID int64, onDone func(claims idClaims, refreshToken string)) (api.LoginStart, error) {
+func (o *oidcProvider) start(ctx context.Context, peerID int64, onDone func(claims idClaims, refreshToken string) error) (api.LoginStart, error) {
 	d, err := o.discover(ctx)
 	if err != nil {
 		return api.LoginStart{}, err
@@ -306,6 +309,31 @@ func (o *oidcProvider) startApp(ctx context.Context, peerID int64, redirect, log
 		ExpiresIn: int(appLoginLifetime / time.Second)}, nil
 }
 
+// startHere waits for a sign-in on the device's own page (here.go), which link opens.
+func (o *oidcProvider) startHere(peerID int64, link string) api.LoginStart {
+	o.mu.Lock()
+	o.logins[peerID] = &deviceLogin{state: "pending", here: true, expires: time.Now().Add(appLoginLifetime)} // ends any other
+	o.mu.Unlock()
+	return api.LoginStart{AuthorizationURL: link, ExpiresIn: int(appLoginLifetime / time.Second)}
+}
+
+// hereDone ends a device's wait for a sign-in on its own page: done as user ("": not yet; expired
+// once its time is up).
+func (o *oidcProvider) hereDone(peerID int64, user string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	l := o.logins[peerID]
+	if l == nil || !l.here || l.state != "pending" {
+		return
+	}
+	switch {
+	case user != "":
+		l.state, l.user = "done", user
+	case time.Now().After(l.expires):
+		l.state, l.errMsg = "failed", "login expired"
+	}
+}
+
 // appRedirect reports whether redirect is an app's address this control node may send sign-ins to.
 func (o *oidcProvider) appRedirect(redirect string) bool {
 	return redirect != "" && slices.Contains(o.cfg.AppRedirects, redirect)
@@ -318,7 +346,7 @@ var errAppLogin = errors.New("no sign-in of this device is waiting for this code
 // finishApp completes the device's sign-in for an app with what the provider sent the app: the
 // code is exchanged (with the verifier) only when the state is the one this device's sign-in sent;
 // the ID token must carry its nonce. It succeeds once: the sign-in is over either way.
-func (o *oidcProvider) finishApp(ctx context.Context, peerID int64, req api.LoginCodeRequest, onDone func(idClaims, string)) (deviceLogin, error) {
+func (o *oidcProvider) finishApp(ctx context.Context, peerID int64, req api.LoginCodeRequest, onDone func(idClaims, string) error) (deviceLogin, error) {
 	o.mu.Lock()
 	login := o.logins[peerID]
 	ok := login != nil && login.app && login.state == "pending" && time.Now().Before(login.expires) &&
@@ -358,11 +386,13 @@ func (o *oidcProvider) finishApp(ctx context.Context, peerID int64, req api.Logi
 	if err != nil {
 		return finish("failed", "", "invalid ID token: "+err.Error()), nil
 	}
-	onDone(claims, tok.RefreshToken)
+	if err := onDone(claims, tok.RefreshToken); err != nil {
+		return finish("failed", "", err.Error()), nil
+	}
 	return finish("done", claims.name(), ""), nil
 }
 
-func (o *oidcProvider) poll(d *oidcDiscovery, peerID int64, login *deviceLogin, deviceCode string, interval time.Duration, onDone func(idClaims, string)) {
+func (o *oidcProvider) poll(d *oidcDiscovery, peerID int64, login *deviceLogin, deviceCode string, interval time.Duration, onDone func(idClaims, string) error) {
 	finish := func(state, user, msg string) {
 		o.mu.Lock()
 		login.state, login.user, login.errMsg = state, user, msg
@@ -408,7 +438,10 @@ func (o *oidcProvider) poll(d *oidcDiscovery, peerID int64, login *deviceLogin, 
 			finish("failed", "", "invalid ID token: "+err.Error())
 			return
 		}
-		onDone(claims, tok.RefreshToken)
+		if err := onDone(claims, tok.RefreshToken); err != nil {
+			finish("failed", "", err.Error())
+			return
+		}
 		finish("done", claims.name(), "")
 		return
 	}

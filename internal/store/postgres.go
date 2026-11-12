@@ -325,6 +325,9 @@ func (p *Postgres) migrate(ctx context.Context) error {
 	if _, err := p.pool.Exec(ctx, schema); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
+	if _, err := p.pool.Exec(ctx, idSchema); err != nil {
+		return fmt.Errorf("create the identity provider's schema: %w", err)
+	}
 	var network string
 	err := p.pool.QueryRow(ctx,
 		`INSERT INTO ento_settings (key, value) VALUES ('network', $1)
@@ -449,6 +452,11 @@ func (p *Postgres) Version(ctx context.Context) (int64, error) {
 func isUniqueViolation(err error) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && pe.Code == "23505"
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && pe.Code == "23503"
 }
 
 func (p *Postgres) ControlNodeSeen(ctx context.Context, name string, at time.Time) error {

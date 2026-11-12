@@ -480,7 +480,7 @@ func (t *tray) status() {
 	case !v.reachable && v.err != "":
 		text += "\n\n" + v.err
 	case !v.reachable:
-		text += "\n\nThe ento service is stopped or older than 0.35. An administrator can check it with: ento agent status"
+		text += "\n\nThe ento service is stopped or older than 0.35. An administrator can check it with: ento status"
 	default:
 		if v.st.UserName != "" && v.st.UserName != v.st.User {
 			text += " (" + agent.Printable(v.st.UserName) + ")"

@@ -284,6 +284,26 @@ func (s *Server) syncGroups(ctx context.Context) {
 	if err := s.people.ensureGroups(ctx, builtinDeviceGroups); err != nil {
 		return
 	}
+	if s.people.kind() == "ento" {
+		// The control nodes' own provider: its groups are the network's, deleted only through ento
+		// (which takes them off devices then). So a group a device has and the provider does not
+		// know (a network whose sign-in just moved here) is added, never taken off the device.
+		peers, err := s.cfg.Store.Peers(ctx)
+		if err != nil {
+			return
+		}
+		var used []string
+		for _, p := range peers {
+			if p.Authority == "" {
+				used = append(used, slices.DeleteFunc(slices.Clone(p.Machine.Groups), func(g string) bool { return !isDeviceGroup(g) })...)
+			}
+		}
+		slices.Sort(used)
+		if err := s.people.ensureGroups(ctx, slices.Compact(used)); err != nil {
+			s.cfg.Logf("groups of the devices into the identity provider: %v", err)
+		}
+		return
+	}
 	have, err := s.people.groups(ctx)
 	if err != nil {
 		return

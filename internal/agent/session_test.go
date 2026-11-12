@@ -20,7 +20,7 @@ func (f *fakeSessionOps) status() SessionReply {
 	return SessionReply{Event: "status", User: "anna", SessionActive: true, Version: "test"}
 }
 
-func (f *fakeSessionOps) startLogin(context.Context) (string, string, func(context.Context) (LoginResult, error), error) {
+func (f *fakeSessionOps) startLogin(context.Context, bool) (string, string, func(context.Context) (LoginResult, error), error) {
 	return "https://id.example.com/device?code=ABCD", "ABCD", func(ctx context.Context) (LoginResult, error) {
 		if f.block {
 			<-ctx.Done()
@@ -45,7 +45,7 @@ func exchangeAs(t *testing.T, s *sessionServer, ctx context.Context, op string, 
 	client, server := net.Pipe()
 	go s.serve(context.Background(), server, `PC\anna (process 1, session 1)`, mayAct)
 	var got []SessionReply
-	err := sessionExchange(ctx, client, op, func(r SessionReply) error {
+	err := sessionExchange(ctx, client, SessionRequest{Op: op}, func(r SessionReply) error {
 		got = append(got, r)
 		return nil
 	})
@@ -109,7 +109,7 @@ func TestSessionLoginReplaced(t *testing.T) {
 	go func() {
 		client, server := net.Pipe()
 		go s.serve(context.Background(), server, "first", true)
-		first <- sessionExchange(context.Background(), client, "login", func(r SessionReply) error {
+		first <- sessionExchange(context.Background(), client, SessionRequest{Op: "login"}, func(r SessionReply) error {
 			if r.Event == "link" {
 				close(linked)
 			}

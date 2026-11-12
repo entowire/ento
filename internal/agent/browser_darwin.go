@@ -22,3 +22,8 @@ func openBrowser(url string) bool {
 	}
 	return exec.Command("open", url).Start() == nil
 }
+
+// canOpenBrowser reports whether openBrowser may open a link here: always, unless turned off. (Only
+// the Linux agent guards the device's own sign-in so far, so elsewhere the control nodes answer
+// with a device code whatever this says.)
+func canOpenBrowser() bool { return os.Getenv("ENTO_NO_BROWSER") == "" }

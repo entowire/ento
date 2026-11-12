@@ -47,6 +47,7 @@ type Memory struct {
 	signUse  map[int64]SignInCode // PersonSince and, in ExpiresAt, when the device last signed someone in
 	settings map[string]string
 	audit    []AuditEntry
+	idp      idMemory
 	nextID   int64
 }
 

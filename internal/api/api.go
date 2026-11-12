@@ -52,6 +52,11 @@ const (
 	// state the provider sent back to the app (LoginCodeRequest; 0.56).
 	PathLoginCode = "/v1/login/code"
 	ControlPort   = 80
+	// SignInPort is where control nodes serve their identity provider's device sign-in, on their
+	// overlay addresses (0.57): a person who signs in there is signed in on the device the browser
+	// runs on. Agents drop everything they forward to it (CheckInRequest.HereGuard), so only the
+	// device itself gets there.
+	SignInPort = 4443
 
 	// Linked networks. In the linked network: authorities (admin) and credential renewal (devices
 	// admitted by an authority). In the home network: links (admin) and credentials for its
@@ -141,7 +146,8 @@ type NetMap struct {
 	// Filter: each peer carries what it may open on this device (Peer.Accept), and the agent
 	// refuses every other new connection from the network; answers to this device's own
 	// connections, and the control nodes, always pass. Maps of older control nodes have no
-	// filter: everything from a peer passes.
+	// filter: everything from a peer passes; nor had those of devices not approved yet, before 0.57
+	// (no peers, but no filter either, so nothing kept their forwarding from the device sign-in).
 	Filter bool `json:"filter,omitempty"`
 	// Hosts are names of the network's services (e.g. its identity provider) with their overlay
 	// addresses, for devices that have no DNS for this network (linked networks).
@@ -671,13 +677,18 @@ type PostureCheckResult struct {
 // hands the code to PathLoginCode; elsewhere, and without a body, a device sign-in.
 type LoginStartRequest struct {
 	Redirect string `json:"redirect,omitempty"`
+	// Here: the device can open the sign-in in a browser of its own (0.57), so a device that keeps
+	// its sign-in port to itself (CheckInRequest.HereGuard) gets the device's own sign-in, as
+	// AuthorizationURL: nothing to type, and nothing anyone could send someone else.
+	Here bool `json:"here,omitempty"`
 }
 
 // LoginStart is returned when a device starts an SSO login. A device sign-in (OAuth 2.0 device
 // authorization grant): the user opens VerificationURI and types UserCode in a browser.
 // VerificationURIComplete (the link with the code in it) stays empty since 0.50: control nodes no
 // longer pass it on. A sign-in for an app (LoginStartRequest.Redirect): AuthorizationURL is opened
-// instead, and there is no code to type.
+// instead, and there is no code to type; so is the device's own sign-in (LoginStartRequest.Here),
+// whose page ends the sign-in itself: LoginStatus says when it is done.
 type LoginStart struct {
 	VerificationURI         string `json:"verification_uri,omitempty"`
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
@@ -905,6 +916,10 @@ type CheckInRequest struct {
 	// characters): until it can, its only peers are its control nodes, which audit it
 	// (filter_failed) at each check-in.
 	FilterFailed string `json:"filter_failed,omitempty"`
+	// HereGuard: the device drops everything it would forward to its control nodes' SignInPort, so
+	// that only the device itself reaches its own sign-in there (0.57; constitution 2.5). Until a
+	// device says so (an older agent, or one that cannot), that sign-in refuses it.
+	HereGuard bool `json:"here_guard,omitempty"`
 }
 
 // HWKeyRequest binds a device's hardware-held key (0.31): its public key (PKIX DER, base64) and

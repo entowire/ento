@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"io"
 	"io/fs"
@@ -99,6 +100,32 @@ func (s *Server) start443(ctx context.Context, idpTargets []string) error {
 		}()
 		s.cfg.Logf("admin interface on https://%s (%s:443)", s.cfg.AdminUI, s.self.Address)
 	}
+	var idLn *connListener
+	if s.id != nil && !s.cfg.ID.Disabled {
+		certs := &certFiles{cert: s.cfg.ID.Cert, key: s.cfg.ID.CertKey}
+		if _, err := certs.get(nil); err != nil {
+			ln.Close()
+			return fmt.Errorf("identity provider's certificate: %w", err)
+		}
+		idLn = newConnListener(ln.Addr())
+		srv := &http.Server{
+			Handler:           s.id.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			BaseContext:       func(net.Listener) context.Context { return ctx },
+		}
+		tlsConf := &tls.Config{GetCertificate: certs.get, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
+		go func() {
+			if err := srv.Serve(tls.NewListener(idLn, tlsConf)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.cfg.Logf("identity provider: %v", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			srv.Close()
+		}()
+		s.cfg.Logf("identity provider on https://%s (%s:443)", s.cfg.ID.Name, s.self.Address)
+	}
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -109,14 +136,14 @@ func (s *Server) start443(ctx context.Context, idpTargets []string) error {
 			if err != nil {
 				return
 			}
-			go s.dispatch443(ctx, c, idpTargets, ui)
+			go s.dispatch443(ctx, c, idpTargets, ui, idLn)
 		}
 	}()
 	return nil
 }
 
-func (s *Server) dispatch443(ctx context.Context, c net.Conn, idpTargets []string, ui *connListener) {
-	if ui == nil && len(s.cfg.Forwards) == 0 {
+func (s *Server) dispatch443(ctx context.Context, c net.Conn, idpTargets []string, ui, idLn *connListener) {
+	if ui == nil && idLn == nil && len(s.cfg.Forwards) == 0 {
 		s.forwardIdentity(ctx, c, idpTargets)
 		return
 	}
@@ -138,6 +165,8 @@ func (s *Server) dispatch443(ctx context.Context, c net.Conn, idpTargets []strin
 		if !ui.push(replay) {
 			c.Close()
 		}
+	case idLn != nil && isIDName(s.cfg.ID, name):
+		s.serveID(ctx, replay, idLn)
 	case len(targets) > 0:
 		s.passThrough(ctx, replay, targets, "forward_connection", name, name, s.cfg.ForwardPeople[strings.ToLower(name)])
 	case len(idpTargets) > 0:
@@ -307,15 +336,18 @@ func (s *Server) adminUIHandler() http.Handler {
 				return
 			}
 		}
-		if r.URL.Path == uiSignInPath || r.URL.Path == uiCallbackPath {
+		if r.URL.Path == uiSignInPath || r.URL.Path == uiCallbackPath || r.URL.Path == uiHerePath {
 			h.Set("Cache-Control", "no-store")
 			if r.Method != http.MethodGet {
 				writeErr(w, http.StatusMethodNotAllowed, "GET")
 				return
 			}
-			if r.URL.Path == uiSignInPath {
+			switch r.URL.Path {
+			case uiSignInPath:
 				s.uiSignIn(w, r, device)
-			} else {
+			case uiHerePath:
+				s.uiHere(w, r, device)
+			default:
 				s.uiCallback(w, r, device)
 			}
 			return
@@ -444,9 +476,11 @@ type uiState struct {
 	Code      string `json:"code,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 	// SignIn: the page can also open its session by signing in (/ui/signin, 0.49); Person, who is
-	// signed in on the device in ento (the one who may).
+	// signed in on the device in ento (the one who may). Here: that sign-in is the device's own
+	// (here.go, 0.57), which signs anyone in on the device first, so Person need not be there.
 	SignIn bool   `json:"sign_in,omitempty"`
 	Person string `json:"person,omitempty"`
+	Here   bool   `json:"here,omitempty"`
 }
 
 // uiCurrent returns the session the request's cookie names, if it is this device's and alive.

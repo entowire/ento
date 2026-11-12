@@ -9,7 +9,7 @@ import (
 // protectStateDir gives a state directory a protected DACL (SYSTEM and Administrators only): it
 // holds the device's private key, which signs the device's calls, and would otherwise inherit
 // C:\ProgramData's read access for local users. Applied wherever state is written, not only at
-// install, so a device enrolled with `ento agent up` is protected too.
+// install, so a device enrolled with `ento up` is protected too.
 func protectStateDir(dir string) error {
 	sd, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
 	if err != nil {

@@ -49,7 +49,7 @@ func TestUnitArgs(t *testing.T) {
 	// A unit written by hand (or by other tooling), its command continued on a second line.
 	member := "[Service]\n" +
 		"ExecStartPre=+/usr/bin/mkdir -p -m 0700 /var/lib/ento\n" +
-		"ExecStart=/opt/ento/bin/ento agent up --state-dir /var/lib/ento --interface ento0 \\\n" +
+		"ExecStart=/opt/ento/bin/ento up --state-dir /var/lib/ento --interface ento0 \\\n" +
 		"  --listen-port 51830 --mtu 1380\n"
 	args = unitArgs(member)
 	if stateDirArg(args) != "/var/lib/ento" || !slices.Contains(args, "--listen-port") {

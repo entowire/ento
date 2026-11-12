@@ -38,8 +38,8 @@
   <main class="signin-card">
     <div>
       <h1 id="signin-title">Open the dashboard</h1>
-      <p class="lead">This page opens only after you approve it from this device, with the key only ento holds, or sign in as
-        the person signed in on it. It must be an administrator or operator device.</p>
+      <p class="lead">This page opens only after you approve it from this device, with the key only ento holds, or after you
+        sign in on it. It must be an administrator or operator device.</p>
     </div>
     <div class="step" id="signin-sso" hidden>
       <a class="btn primary" id="signin-sso-go" href="/ui/signin">Sign in</a>
@@ -313,7 +313,11 @@
           <label><span class="sr">Kind</span><select class="input" name="kind"></select></label>
         </form>
         <div class="list feed" id="act-list"></div>
-        <div class="pad" id="act-more" hidden><button type="button" class="btn sm" id="act-older">Older entries</button></div>
+        <nav class="pager" id="act-pager" aria-label="Pages of the activity" hidden>
+          <button type="button" class="btn sm" id="act-newer">Newer</button>
+          <span class="dim" id="act-page" aria-live="polite">Page 1</span>
+          <button type="button" class="btn sm" id="act-older">Older</button>
+        </nav>
       </section>
     </section>
 

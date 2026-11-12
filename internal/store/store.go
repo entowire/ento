@@ -649,6 +649,9 @@ const MaxAuditPage = 1000
 type Store interface {
 	Close() error
 
+	// The network's own identity provider (id.go).
+	IDStore
+
 	// AddAudit appends an entry to the audit (its ID is given by the store, At kept as given); the
 	// audit is never changed or shortened. Audit returns entries as the query asks.
 	AddAudit(ctx context.Context, e AuditEntry) error

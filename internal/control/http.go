@@ -331,11 +331,13 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	var grant *store.Grant
 	var claims credential.Claims
 	var replaces *store.Peer // the device a named token (or a new membership) takes over from, for the record
+	var tokenID int64        // the token being redeemed, for its invitation (invite.go)
 	if tokens, err := s.cfg.Store.ActiveTokens(r.Context(), time.Now()); err == nil {
 		for _, t := range tokens {
 			if t.TempAddress != addr {
 				continue
 			}
+			tokenID = t.ID
 			if t.Name != "" && t.Replace {
 				if old, err := s.peerNamed(r.Context(), t.Name); err == nil {
 					replaces = &old
@@ -396,6 +398,9 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Logf("redeem: %v", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if tokenID != 0 && grant == nil {
+		s.takeInvitation(r.Context(), tokenID, peer)
 	}
 	if placed, err := s.placeNewDevice(r.Context(), peer); err != nil {
 		s.cfg.Logf("place new device %s: %v", peer.Hostname, err)
@@ -1303,7 +1308,11 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 	}
 	var start api.LoginStart
 	var err error
-	if s.oidc.appRedirect(req.Redirect) {
+	if req.Here && s.hereOn() && s.hereGuarded(r.Context(), self) {
+		// The device's own sign-in (here.go): opened in the device's browser, nothing to type.
+		s.takeHereDone(r.Context(), self.ID) // an older one is not this one
+		start = s.oidc.startHere(self.ID, s.id.HereURL(""))
+	} else if s.oidc.appRedirect(req.Redirect) {
 		hint := self.UserLogin
 		if hint == "" && strings.Contains(self.UserName, "@") {
 			hint = self.UserName
@@ -1317,19 +1326,33 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request, self s
 		writeErr(w, http.StatusBadGateway, "identity provider unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, start)
+	writeJSON(w, http.StatusOK, s.inviteStart(r, self, start))
 }
 
 // loginDone applies a completed sign-in of device self: the person's rights from their groups, the
 // refresh token kept, the audit.
-func (s *Server) loginDone(self store.Peer) func(c idClaims, refreshToken string) {
-	return func(c idClaims, refreshToken string) {
+func (s *Server) loginDone(self store.Peer) func(c idClaims, refreshToken string) error {
+	return func(c idClaims, refreshToken string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		return s.bindPerson(ctx, self, c, refreshToken, "")
+	}
+}
+
+// bindPerson signs a person in on device self (any person on any device; the one before is signed
+// out), but not on a device invited for another account. via says how, for the audit ("": a device
+// code, or an app's sign-in).
+func (s *Server) bindPerson(ctx context.Context, self store.Peer, c idClaims, refreshToken, via string) error {
+	{
+		// A device invited for an account (invite.go) is that account's: nobody else's sign-in binds it.
+		if want := s.invitedPerson(ctx, self.ID); want != "" && c.Subject != want {
+			s.audit(nil, &self, "login", fmt.Sprintf("%s: %s signed in on a device invited for account %s: refused", peerLabel(self), c.name(), want), "denied")
+			return errors.New("this device was invited for another account: sign in with that one")
+		}
 		p, err := applyLogin(ctx, s.cfg.Store, s.oidc.cfg, self.ID, c)
 		if err != nil {
 			s.cfg.Logf("sso login for peer %d: %v", self.ID, err)
-			return
+			return errors.New("the sign-in could not be applied")
 		}
 		s.keepSSOToken(ctx, p.ID, c.Subject, refreshToken)
 		s.cfg.Logf("sso: peer %d %s is now %q (approved=%v admin=%v operator=%v groups=%q)", p.ID, p.Hostname, p.UserName,
@@ -1346,9 +1369,13 @@ func (s *Server) loginDone(self store.Peer) func(c idClaims, refreshToken string
 			binding = "changed"
 		}
 		// binding=... ends the line, for tools that read it.
-		s.audit(nil, &p, "login", fmt.Sprintf("%s approved=%v admin=%v operator=%v groups=%s binding=%s", peerLabel(p), p.Approved, p.Admin,
+		if via != "" {
+			via = " " + via
+		}
+		s.audit(nil, &p, "login", fmt.Sprintf("%s%s approved=%v admin=%v operator=%v groups=%s binding=%s", peerLabel(p), via, p.Approved, p.Admin,
 			p.Operator, strings.Join(p.Groups, ","), binding), "ok")
 		s.checkVersion(ctx)
+		return nil
 	}
 }
 
@@ -1385,6 +1412,13 @@ func (s *Server) handleLoginStatus(w http.ResponseWriter, r *http.Request, self 
 	if s.oidc == nil {
 		writeErr(w, http.StatusNotImplemented, "SSO is not configured on this deployment")
 		return
+	}
+	if l, ok := s.oidc.status(self.ID); ok && l.here && l.state == "pending" {
+		// Signed in on the device's own page, on whichever control node served it.
+		s.oidc.hereDone(self.ID, s.takeHereDone(r.Context(), self.ID))
+		if p, err := s.cfg.Store.PeerByAddress(r.Context(), self.Address); err == nil {
+			self = p // approved by that sign-in
+		}
 	}
 	l, ok := s.oidc.status(self.ID)
 	if !ok {

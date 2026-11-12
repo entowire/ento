@@ -64,7 +64,7 @@ func openUserspace(name string, port, mtu int, logf func(string, ...any)) (*user
 		return nil, err
 	}
 	// The standard WireGuard control socket (a Unix socket in /var/run/wireguard, a named pipe on
-	// Windows), so other processes read the device as they would the kernel's: `ento agent status`,
+	// Windows), so other processes read the device as they would the kernel's: `ento status`,
 	// `wg show`.
 	if l, err := uapiListen(real); err != nil {
 		logf("wireguard control socket: %v", err)

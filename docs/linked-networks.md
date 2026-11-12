@@ -126,7 +126,7 @@ registers a separate authority for them (e.g. `msp-mon` allowed to assign `monit
 policy for that group only; the home network makes a separate link for it (`link create acme-mon
 --groups servers --grant monitoring`), which the devices join under that name.
 
-    ento agent status          # shows linked networks, addresses and approval expiry
+    ento status          # shows linked networks, addresses and approval expiry
     sudo ento agent unlink acme
 
 Leaving (0.28) deletes the membership in the linked network too: the device tells its control
@@ -146,7 +146,7 @@ home network requires the same check of the device, a failure it still holds bac
 home control plane decides at every credential request (joining and each renewal):
 
 - a device that fails gets no credential and, joining, no token; the answer names the checks and
-  why (`enc (disk not encrypted)`), and `ento agent status` shows them:
+  why (`enc (disk not encrypted)`), and `ento status` shows them:
 
       link acme: FAILS check enc: disk not encrypted, which this network's link requires: no credential for acme until it passes
 
@@ -196,7 +196,7 @@ own policy what they reach.
   on links need 0.14.0 on **every** control node of the home network before a link requires any (an
   older one issues credentials without looking at them, and can delete a check a link requires:
   devices are then refused with `no such check` until the link is updated), and devices reporting their posture (0.13.0
-  or later; 0.14.0 shows a refusal in `ento agent status`).
+  or later; 0.14.0 shows a refusal in `ento status`).
 
 ## Administering a linked network
 

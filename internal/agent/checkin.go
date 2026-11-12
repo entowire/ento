@@ -114,6 +114,7 @@ func (a *runner) checkIns(ctx context.Context) {
 			PersonIdle: &idle, BootID: bootID()}
 		a.mu.Lock()
 		req.FilterFailed = a.filterErr
+		req.HereGuard = a.hereGuard
 		a.mu.Unlock()
 		if len(req.FilterFailed) > 200 {
 			req.FilterFailed = req.FilterFailed[:200]

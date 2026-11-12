@@ -356,7 +356,7 @@ func endLink(ctx context.Context, cfg Config, a *runner, set func(time.Time)) {
 }
 
 // renewOnce renews the device's credential for a linked network. A refusal of the home network over
-// the device's posture is kept in homeFailing (for ento agent status) until a renewal succeeds;
+// the device's posture is kept in homeFailing (for ento status) until a renewal succeeds;
 // stale reports a refusal only for want of a recent posture report (homeCredential); refused, any
 // other refusal of the home network (it answered: this device gets no credential).
 func renewOnce(ctx context.Context, home *runner, a *runner, name, homeFailing string, set func(time.Time)) (stale, refused bool, err error) {

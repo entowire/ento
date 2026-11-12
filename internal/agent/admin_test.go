@@ -55,7 +55,7 @@ func TestAdminClientSigns(t *testing.T) {
 }
 
 // A link's refusal over the device's posture carries the failing checks, which the agent keeps
-// for ento agent status until it gets a credential again.
+// for ento status until it gets a credential again.
 func TestPostureRefusal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -89,7 +89,7 @@ func TestPostureRefusal(t *testing.T) {
 	}
 }
 
-// homeCredential keeps the home network's answer for ento agent status (the failing checks of a
+// homeCredential keeps the home network's answer for ento status (the failing checks of a
 // refusal over posture, cleared by a credential, untouched when no control node answered) and asks
 // for a posture report at once when the refusal was only for want of a recent one.
 func TestHomeCredential(t *testing.T) {

@@ -400,5 +400,7 @@ body.viewer :is(.row-actions, .dfoot, .builder, #add-device, [data-add-device], 
   .feed > .item { grid-template-columns: minmax(0, 1fr) auto; }
   .feed .when { grid-column: 1 / -1; }
 }
-#act-more { padding: 14px 20px; }
+/* The activity a page at a time: newer on the left, older on the right, the page between. */
+#act-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; }
+#act-pager button:disabled { visibility: hidden; }
 #ov-activity > .item { grid-template-columns: 6.5em minmax(0, 1fr) auto; }

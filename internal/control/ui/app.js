@@ -251,11 +251,21 @@ let pairing = null; // the timer that asks whether the code was approved
 // that first and keeps the commands for computers below; only the wording changes, not what counts.
 const onPhone = /Android/i.test(navigator.userAgent);
 
-// The network's sign-in opens the page too (0.49), for the person signed in on this device in ento.
+// The network's sign-in opens the page too (0.49), for the person signed in on this device in ento,
+// or, on a device that keeps its own sign-in to itself (0.57), for anyone who signs in on it there.
 function showSignIn(st) {
   $("signin-sso").hidden = !st.sign_in;
   if (!st.sign_in) return;
   const go = $("signin-sso-go");
+  if (st.here) {
+    // The device's own sign-in (0.57): anyone with an account, signed in on this device as they go.
+    go.hidden = false;
+    go.textContent = "Sign in";
+    $("signin-sso-hint").textContent = "With your passkey. It signs you in on this device too" +
+      (st.person ? ` (${st.person} is signed out if you are someone else)` : "") +
+      ", and the page then stays open while you are signed in here.";
+    return;
+  }
   go.hidden = !st.person;
   go.textContent = st.person ? `Sign in as ${st.person}` : "Sign in";
   $("signin-sso-hint").textContent = st.person
@@ -1893,8 +1903,11 @@ show();
 
 // --- activity: the network's audit (ento 0.53) ----------------------------------------------------
 // Every change and refusal, newest first, as the control nodes recorded them; the Overview shows the
-// latest few. Entries are only ever added.
-const act = { entries: [], more: false, actions: new Set(), query: "" };
+// latest few. Entries are only ever added. Read a page at a time (0.57): cursors holds where each page
+// read so far starts (the id it is older than; 0 for the newest), so Newer goes back without asking
+// the server for anything but that page again.
+const actPage = 50;
+const act = { entries: [], more: false, actions: new Set(), query: "", cursors: [0] };
 const actionNames = {
   policy_added: "Rule added", policy_deleted: "Rule removed", policy_rules: "Rule's ports changed", policy_posture: "Rule's checks changed",
   forward_connection: "Forwarded service", idp_connection: "Sign-in service", admin_api: "Administration", control_cli: "Command line",
@@ -1926,29 +1939,26 @@ function activityQuery(before) {
   if (f.kind.value) q.set("action", f.kind.value);
   $("act-export").href = "/v1/admin/audit?" + new URLSearchParams([...q, ["format", "csv"]]);
   if (before) q.set("before", String(before));
-  q.set("limit", "100");
+  q.set("limit", String(actPage));
   return q.toString();
 }
 
-// loadActivity reads the first page again (a refresh keeps what was read further down and adds what
-// is new on top), or the next older page.
-async function loadActivity(auto = false, older = false) {
-  const query = activityQuery(older ? act.entries.at(-1).id : 0);
-  const filters = query.replace(/(^|&)(before|limit)=[^&]*/g, "");
-  const page = await call("GET", "/v1/admin/audit?" + query, undefined, auto);
-  if (older) {
-    act.entries.push(...page.entries);
-    act.more = page.more;
-  } else if (auto && filters === act.query && act.entries.length) {
-    const top = act.entries[0].id;
-    act.entries.unshift(...page.entries.filter((e) => e.id > top));
-  } else {
-    act.entries = page.entries;
-    act.more = page.more;
-  }
+// loadActivity reads a page: the one shown again (move 0: a refresh, or new filters, which start
+// at the newest), the next older one (1) or the newer one before it (-1). A refresh away from the
+// first page leaves it alone, so what is being read does not move.
+async function loadActivity(auto = false, move = 0) {
+  const filters = activityQuery(0).replace(/(^|&)(before|limit)=[^&]*/g, "");
+  if (filters !== act.query) act.cursors = [0];
+  else if (auto && act.cursors.length > 1) return;
+  const cursors = move > 0 ? [...act.cursors, act.entries.at(-1).id] : move < 0 ? act.cursors.slice(0, -1) : act.cursors;
+  const page = await call("GET", "/v1/admin/audit?" + activityQuery(cursors.at(-1)), undefined, auto);
+  act.cursors = cursors.length ? cursors : [0];
+  act.entries = page.entries;
+  act.more = page.more;
   act.query = filters;
   page.entries.forEach((e) => act.actions.add(e.action));
   renderActivity();
+  if (move) $("act-filter").scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 function renderActivity() {
@@ -1958,8 +1968,12 @@ function renderActivity() {
     ...[...act.actions, chosen].filter(Boolean).filter((a, i, all) => all.indexOf(a) === i)
       .sort((a, b) => actionName(a).localeCompare(actionName(b))).map((a) => el("option", { value: a }, actionName(a))));
   kind.value = chosen;
-  put($("act-list"), ...list(act.entries.map(auditItem), act.query ? "Nothing matches." : "Nothing yet."));
-  $("act-more").hidden = !act.more;
+  put($("act-list"), ...list(act.entries.map((e) => auditItem(e)), act.query ? "Nothing matches." : "Nothing yet."));
+  const n = act.cursors.length;
+  $("act-pager").hidden = n === 1 && !act.more;
+  $("act-newer").disabled = n === 1;
+  $("act-older").disabled = !act.more;
+  $("act-page").textContent = `Page ${n}`;
 }
 
 let actTimer = null;
@@ -1968,4 +1982,5 @@ $("act-filter").addEventListener("input", () => {
   clearTimeout(actTimer);
   actTimer = setTimeout(() => loadActivity().catch((e) => notice("Could not load: " + e.message)), 300);
 });
-$("act-older").addEventListener("click", () => loadActivity(false, true).catch((e) => notice("Could not load: " + e.message)));
+$("act-older").addEventListener("click", () => loadActivity(false, 1).catch((e) => notice("Could not load: " + e.message)));
+$("act-newer").addEventListener("click", () => loadActivity(false, -1).catch((e) => notice("Could not load: " + e.message)));

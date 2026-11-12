@@ -12,11 +12,11 @@ const shortUsage = `ento: a private WireGuard network.
 
 This device:
   ento agent install --join DOMAIN   join a network (asks for the words an administrator reads out)
-  ento agent join DOMAIN             join another network too (Linux; leave DOMAIN forgets it)
-  ento agent status                  the connection, peers and this device's checks
-  ento agent login | logout          sign in or out as yourself
-  ento agent up | down               turn the tunnel on or off
-  ento agent exit [NAME|off]         send internet traffic through an exit, or stop
+  ento join DOMAIN                   join another network too (Linux; leave DOMAIN forgets it)
+  ento status                        the connection, peers and this device's checks
+  ento login | logout                sign in or out as yourself
+  ento up | down                     turn the tunnel on or off
+  ento exit [NAME|off]               send internet traffic through an exit, or stop
   ento agent uninstall [--purge]     remove the service (--purge also forgets the network)
 
 Administrators:
@@ -44,42 +44,43 @@ const usageControl = `Control node:
 
 `
 
-const usageAgent = `Agent:
+const usageAgent = `Agent (the commands people use on their own device need no "agent": ento login, logout,
+status, whoami, join, leave, up, down and exit; ento agent login and the others still work):
   ento agent install    install as a service and start it (first time: --join DOMAIN, the domain's
                          network record and the words an administrator reads out, typed when asked;
                          or, Linux and macOS, a token; --force with either replaces an enrollment)
   ento agent uninstall  stop and remove the service (--purge also forgets the enrollment)
-  ento agent down       turn the tunnel off: the service stops and stays off, across reboots too
-  ento agent up         turn it on again
+  ento down             turn the tunnel off: the service stops and stays off, across reboots too
+  ento up               turn it on again
   ento agent run        enroll (if needed) and keep the interface in sync, in the foreground
-  ento agent login      log in with SSO: binds this device to your identity (approval, groups)
-  ento agent status     show the local state, posture, WireGuard peers and linked networks
+  ento login            log in with SSO: binds this device to your identity (approval, groups)
+  ento status           show the local state, posture, WireGuard peers and linked networks
   ento agent posture    show what this device reports about itself (--json), as collected now
   ento agent approve    ask the person to approve a sign-in on this device from another of their
                          devices (a PAM step: pam_exec stdout); --user (default $PAM_USER), --service
                          (default $PAM_SERVICE), --timeout 60s; prints the number to pick, exits 0
                          approved, 1 denied, 2 expired, 3 unavailable, 64 usage
-  ento agent whoami     the identity provider's username of the person this device is signed in as
+  ento whoami           the identity provider's username of the person this device is signed in as
                          (the control plane's word; root): exit 0, 2 when their session (the person
                          layer) is closed (still printed), 1 when nobody (prints nothing); --json adds
                          the readable name and session_active
-  ento agent logout     the person signs out: their rights on this device end (the machine's stay)
+  ento logout           the person signs out: their rights on this device end (the machine's stay)
                          until they sign in again or approve a sign-in on it; told to the control plane
                          within --timeout (default 5s), else by the agent later
-  ento agent exit [NAME|off|default]
+  ento exit [NAME|off|default]
                          send all internet traffic through exit NAME (a gateway administrators
                          offer; status lists those offered), through none (off), or through the one
                          used by default; without an argument shows the choice (Linux; Android: the app)
   ento agent approvals  sign-ins waiting for your approval on this device; approvals answer [--deny]
                          ID NUMBER answers one (the person's own devices, bound by sign-in)
-  ento agent join DOMAIN
+  ento join DOMAIN
                          join another network besides the first, with the words an administrator
                          there reads out (Linux): its own interface (ento1, ...), key and rights,
                          reached by every program; status, login, logout, whoami, approve and
                          approvals then take --network DOMAIN (default: the first network), and
                          ento admin --network DOMAIN administers it; exits and releases stay the
                          first network's
-  ento agent leave DOMAIN
+  ento leave DOMAIN
                          forget a network joined so (that network keeps the device until an
                          administrator there deletes it)
   ento agent link NAME  join linked network NAME (in network namespace ento-NAME)

@@ -15,6 +15,9 @@ the tunnel. One binary, `ento`, is the control node, the agent and the administr
 - **Policies** between device and people groups, one way or both, limited to ports.
 - **Single sign-on** with any OpenID Connect provider: access follows the person, and someone
   disabled there loses access within minutes.
+- **Its own identity provider**, if wanted: the control nodes sign people in with passkeys,
+  inside the tunnel, and the dashboard manages them. A browser on the device signs that very device
+  in, with no code to type or phish.
 - **Device posture**: disk encryption, firewall, OS version and more, checked before a rule applies.
 - **Routes and exits**: reach networks behind a gateway, or send all traffic through one.
 - **Internal DNS** for devices and office machines.

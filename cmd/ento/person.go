@@ -13,7 +13,7 @@ import (
 
 // loginCommand is how the person signs in again on this system (Windows: no administrator needed
 // since 0.35, through the agent's person's channel).
-var loginCommand = map[bool]string{true: "ento agent login", false: "sudo ento agent login"}[runtime.GOOS == "windows"]
+var loginCommand = map[bool]string{true: "ento login", false: "sudo ento login"}[runtime.GOOS == "windows"]
 
 // personChannel reports whether this command should ask the running agent through the person's
 // channel: the device's state is out of this user's reach (Windows: not an administrator's
@@ -28,7 +28,7 @@ func personChannel(stateDir string) bool {
 	return err == nil
 }
 
-// personStatus prints what the person's channel says (`ento agent status` without the device's
+// personStatus prints what the person's channel says (`ento status` without the device's
 // state: the rest needs an administrator).
 func personStatus(ctx context.Context) error {
 	st, err := agent.SessionStatus(ctx)
@@ -44,10 +44,10 @@ func personStatus(ctx context.Context) error {
 	case st.User == "":
 		fmt.Printf("user:       nobody is signed in on this device (%s)\n", loginCommand)
 	case st.SessionActive:
-		fmt.Printf("user:       %s\nsession:    open (ento agent logout ends it)\n", who)
+		fmt.Printf("user:       %s\nsession:    open (ento logout ends it)\n", who)
 	default:
 		fmt.Printf("user:       %s\nsession:    closed: %s opens it again\n", who, loginCommand)
 	}
-	fmt.Println("(peers, posture and addresses: ento agent status in an administrator's PowerShell)")
+	fmt.Println("(peers, posture and addresses: ento status in an administrator's PowerShell)")
 	return nil
 }

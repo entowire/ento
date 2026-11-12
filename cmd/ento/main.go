@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -62,6 +63,9 @@ func main() {
 		err = controlCmd(ctx, args)
 	case "agent":
 		err = agentCmd(ctx, args)
+	case "login", "logout", "status", "whoami", "join", "leave", "up", "down", "exit":
+		// The commands people use on their own device, without "agent" (0.58): the same commands.
+		err = agentCmd(ctx, os.Args[1:])
 	case "admin":
 		err = adminCmd(ctx, args)
 	case "update":
@@ -157,7 +161,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 	// What changes the network's database without a control node in between leaves an audit line in
 	// the system log (cliaudit), like the control nodes' own.
 	switch cmd {
-	case "token", "authority", "allow", "admin", "groups", "person", "sso-forget":
+	case "token", "authority", "allow", "admin", "groups", "id-groups", "person", "sso-forget":
 		all := append([]string{cmd}, args...)
 		defer func() { cliAudit(all, err) }()
 	}
@@ -204,9 +208,13 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		operatorGroups := fs.String("operator-groups", "", "comma-separated groups whose devices are operators (default: --oidc-operator-groups, else operators)")
 		viewerGroups := fs.String("viewer-groups", "", "comma-separated groups whose devices and people may only look at the administration (default: viewers)")
 		noGateways := fs.String("no-gateways", "", "comma-separated groups whose devices are never a route's gateway or an exit (such routes are refused, and existing ones never used)")
-		people := fs.String("people", "", "manage the identity provider's people from the admin interface through its API: rauthy (its API at --people-api, the key in ENTO_PEOPLE_API_KEY)")
-		peopleAPI := fs.String("people-api", "", "with --people: the provider's API, e.g. https://id.example.com/auth/v1 (dialed through --oidc-connect-to when its host is the issuer's)")
 		signInIdle := fs.Duration("device-sign-in-idle", control.DefaultSignInIdle, "a device stops vouching for its person this long after it last signed them in or their session on it opened")
+		idName := fs.String("id", "", "be the network's identity provider under this name (e.g. id.example.com) on port 443 of the node's overlay address: people sign in with passkeys, kept in the network's database; signing key (P-256, DER in base64, the same on every control node) in ENTO_ID_KEY. Without --oidc-issuer the control nodes sign their devices in with it; the dashboard manages its people")
+		idCert := fs.String("id-cert", "", "certificate (PEM, with chain) for --id; read again when it changes")
+		idCertKey := fs.String("id-cert-key", "", "private key (PEM) of --id-cert")
+		idTitle := fs.String("id-title", "", "the network's name, shown on the sign-in pages and by passkey managers (default: --id)")
+		idListen := fs.String("id-listen", "", "with --id: also serve it on this host address (host:port, TLS with --id-cert), for services beside the control nodes that are no devices of the network; never a public address")
+		idClients := fs.String("id-clients", "", "a JSON file of other applications that sign people in with --id: [{\"id\", \"name\", \"secret\", \"redirect_uris\": [...], \"device_grant\"}]")
 		_ = fs.Parse(args)
 		if *name == "" || *keyFile == "" || *endpoint == "" {
 			return errors.New("--name, --key-file and --endpoint are required")
@@ -231,9 +239,23 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		if err != nil {
 			return err
 		}
+		var idCfg *control.IDConfig
+		if *idName != "" {
+			if idCfg, err = idConfig(*idName, *idTitle, *idCert, *idCertKey, *idClients); err != nil {
+				return err
+			}
+			idCfg.Listen = *idListen
+		}
 		var oidc *control.OIDCConfig
+		ownID := idCfg != nil && (*oidcIssuer == "" || *oidcIssuer == control.IDIssuer(idCfg.Name))
+		if ownID {
+			*oidcIssuer = control.IDIssuer(idCfg.Name)
+		}
 		if *oidcIssuer != "" {
 			secret := os.Getenv("ENTO_OIDC_CLIENT_SECRET")
+			if ownID {
+				secret = control.IDClientSecret(idCfg.Key, *oidcClient)
+			}
 			if secret == "" {
 				return errors.New("--oidc-issuer needs ENTO_OIDC_CLIENT_SECRET")
 			}
@@ -253,26 +275,6 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 			}
 			if *oidcRefresh < 30*time.Second {
 				return errors.New("--oidc-refresh-interval must be at least 30s")
-			}
-		}
-		var peopleCfg *control.PeopleConfig
-		if *people != "" {
-			if err := control.ParsePeopleKind(*people); err != nil {
-				return fmt.Errorf("--people: %w", err)
-			}
-			u, err := url.Parse(*peopleAPI)
-			if err != nil || u.Scheme != "https" || u.Host == "" {
-				return errors.New("--people needs --people-api, an https:// address")
-			}
-			key := strings.TrimSpace(os.Getenv("ENTO_PEOPLE_API_KEY"))
-			if key == "" {
-				return errors.New("--people needs ENTO_PEOPLE_API_KEY")
-			}
-			peopleCfg = &control.PeopleConfig{Kind: *people, API: *peopleAPI, Key: key}
-			if oidc != nil {
-				if iu, err := url.Parse(oidc.Issuer); err == nil && iu.Host == u.Host {
-					peopleCfg.ConnectTo = oidc.ConnectTo
-				}
 			}
 		}
 		var signIn *control.SignInConfig
@@ -342,9 +344,9 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		}
 		srv, err := control.Start(ctx, control.Config{Name: *name, PrivateKey: key, ListenPort: *port, DNSDomain: domain, RecordDomain: recDomain, Forwards: named, ForwardPeople: forwardPeople,
 			AttestationRevocations: *attestRevocations, AndroidApps: apps, ServiceNames: services,
-			Endpoint: *endpoint, Space: space, Store: st, Changes: changes, OIDC: oidc, People: peopleCfg, NoGateways: splitList(*noGateways), AdminGroups: splitList(*adminGroups), OperatorGroups: splitList(*operatorGroups), ViewerGroups: splitList(*viewerGroups),
+			Endpoint: *endpoint, Space: space, Store: st, Changes: changes, OIDC: oidc, NoGateways: splitList(*noGateways), AdminGroups: splitList(*adminGroups), OperatorGroups: splitList(*operatorGroups), ViewerGroups: splitList(*viewerGroups),
 			SessionIdle: *sessionIdle, SessionMax: *sessionMax, ReopenServices: splitList(*reopenServices), Hosts: parseHosts(*hosts), LinkForwards: forwards,
-			AdminUI: *adminUI, AdminUICert: *adminUICert, AdminUIKey: *adminUIKey, SignIn: signIn, Version: version, CloneResponse: *cloneResponse,
+			AdminUI: *adminUI, AdminUICert: *adminUICert, AdminUIKey: *adminUIKey, SignIn: signIn, ID: idCfg, Version: version, CloneResponse: *cloneResponse,
 			UpdatesDir: *updatesDir, Releases: *releases, UpdatesExcept: *updatesExcept})
 		if err != nil {
 			return err
@@ -358,6 +360,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16)")
 		opts := tokenFlags(fs)
 		out := fs.String("out", "", "write the token to this file (mode 0600) instead of stdout")
+		person := fs.String("person", "", "an invitation of the account with this address in the control nodes' own sign-in (not set up yet): the device that redeems the token is invited for it, and its first sign-in sets the account up and signs in with it, in one go")
 		_ = fs.Parse(args)
 		o, q := opts()
 		if err := q.check(o.Words, true); err != nil {
@@ -372,6 +375,12 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		tok, t, err := control.IssueToken(ctx, st, o)
 		if err != nil {
 			return err
+		}
+		if *person != "" {
+			if err := control.InviteWithToken(ctx, st, t, *person); err != nil {
+				st.DeleteToken(ctx, t.ID)
+				return err
+			}
 		}
 		if o.Words {
 			rec, err := control.NetworkRecord(ctx, st, space.Prefix)
@@ -512,6 +521,36 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		}
 		fmt.Printf("device %d %s: groups=%s (approved=%v)\n", p.ID, p.Hostname, strings.Join(p.Machine.Groups, ","), p.Approved)
 		return nil
+	case "id-groups":
+		fs := flag.NewFlagSet("control id-groups", flag.ExitOnError)
+		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16)")
+		_ = fs.Parse(args)
+		if fs.NArg() == 0 {
+			return errors.New("usage: ento control id-groups [--network N] GROUP... (people groups; device groups as device:NAME): made in the control nodes' own sign-in where missing")
+		}
+		st, _, err := openStore(ctx, *network)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		have, err := st.IDGroups(ctx)
+		if err != nil {
+			return err
+		}
+		for _, g := range fs.Args() {
+			if slices.ContainsFunc(have, func(x store.IDGroup) bool { return x.Name == g }) {
+				continue
+			}
+			kind := "people"
+			if strings.HasPrefix(g, control.DevicePrefix) {
+				kind = "devices"
+			}
+			if err := st.PutIDGroup(ctx, store.IDGroup{Name: g, Kind: kind}); err != nil {
+				return err
+			}
+			fmt.Printf("group %s (%s) made\n", g, kind)
+		}
+		return nil
 	case "sso-forget":
 		// For a change of ENTO_OIDC_TOKEN_KEY on purpose: the stored refresh tokens cannot be read
 		// with the new key, so they go, with the key's canary, and so do the rights of the people
@@ -542,27 +581,72 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		return nil
 	case "person":
 		fs := flag.NewFlagSet("control person", flag.ExitOnError)
-		_ = fs.String("network", "", "ignored (the command uses only the identity provider)")
+		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16), with --id")
 		groups := fs.String("groups", "", "comma-separated people groups, e.g. admins")
-		apiURL := fs.String("people-api", "", "the identity provider's API (Rauthy: https://id.example.com/auth/v1), its key in ENTO_PEOPLE_API_KEY")
-		connect := fs.String("people-connect-to", "", "comma-separated host:port to dial instead of the API's host")
+		idName := fs.String("id", "", "the control nodes' own identity provider (as ento control run --id; its signing key in ENTO_ID_KEY): the person is made in the network's database")
+		noLink := fs.Bool("no-link", false, "with --id: no setup link (the person is invited with a device's words: ento control token --person)")
+		reset := fs.Bool("reset", false, "with --id: a person who exists loses every way in first (passkeys, password, app) and gets a new link: recovery of an account whose person lost them")
 		_ = fs.Parse(args)
-		if fs.NArg() != 1 || *apiURL == "" || os.Getenv("ENTO_PEOPLE_API_KEY") == "" {
-			return errors.New("usage: ento control person --people-api URL [--people-connect-to HOST:PORT] [--groups G,...] EMAIL (key in ENTO_PEOPLE_API_KEY)")
-		}
-		p, link, created, err := control.InvitePerson(ctx, control.PeopleConfig{Kind: "rauthy", API: *apiURL,
-			Key: os.Getenv("ENTO_PEOPLE_API_KEY"), ConnectTo: splitList(*connect)}, fs.Arg(0), splitList(*groups))
-		if err != nil {
-			return err
+		usage := errors.New("usage: ento control person --id NAME [--reset] [--groups G,...] EMAIL (signing key in ENTO_ID_KEY)")
+		var p api.Person
+		var link api.SetupLink
+		var created bool
+		switch {
+		case fs.NArg() != 1:
+			return usage
+		case *idName != "":
+			key, err := control.ParseSignInKey(os.Getenv("ENTO_ID_KEY"))
+			if err != nil {
+				return fmt.Errorf("ENTO_ID_KEY: %w", err)
+			}
+			st, _, err := openStore(ctx, *network)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			p, link, created, err = control.InvitePersonID(ctx, st, control.IDConfig{Name: *idName, Key: key}, fs.Arg(0), splitList(*groups), *reset, *noLink)
+			if err != nil {
+				return err
+			}
+		default:
+			return usage
 		}
 		how := "made"
 		if !created {
 			how = "not set up yet, a new link"
 		}
+		if link.Link == "" {
+			fmt.Printf("person %s (%s), groups %s\n", p.Email, strings.TrimSuffix(how, ", a new link"), strings.Join(p.Groups, ","))
+			return nil
+		}
 		fmt.Printf("person %s (%s), groups %s\nsetup link (once, until %s): %s\n", p.Email, how, strings.Join(p.Groups, ","), link.ExpiresAt, link.Link)
 		return nil
 	}
-	return errors.New("usage: ento control run|token|authority|allow|admin|groups|person [flags]")
+	return errors.New("usage: ento control run|token|authority|allow|admin|groups|id-groups|person [flags]")
+}
+
+// idConfig reads the settings of the control nodes' own identity provider (ento control run --id).
+func idConfig(name, title, cert, certKey, clientsFile string) (*control.IDConfig, error) {
+	if cert == "" || certKey == "" {
+		return nil, errors.New("--id needs --id-cert and --id-cert-key")
+	}
+	key, err := control.ParseSignInKey(os.Getenv("ENTO_ID_KEY"))
+	if err != nil {
+		return nil, fmt.Errorf("--id needs ENTO_ID_KEY: %w (openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -outform DER | base64 -w0)", err)
+	}
+	cfg := &control.IDConfig{Name: strings.ToLower(name), Title: title, Cert: cert, CertKey: certKey, Key: key}
+	if clientsFile != "" {
+		b, err := os.ReadFile(clientsFile)
+		if err != nil {
+			return nil, fmt.Errorf("--id-clients: %w", err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&cfg.Clients); err != nil {
+			return nil, fmt.Errorf("--id-clients %s: %w", clientsFile, err)
+		}
+	}
+	return cfg, nil
 }
 
 // setAdmin gives the device named name administrator rights, or takes them away (bootstrap, straight
@@ -789,9 +873,9 @@ func waitEnrolled(ctx context.Context, stateDir, name string) error {
 // statusCommand is how a person shows the agent's status on this system, as administrator.
 func statusCommand() string {
 	if runtime.GOOS == "windows" {
-		return "ento agent status, in a PowerShell run as administrator,"
+		return "ento status, in a PowerShell run as administrator,"
 	}
-	return "sudo ento agent status"
+	return "sudo ento status"
 }
 
 // joinFlags are the flags of enrollment by words.
@@ -941,7 +1025,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		if err := agent.Down(*cfg); err != nil {
 			return err
 		}
-		fmt.Println("the tunnel is down, and stays down across restarts, until `ento agent up`")
+		fmt.Println("the tunnel is down, and stays down across restarts, until `ento up`")
 		return nil
 
 	case "install":
@@ -986,7 +1070,7 @@ func agentCmd(ctx context.Context, args []string) error {
 			return err
 		}
 		if agent.IsDown(cfg.StateDir) {
-			fmt.Println("the ento agent is installed; it stays down (`ento agent down`) until `ento agent up`")
+			fmt.Println("the ento agent is installed; it stays down (`ento down`) until `ento up`")
 			return nil
 		}
 		fmt.Println("the ento agent is installed and started")
@@ -1098,7 +1182,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		cfg := agentFlags(fs)
 		_ = fs.Parse(args)
 		if fs.NArg() > 1 {
-			return errors.New("usage: ento agent exit [NAME|off|default]")
+			return errors.New("usage: ento exit [NAME|off|default]")
 		}
 		if fs.NArg() == 0 {
 			return showExits(cfg.StateDir)
@@ -1232,7 +1316,7 @@ func agentCmd(ctx context.Context, args []string) error {
 		r, running := agent.RunningAgent(cfg.StateDir)
 		switch {
 		case !running && agent.IsDown(cfg.StateDir):
-			fmt.Println("agent:      down - `ento agent up` turns the tunnel on again")
+			fmt.Println("agent:      down - `ento up` turns the tunnel on again")
 			return nil
 		case !running:
 			fmt.Println("agent:      not running")
@@ -1274,7 +1358,7 @@ func agentCmd(ctx context.Context, args []string) error {
 			fmt.Printf("user:       %s\n", who)
 			switch {
 			case r.PersonActive:
-				fmt.Printf("session:    open since %s: the person's rights are this device's too (ento agent logout ends them)\n", localTime(r.PersonSince))
+				fmt.Printf("session:    open since %s: the person's rights are this device's too (ento logout ends them)\n", localTime(r.PersonSince))
 			case personAware(r.Version) && !r.LoginRequired:
 				fmt.Println("session:    closed: the device has its machine's rights; signing in to it again (approved on the person's phone) reopens it")
 			}
@@ -1347,12 +1431,12 @@ func serviceUp(ctx context.Context, cfg *agent.Config) error {
 	}
 	for i := 0; i < 60 && ctx.Err() == nil; i++ {
 		if _, ok := agent.RunningAgent(cfg.StateDir); ok {
-			fmt.Println("the tunnel is up; check with: ento agent status")
+			fmt.Println("the tunnel is up; check with: ento status")
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return errors.New("the service is started, but the agent has not come up yet: see `ento agent status` and the service's log")
+	return errors.New("the service is started, but the agent has not come up yet: see `ento status` and the service's log")
 }
 
 // linkCmd asks the running agent to join or leave a linked network and waits for the outcome.
@@ -1491,7 +1575,7 @@ func adminCmd(ctx context.Context, args []string) error {
 	}
 	// --link NAME: administer a linked network, as this device's membership there (its key, its
 	// namespace), where that network made it an administrator. --network DOMAIN: administer another
-	// network the device joined (ento agent join), with its key there. Both are taken anywhere on the
+	// network the device joined (ento join), with its key there. Both are taken anywhere on the
 	// line: before 0.56.6 only right after `admin`, and `ento admin peers --network D` silently
 	// administered the first network.
 	link, args, err := takeFlag(args, "link")
@@ -1986,9 +2070,9 @@ func adminCmd(ctx context.Context, args []string) error {
 			}
 			printWarnings(out.Warnings)
 			if out.Exit {
-				how := "devices it allows choose it with `ento agent exit " + out.Name + "` (Android: in the app)"
+				how := "devices it allows choose it with `ento exit " + out.Name + "` (Android: in the app)"
 				if out.Default {
-					how = "devices it allows use it unless they turn it off (`ento agent exit off`)"
+					how = "devices it allows use it unless they turn it off (`ento exit off`)"
 				}
 				fmt.Printf("exit %s through %s; let a group use it with: ento admin allow GROUP route:%s; %s\n", out.Name, out.Via, out.Name, how)
 				return nil
@@ -2557,11 +2641,11 @@ func approvalsCmd(ctx context.Context, args []string) error {
 func exitLine(e agent.RunningExit) string {
 	switch {
 	case e.InUse:
-		return fmt.Sprintf("%s through %s: IN USE, all internet traffic goes through it (ento agent exit off)", e.Route, e.Via)
+		return fmt.Sprintf("%s through %s: IN USE, all internet traffic goes through it (ento exit off)", e.Route, e.Via)
 	case e.Default:
-		return fmt.Sprintf("%s through %s: offered, used by default (ento agent exit default)", e.Route, e.Via)
+		return fmt.Sprintf("%s through %s: offered, used by default (ento exit default)", e.Route, e.Via)
 	}
-	return fmt.Sprintf("%s through %s: offered (ento agent exit %s)", e.Route, e.Via, e.Route)
+	return fmt.Sprintf("%s through %s: offered (ento exit %s)", e.Route, e.Via, e.Route)
 }
 
 // showExits prints the device's choice of exit and the exits offered to it.
@@ -2610,7 +2694,7 @@ func awaitExit(stateDir, choice string) error {
 			if choice == "" {
 				fmt.Println("choice kept: no exit used by default is offered to this device now")
 			} else {
-				fmt.Printf("choice kept: exit %s is not offered to this device now (ento agent status lists those that are); it is used once it is\n", choice)
+				fmt.Printf("choice kept: exit %s is not offered to this device now (ento status lists those that are); it is used once it is\n", choice)
 			}
 			return nil
 		}

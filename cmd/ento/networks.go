@@ -14,12 +14,12 @@ import (
 	"entowire.com/ento/internal/token"
 )
 
-// Several networks on one device (0.51, Linux): `ento agent join DOMAIN` and `leave DOMAIN`, and
+// Several networks on one device (0.51, Linux): `ento join DOMAIN` and `leave DOMAIN`, and
 // --network DOMAIN on the commands that act for one network (internal/agent/networks.go).
 
 // networkFlag adds --network to a command that acts for one of the device's networks.
 func networkFlag(fs *flag.FlagSet) *string {
-	return fs.String("network", "", "the network this is for, by its domain, on a device in several (default: the first; ento agent status lists them)")
+	return fs.String("network", "", "the network this is for, by its domain, on a device in several (default: the first; ento status lists them)")
 }
 
 // useNetwork points cfg at the network with domain ("" for the first): its state directory and, for
@@ -57,7 +57,7 @@ func joinCmd(ctx context.Context, args []string) error {
 	record := fs.String("record", "", "the network record's text itself, not looked up in DNS")
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return errors.New("usage: ento agent join DOMAIN (asks for the words an administrator of that network reads out)")
+		return errors.New("usage: ento join DOMAIN (asks for the words an administrator of that network reads out)")
 	}
 	domain := strings.ToLower(strings.TrimSuffix(fs.Arg(0), "."))
 	if !agent.ValidDomain(domain) {
@@ -72,7 +72,7 @@ func joinCmd(ctx context.Context, args []string) error {
 		if _, err := agent.LoadState(cfg.StateDir); err != nil {
 			return errors.New("this device is in no network yet: join the first with `ento agent install --join " + domain + "`")
 		}
-		return errors.New("the agent is not running: `ento agent up` first")
+		return errors.New("the agent is not running: `ento up` first")
 	case !r.Networks:
 		return fmt.Errorf("the running agent (%s) joins no more networks: restart it on this release (sudo systemctl restart ento-agent) and try again", r.Version)
 	}
@@ -93,7 +93,7 @@ func joinCmd(ctx context.Context, args []string) error {
 	for i := 0; i < 180 && ctx.Err() == nil; i++ {
 		if st, err := agent.LoadState(dir); err == nil {
 			fmt.Printf("\njoined network %s as %s on %s: complete\n", domain, st.Address, m.Interface)
-			fmt.Printf("commands for it take --network %s, e.g. sudo ento agent login --network %s\n", domain, domain)
+			fmt.Printf("commands for it take --network %s, e.g. sudo ento login --network %s\n", domain, domain)
 			return nil
 		}
 		if e := agent.JoinError(cfg.StateDir, domain); e != "" {
@@ -106,7 +106,7 @@ func joinCmd(ctx context.Context, args []string) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	fmt.Println()
-	return fmt.Errorf("not in network %s yet: the agent keeps trying (ento agent status shows it; ento agent leave %s gives up)", domain, domain)
+	return fmt.Errorf("not in network %s yet: the agent keeps trying (ento status shows it; ento leave %s gives up)", domain, domain)
 }
 
 func leaveCmd(ctx context.Context, args []string) error {
@@ -114,7 +114,7 @@ func leaveCmd(ctx context.Context, args []string) error {
 	cfg := agentFlags(fs)
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return errors.New("usage: ento agent leave DOMAIN")
+		return errors.New("usage: ento leave DOMAIN")
 	}
 	domain := strings.ToLower(strings.TrimSuffix(fs.Arg(0), "."))
 	if err := agent.RequestLeave(cfg.StateDir, domain); err != nil {
@@ -135,10 +135,10 @@ func leaveCmd(ctx context.Context, args []string) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return errors.New("the agent did not act on the request (ento agent status, and the service's log)")
+	return errors.New("the agent did not act on the request (ento status, and the service's log)")
 }
 
-// networksStatus lists the device's networks when it is in more than one, for `ento agent status`.
+// networksStatus lists the device's networks when it is in more than one, for `ento status`.
 func networksStatus(stateDir string, shown string) error {
 	domains := agent.Networks(stateDir)
 	if len(domains) == 0 {
@@ -158,7 +158,7 @@ func networksStatus(stateDir string, shown string) error {
 		}
 		switch {
 		case err == nil && running && r.LoginRequired:
-			fmt.Fprintf(w, "%s\t%s\t%s\tsession ended: ento agent login --network %s%s\n", cell(domain), iface, st.Address, domain, mark)
+			fmt.Fprintf(w, "%s\t%s\t%s\tsession ended: ento login --network %s%s\n", cell(domain), iface, st.Address, domain, mark)
 		case err == nil && running:
 			fmt.Fprintf(w, "%s\t%s\t%s\tup%s\n", cell(domain), iface, st.Address, mark)
 		case err == nil:
@@ -184,7 +184,7 @@ func networksStatus(stateDir string, shown string) error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
-	fmt.Println("(the first network's exits and releases are the device's; ento agent status --network DOMAIN shows another)")
+	fmt.Println("(the first network's exits and releases are the device's; ento status --network DOMAIN shows another)")
 	return nil
 }
 

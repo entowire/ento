@@ -33,7 +33,7 @@ func serveSessions(ctx context.Context, cfg Config) {
 	}
 	l, err := (&namedpipe.ListenConfig{SecurityDescriptor: sd}).Listen(sessionPipe)
 	if err != nil {
-		cfg.Logf("person's channel: not served (%v): signing in needs an administrator's `ento agent login`", err)
+		cfg.Logf("person's channel: not served (%v): signing in needs an administrator's `ento login`", err)
 		return
 	}
 	context.AfterFunc(ctx, func() { l.Close() })

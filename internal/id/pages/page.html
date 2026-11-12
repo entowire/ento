@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>Sign in · {{.Title}}</title>
+<link rel="stylesheet" href="/ento-id.css">
+<script src="/ento-id.js" defer></script>
+</head>
+<body data-mode="{{.Mode}}" data-request="{{.Request}}" data-client="{{.Client}}" data-title="{{.Title}}" data-device="{{.Device}}">
+<main>
+  <p class="network">{{.Title}}</p>
+
+  <section id="authorize" hidden>
+    <h1>Sign in</h1>
+    <p>to continue to <strong>{{.Client}}</strong>.</p>
+  </section>
+
+  <section id="device" hidden>
+    <h1>Sign in a device</h1>
+    <div id="device-typed" hidden>
+      <p>Type the code the device shows.</p>
+      <form id="device-form">
+        <input id="device-code" class="code-input" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false"
+               maxlength="12" placeholder="XXXX-XXXX" aria-label="Code" required>
+        <button type="submit">Continue</button>
+      </form>
+    </div>
+    <div id="device-linked" hidden>
+      <p>A device asks to sign in with this code. Check that it is the code on your device.</p>
+      <p class="code" id="device-linked-code"></p>
+    </div>
+    <div id="device-confirm" hidden>
+      <p>Sign this device in as <strong id="device-person"></strong>?</p>
+      <p class="code" id="device-confirm-code"></p>
+      <p class="hint">Accept only if you started this sign-in yourself, on a device you are using now.</p>
+      <div class="row">
+        <button id="device-accept" type="button">Accept</button>
+        <button id="device-decline" type="button" class="secondary">Decline</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="here" hidden>
+    <h1>Sign in on this device</h1>
+    <p>Sign in to use <strong>{{.Device}}</strong> as yourself. Whoever was signed in on it is signed out.</p>
+  </section>
+
+  <section id="account-signin" hidden>
+    <h1>Your account</h1>
+    <p>Sign in to see and change how you sign in.</p>
+  </section>
+
+  <!-- How people sign in: shared by applications, devices and the account page. -->
+  <div id="signin" hidden>
+    <div id="signin-start">
+      <button id="passkey-go" type="button">Sign in with your passkey</button>
+      <p class="alt"><a href="#" id="password-show">Sign in with your password</a></p>
+    </div>
+    <form id="password-form" hidden>
+      <label>E-mail address <input id="email" type="email" autocomplete="username" required></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Continue</button>
+      <p class="alt"><a href="#" id="passkey-show">Sign in with your passkey instead</a></p>
+    </form>
+    <div id="second-passkey" hidden>
+      <p>Now confirm with your passkey.</p>
+      <button id="second-passkey-go" type="button">Use your passkey</button>
+      <p class="alt" id="to-code-p" hidden><a href="#" id="to-code">Continue with a code from your app</a></p>
+    </div>
+    <form id="second-code" hidden>
+      <label>Code from your authenticator app <input id="code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>
+      <button type="submit">Continue</button>
+    </form>
+  </div>
+
+  <section id="account" hidden>
+    <h1>Your account</h1>
+    <p><strong id="acct-name"></strong><br><span class="hint" id="acct-email"></span></p>
+
+    <h2>Passkeys</h2>
+    <ul id="acct-passkeys" class="list"></ul>
+    <button id="acct-passkey-add" type="button" class="secondary">Add a passkey</button>
+
+    <h2>Password</h2>
+    <p id="acct-password-state" class="hint"></p>
+    <form id="acct-password-form">
+      <label>New password <input id="acct-password" type="password" autocomplete="new-password" minlength="12" required></label>
+      <button type="submit" class="secondary" id="acct-password-go">Set password</button>
+    </form>
+    <p class="alt" id="acct-password-remove-p" hidden><a href="#" id="acct-password-remove">Remove the password</a></p>
+
+    <h2>Authenticator app</h2>
+    <p id="acct-totp-state" class="hint"></p>
+    <button id="acct-totp-add" type="button" class="secondary">Set up an app</button>
+    <p class="alt" id="acct-totp-remove-p" hidden><a href="#" id="acct-totp-remove">Remove the app</a></p>
+    <div id="acct-totp-new" hidden>
+      <p>Scan this with your authenticator app, or type the key, then type the code it shows.</p>
+      <img id="acct-totp-qr" alt="QR code for the authenticator app" width="220" height="220">
+      <p class="key" id="acct-totp-key"></p>
+      <form id="acct-totp-form">
+        <input id="acct-totp-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="7" aria-label="Code" required>
+        <button type="submit">Confirm</button>
+      </form>
+    </div>
+    <p id="acct-allowed" class="hint"></p>
+    <p class="alt"><a href="#" id="acct-signout">Sign out</a></p>
+  </section>
+
+  <section id="setup" hidden>
+    <h1>Set up your account</h1>
+    <p id="setup-for" hidden>For <strong id="setup-email"></strong>.</p>
+    <form id="setup-password-form" hidden>
+      <p>Choose a password of at least 12 characters.</p>
+      <label>Password <input id="setup-password" type="password" autocomplete="new-password" minlength="12" required></label>
+      <button type="submit">Continue</button>
+    </form>
+    <div id="setup-passkey" hidden>
+      <p>Make a passkey. You sign in with it from now on: your fingerprint, face or screen lock, nothing to remember.</p>
+      <button id="setup-go" type="button">Make a passkey</button>
+    </div>
+    <div id="setup-totp" hidden>
+      <p>Scan this with your authenticator app, or type the key, then type the code it shows.</p>
+      <img id="setup-totp-qr" alt="QR code for the authenticator app" width="220" height="220">
+      <p class="key" id="setup-totp-key"></p>
+      <form id="setup-totp-form">
+        <input id="setup-totp-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="7" aria-label="Code" required>
+        <button type="submit">Confirm</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="home" hidden>
+    <h1>Sign-in</h1>
+    <p>This is where the people of {{.Title}} sign in. Applications bring you here when they need to.</p>
+    <p><a href="/account">Your account</a>: how you sign in.</p>
+  </section>
+
+  <section id="done" hidden>
+    <h1 id="done-title">Done</h1>
+    <p id="done-text"></p>
+  </section>
+
+  <p id="notice" class="notice" role="status" hidden></p>
+  <p id="error" class="error" role="alert"{{if not .Message}} hidden{{end}}>{{.Message}}</p>
+  <p id="busy" class="hint" hidden>Waiting…</p>
+</main>
+</body>
+</html>

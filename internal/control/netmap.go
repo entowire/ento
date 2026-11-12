@@ -43,6 +43,10 @@ func buildNetMap(ctx context.Context, st store.Store, space ipam.Space, self sto
 		nm.Self.User, nm.Self.UserName = self.UserLogin, self.UserName
 	}
 	if !self.Approved {
+		// No peers, but a filter all the same (0.57): it admits only the control nodes, and keeps
+		// what the device forwards from their sign-in port, so a device waiting for its person's
+		// sign-in can sign them in on its own page (here.go).
+		nm.Filter = true
 		return nm, nil
 	}
 	peers, err := st.Peers(ctx)

@@ -18,12 +18,15 @@ import (
 // whether their session is open. The CLI uses it when it is not elevated, and the tray program
 // always. Each request is one JSON line; the agent answers with one or more JSON lines and closes.
 // Nothing here acts on the network beyond what the person could do with an administrator's
-// `ento agent login|logout`, and a sign-in still needs the person's own credentials at the
+// `ento login|logout`, and a sign-in still needs the person's own credentials at the
 // identity provider.
 
 // SessionRequest asks the agent for one thing: Op is "status", "login" or "logout".
 type SessionRequest struct {
 	Op string `json:"op"`
+	// Here (login): the person's side can open a browser on this device, so the device's own
+	// sign-in may be used (0.57).
+	Here bool `json:"here,omitempty"`
 }
 
 // SessionReply is one line of the agent's answer. Event says which: "status" (the session as the
@@ -56,15 +59,24 @@ func SessionDo(ctx context.Context, op string, each func(SessionReply) error) er
 	if err != nil {
 		return err
 	}
-	return sessionExchange(ctx, conn, op, each)
+	return sessionExchange(ctx, conn, SessionRequest{Op: op}, each)
+}
+
+// sessionLogin is SessionDo's sign-in, telling the agent whether a browser opens here.
+func sessionLogin(ctx context.Context, here bool, each func(SessionReply) error) error {
+	conn, err := sessionDial(ctx)
+	if err != nil {
+		return err
+	}
+	return sessionExchange(ctx, conn, SessionRequest{Op: "login", Here: here}, each)
 }
 
 // sessionExchange is SessionDo on a connection already made.
-func sessionExchange(ctx context.Context, conn net.Conn, op string, each func(SessionReply) error) error {
+func sessionExchange(ctx context.Context, conn net.Conn, req SessionRequest, each func(SessionReply) error) error {
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
-	if err := json.NewEncoder(conn).Encode(SessionRequest{Op: op}); err != nil {
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return err
 	}
 	sc := bufio.NewScanner(conn)
@@ -102,19 +114,17 @@ func SessionStatus(ctx context.Context) (SessionReply, error) {
 // LoginViaAgent signs the person in through the running agent, as Login does with the device's
 // key: the agent starts the sign-in, this opens the link in the person's browser and waits.
 func LoginViaAgent(ctx context.Context, out io.Writer, showQR func(link string)) error {
-	return SessionDo(ctx, "login", func(r SessionReply) error {
+	return sessionLogin(ctx, canOpenBrowser(), func(r SessionReply) error {
 		switch r.Event {
 		case "link":
 			link, code := Printable(r.Link), Printable(r.Code)
 			switch {
 			case !SafeLink(r.Link):
 				fmt.Fprintf(out, "The control node sent a sign-in link that is not a plain https link; it was not opened:\n\n    %s\n\nCode: %s", link, code)
-			case openBrowser(r.Link):
-				fmt.Fprintf(out, "In the browser window that just opened (or at this link), type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
 			default:
-				fmt.Fprintf(out, "Open this link in a browser, type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
+				fmt.Fprint(out, signInText(r.Link, link, code, openBrowser(r.Link)))
 			}
-			if showQR != nil && SafeLink(r.Link) {
+			if showQR != nil && SafeLink(r.Link) && !onDeviceOnly(r.Link) {
 				showQR(r.Link)
 			}
 			fmt.Fprint(out, "\n\nWaiting...")
@@ -144,7 +154,8 @@ func LogoutViaAgent(ctx context.Context) (delivered bool, err error) {
 type sessionOps interface {
 	status() SessionReply
 	// startLogin starts a sign-in: the link to open, the code it shows, and how to wait for it.
-	startLogin(ctx context.Context) (link, code string, wait func(context.Context) (LoginResult, error), err error)
+	// here: the person's side opens the link in a browser on this device.
+	startLogin(ctx context.Context, here bool) (link, code string, wait func(context.Context) (LoginResult, error), err error)
 	logout(ctx context.Context) (bool, error)
 }
 
@@ -159,8 +170,8 @@ func (s sessionAgent) status() SessionReply {
 		SessionActive: r.User != "" && !r.LoginRequired && r.PersonActive, LoginRequired: r.LoginRequired}
 }
 
-func (s sessionAgent) startLogin(ctx context.Context) (string, string, func(context.Context) (LoginResult, error), error) {
-	f, err := StartLogin(ctx, s.cfg)
+func (s sessionAgent) startLogin(ctx context.Context, here bool) (string, string, func(context.Context) (LoginResult, error), error) {
+	f, err := StartLoginHere(ctx, s.cfg, here)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -210,7 +221,7 @@ func (s *sessionServer) serve(ctx context.Context, conn net.Conn, who string, ma
 	}()
 	if req.Op != "status" && !mayAct {
 		s.logf("person's channel: %s refused for %s (not the session at the computer's screen)", Printable(req.Op), who)
-		reply(SessionReply{Event: "error", Error: "only the person at this computer's screen can sign in or out here; from a remote session, use ento agent login in an administrator's PowerShell"})
+		reply(SessionReply{Event: "error", Error: "only the person at this computer's screen can sign in or out here; from a remote session, use ento login in an administrator's PowerShell"})
 		return
 	}
 	switch req.Op {
@@ -225,13 +236,13 @@ func (s *sessionServer) serve(ctx context.Context, conn net.Conn, who string, ma
 		}
 		reply(SessionReply{Event: "logout", Delivered: delivered})
 	case "login":
-		s.login(ctx, who, reply)
+		s.login(ctx, who, req.Here, reply)
 	default:
 		reply(SessionReply{Event: "error", Error: "unknown request " + Printable(req.Op)})
 	}
 }
 
-func (s *sessionServer) login(ctx context.Context, who string, reply func(SessionReply) bool) {
+func (s *sessionServer) login(ctx context.Context, who string, here bool, reply func(SessionReply) bool) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	s.mu.Lock()
@@ -241,7 +252,7 @@ func (s *sessionServer) login(ctx context.Context, who string, reply func(Sessio
 	s.cancelLogin = cancel
 	s.mu.Unlock()
 	s.logf("person's channel: sign-in asked by %s", who)
-	link, code, wait, err := s.ops.startLogin(ctx)
+	link, code, wait, err := s.ops.startLogin(ctx, here)
 	if err != nil {
 		reply(SessionReply{Event: "error", Error: "the sign-in could not start: " + err.Error()})
 		return

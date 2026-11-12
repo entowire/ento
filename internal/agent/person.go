@@ -4,7 +4,7 @@ package agent
 // open, the agent counts what the device sends into the tunnel that its machine layer alone would
 // not (the network map says what that allows: api.Peer.Machine, RouteMachine, ExitOffer.Machine),
 // and everything a linked network's namespace sends but to its control nodes: that is the person's
-// traffic. Check-ins report how long ago it last moved, and the device's boot; ento agent logout
+// traffic. Check-ins report how long ago it last moved, and the device's boot; ento logout
 // closes the layer (pending until the control plane can be told).
 
 import (
@@ -178,7 +178,7 @@ func bootID() string {
 
 const logoutFile = "logout.pending"
 
-// Logout closes the person layer of the device (ento agent logout): it tells the control plane,
+// Logout closes the person layer of the device (ento logout): it tells the control plane,
 // within timeout; if it cannot, the running agent tells it when it can. The person layer the agent
 // last announced is named, so a logout delivered late never closes a layer opened since.
 func Logout(ctx context.Context, cfg Config, timeout time.Duration) (delivered bool, err error) {

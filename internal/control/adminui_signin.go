@@ -1,10 +1,11 @@
 package control
 
 import (
+	"context"
 	"crypto/rand"
-	"encoding/json"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,10 @@ import (
 // for the person signed in on that device in ento right now, on a device that may administer, and
 // lasts only while they stay signed in there: a program on the device that reaches the page from its
 // address still lacks the browser's sign-in, and a new one takes the person's passkey.
+//
+// On a device that keeps its own sign-in to itself (here.go, 0.57), Sign in goes there instead: the
+// person is signed in on the device and the dashboard opens, with one sign-in, whether anyone was
+// signed in on it before or not.
 const (
 	uiSignInPath   = "/ui/signin"
 	uiCallbackPath = "/ui/callback"
@@ -52,6 +57,7 @@ func (s *Server) withSignIn(st uiState, device store.Peer) uiState {
 	if device.User != "" && device.Person.Active {
 		st.Person = device.UserName
 	}
+	st.Here = s.hereOn() && s.hereGuarded(context.Background(), device)
 	return st
 }
 
@@ -72,6 +78,12 @@ func uiPage(w http.ResponseWriter, status int, msg string) {
 func (s *Server) uiSignIn(w http.ResponseWriter, r *http.Request, device store.Peer) {
 	if s.oidc == nil {
 		uiPage(w, http.StatusNotFound, "This network has no identity provider: approve the page from this device (sudo ento admin ui).")
+		return
+	}
+	// A device that keeps its own sign-in to itself signs the person in on it and opens the
+	// dashboard in one sign-in, whoever was signed in on it before (here.go).
+	if s.hereOn() && s.hereGuarded(r.Context(), device) {
+		http.Redirect(w, r, s.id.HereURL(thenUI), http.StatusFound)
 		return
 	}
 	if device.User == "" || !device.Person.Active {
@@ -186,6 +198,12 @@ func (s *Server) uiCallback(w http.ResponseWriter, r *http.Request, device store
 			"the admin page opens only for them.", claims.name(), on))
 		return
 	}
+	s.openUISession(w, r, device, claims.Subject, claims.name())
+}
+
+// openUISession opens the dashboard's session for the person (the provider's subject) who just
+// signed in on the device, and goes to the dashboard.
+func (s *Server) openUISession(w http.ResponseWriter, r *http.Request, device store.Peer, subject, name string) {
 	secret, hash, err := uiSecret()
 	if err != nil {
 		uiPage(w, http.StatusInternalServerError, "internal error")
@@ -193,7 +211,7 @@ func (s *Server) uiCallback(w http.ResponseWriter, r *http.Request, device store
 	}
 	now := time.Now()
 	u := store.UISession{Hash: hash, PeerID: device.ID, Browser: browserName(r.UserAgent()), Approved: true,
-		CreatedAt: now, ExpiresAt: now.Add(uiSessionLifetime), LastUsed: now, Person: claims.Subject}
+		CreatedAt: now, ExpiresAt: now.Add(uiSessionLifetime), LastUsed: now, Person: subject}
 	if err := s.cfg.Store.CreateUISession(r.Context(), u); err != nil {
 		s.cfg.Logf("admin interface sign-in: %v", err)
 		uiPage(w, http.StatusServiceUnavailable, "The session could not be opened: try again in a moment.")
@@ -201,6 +219,6 @@ func (s *Server) uiCallback(w http.ResponseWriter, r *http.Request, device store
 	}
 	http.SetCookie(w, &http.Cookie{Name: uiCookie, Value: secret, Path: "/", Secure: true, HttpOnly: true,
 		SameSite: http.SameSiteStrictMode})
-	s.audit(r, &device, "admin_ui_session", peerLabel(device)+" signed in as "+claims.name(), "ok")
+	s.audit(r, &device, "admin_ui_session", peerLabel(device)+" signed in as "+name, "ok")
 	http.Redirect(w, r, "/", http.StatusFound)
 }

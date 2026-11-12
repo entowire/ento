@@ -1,76 +1,50 @@
 package control
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"entowire.com/ento/internal/api"
+	entoid "entowire.com/ento/internal/id"
 	"entowire.com/ento/internal/store"
 )
 
 // People: the administrators manage the people of the network's identity provider from the
-// dashboard, through the provider's API with a key the control nodes hold (Config.People), so the
-// provider's own administration can stay closed. Only Rauthy is known so far (its API at
-// https://HOST/auth/v1, an API key "NAME$SECRET" with read, create, update and delete on Users and
-// Groups; entowire's build adds the setup link it returns instead of mailing).
+// dashboard. That is the control nodes' own provider (Config.ID, idPeople in people_id.go), changed
+// in process; a network signing in with another provider (--oidc-issuer) manages its people there.
 
-// PeopleConfig names the provider and how to reach it.
-type PeopleConfig struct {
-	Kind      string   // "rauthy"
-	API       string   // its API's base address, e.g. https://id.example.com/auth/v1
-	Key       string   // its API key
-	ConnectTo []string // host:port to dial instead of the API's host (as OIDCConfig.ConnectTo)
-}
-
-// ParsePeopleKind checks a --people value.
-func ParsePeopleKind(kind string) error {
-	if kind != "rauthy" {
-		return fmt.Errorf("unknown people provider %q (known: rauthy)", kind)
-	}
-	return nil
-}
-
-type rauthyPeople struct {
-	cfg    PeopleConfig
-	client *http.Client
-}
-
-func newPeople(cfg PeopleConfig) *rauthyPeople {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if len(cfg.ConnectTo) == 0 {
-				return dialer.DialContext(ctx, network, addr)
-			}
-			var lastErr error
-			for _, target := range cfg.ConnectTo {
-				c, err := dialer.DialContext(ctx, network, target)
-				if err == nil {
-					return c, nil
-				}
-				lastErr = err
-			}
-			return nil, lastErr
-		},
-		MaxIdleConnsPerHost: 8,
-	}
-	cfg.API = strings.TrimRight(cfg.API, "/")
-	return &rauthyPeople{cfg: cfg, client: &http.Client{Timeout: 15 * time.Second, Transport: transport}}
+// peopleBackend is where a network's people are.
+type peopleBackend interface {
+	kind() string
+	list(ctx context.Context) ([]api.Person, error)
+	user(ctx context.Context, id string) (personRecord, error)
+	groups(ctx context.Context) ([]string, error)
+	ensureGroups(ctx context.Context, want []string) error
+	deleteGroup(ctx context.Context, name string) error
+	passkeys(ctx context.Context, id string) ([]api.Passkey, error)
+	setupLink(ctx context.Context, id string) (api.SetupLink, error)
+	create(ctx context.Context, req api.NewPersonRequest) (api.Person, error)
+	update(ctx context.Context, id string, req api.UpdatePersonRequest) error
+	deletePasskey(ctx context.Context, id, name string) error
+	remove(ctx context.Context, id string) error
+	// The ways of signing in: those the provider knows, the default and each group's own policy,
+	// and what one person has.
+	methods() []string
+	defaultSignin(ctx context.Context) ([]string, error)
+	setDefaultSignin(ctx context.Context, methods []string) error
+	groupList(ctx context.Context) ([]peopleGroup, error)
+	setGroupSignin(ctx context.Context, g peopleGroup, methods []string) error
+	personSignin(ctx context.Context, id string) (personSignin, error)
+	// accountPage is where people change their own sign-in ("": nowhere).
+	accountPage() string
 }
 
 // errProvider is the provider's own refusal, with its status.
@@ -81,50 +55,7 @@ type errProvider struct {
 
 func (e *errProvider) Error() string { return e.msg }
 
-func (p *rauthyPeople) do(ctx context.Context, method, path string, body, out any) error {
-	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		rd = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, p.cfg.API+path, rd)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "API-Key "+p.cfg.Key)
-	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("identity provider: %w", err)
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode >= 300 {
-		var e struct {
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(b, &e)
-		if e.Message == "" {
-			e.Message = strings.TrimSpace(string(b))
-		}
-		if len(e.Message) > 200 {
-			e.Message = e.Message[:200]
-		}
-		return &errProvider{status: resp.StatusCode, msg: fmt.Sprintf("identity provider: %s (HTTP %d)", e.Message, resp.StatusCode)}
-	}
-	if out != nil && len(b) > 0 {
-		return json.Unmarshal(b, out)
-	}
-	return nil
-}
-
-type rauthyUser struct {
+type personRecord struct {
 	ID          string   `json:"id"`
 	Email       string   `json:"email"`
 	GivenName   string   `json:"given_name"`
@@ -143,7 +74,7 @@ func unixTime(s int64) string {
 	return time.Unix(s, 0).UTC().Format(time.RFC3339)
 }
 
-func (u rauthyUser) person() api.Person {
+func (u personRecord) person() api.Person {
 	g := slices.Clone(u.Groups)
 	if g == nil {
 		g = []string{}
@@ -151,164 +82,6 @@ func (u rauthyUser) person() api.Person {
 	sort.Strings(g)
 	return api.Person{ID: u.ID, Email: u.Email, GivenName: u.GivenName, FamilyName: u.FamilyName, Enabled: u.Enabled,
 		Groups: g, Setup: u.AccountType == "new", Account: u.AccountType, CreatedAt: unixTime(u.CreatedAt), LastLogin: unixTime(u.LastLogin)}
-}
-
-func (p *rauthyPeople) user(ctx context.Context, id string) (rauthyUser, error) {
-	var u rauthyUser
-	err := p.do(ctx, "GET", "/users/"+url.PathEscape(id), nil, &u)
-	return u, err
-}
-
-// list fetches every user: the list holds no groups or state, so each one is fetched too, a few at
-// a time.
-func (p *rauthyPeople) list(ctx context.Context) ([]api.Person, error) {
-	var short []struct {
-		ID string `json:"id"`
-	}
-	if err := p.do(ctx, "GET", "/users", nil, &short); err != nil {
-		return nil, err
-	}
-	out := make([]api.Person, len(short))
-	errs := make([]error, len(short))
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
-	for i, s := range short {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			u, err := p.user(ctx, s.ID)
-			out[i], errs[i] = u.person(), err
-		}()
-	}
-	wg.Wait()
-	if err := errors.Join(errs...); err != nil {
-		return nil, err
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
-	return out, nil
-}
-
-func (p *rauthyPeople) groups(ctx context.Context) ([]string, error) {
-	var gs []struct {
-		Name string `json:"name"`
-	}
-	if err := p.do(ctx, "GET", "/groups", nil, &gs); err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(gs))
-	for _, g := range gs {
-		out = append(out, g.Name)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-// ensureGroups makes the groups the provider does not have yet: it drops unknown ones from a user.
-func (p *rauthyPeople) ensureGroups(ctx context.Context, want []string) error {
-	have, err := p.groups(ctx)
-	if err != nil {
-		return err
-	}
-	for _, g := range want {
-		if !slices.Contains(have, g) {
-			kind := "people"
-			if isDeviceGroup(g) {
-				kind = "devices"
-			}
-			if err := p.do(ctx, "POST", "/groups", map[string]any{"group": g, "meta": map[string]string{"kind": kind}}, nil); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (p *rauthyPeople) deleteGroup(ctx context.Context, name string) error {
-	var gs []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	if err := p.do(ctx, "GET", "/groups", nil, &gs); err != nil {
-		return err
-	}
-	for _, g := range gs {
-		if g.Name == name {
-			return p.do(ctx, "DELETE", "/groups/"+url.PathEscape(g.ID), nil, nil)
-		}
-	}
-	return &errProvider{status: http.StatusNotFound, msg: "no group " + name}
-}
-
-func (p *rauthyPeople) passkeys(ctx context.Context, id string) ([]api.Passkey, error) {
-	var ks []struct {
-		Name       string `json:"name"`
-		Registered int64  `json:"registered"`
-		LastUsed   int64  `json:"last_used"`
-	}
-	if err := p.do(ctx, "GET", "/users/"+url.PathEscape(id)+"/webauthn", nil, &ks); err != nil {
-		return nil, err
-	}
-	out := []api.Passkey{}
-	for _, k := range ks {
-		out = append(out, api.Passkey{Name: k.Name, RegisteredAt: unixTime(k.Registered), LastUsedAt: unixTime(k.LastUsed)})
-	}
-	return out, nil
-}
-
-func (p *rauthyPeople) setupLink(ctx context.Context, id string) (api.SetupLink, error) {
-	var r struct {
-		Link    string `json:"link"`
-		Expires int64  `json:"expires"`
-	}
-	if err := p.do(ctx, "POST", "/users/"+url.PathEscape(id)+"/setup_link", nil, &r); err != nil {
-		return api.SetupLink{}, err
-	}
-	return api.SetupLink{Link: r.Link, ExpiresAt: unixTime(r.Expires)}, nil
-}
-
-func (p *rauthyPeople) create(ctx context.Context, req api.NewPersonRequest) (api.Person, error) {
-	if err := p.ensureGroups(ctx, req.Groups); err != nil {
-		return api.Person{}, err
-	}
-	body := map[string]any{"email": req.Email, "language": "en", "roles": []string{}, "groups": req.Groups}
-	if req.GivenName != "" {
-		body["given_name"] = req.GivenName
-	}
-	if req.FamilyName != "" {
-		body["family_name"] = req.FamilyName
-	}
-	var u rauthyUser
-	if err := p.do(ctx, "POST", "/users", body, &u); err != nil {
-		return api.Person{}, err
-	}
-	return u.person(), nil
-}
-
-func (p *rauthyPeople) update(ctx context.Context, id string, req api.UpdatePersonRequest) error {
-	var put []map[string]any
-	if req.Enabled != nil {
-		put = append(put, map[string]any{"key": "enabled", "value": *req.Enabled})
-	}
-	if req.Groups != nil {
-		if err := p.ensureGroups(ctx, *req.Groups); err != nil {
-			return err
-		}
-		put = append(put, map[string]any{"key": "groups", "value": *req.Groups})
-	}
-	if len(put) == 0 {
-		return nil
-	}
-	return p.do(ctx, "PATCH", "/users/"+url.PathEscape(id), map[string]any{"put": put, "del": []string{}}, nil)
-}
-
-func (p *rauthyPeople) deletePasskey(ctx context.Context, id, name string) error {
-	return p.do(ctx, "DELETE", "/users/"+url.PathEscape(id)+"/webauthn/delete/"+url.PathEscape(name), map[string]any{}, nil)
-}
-
-func (p *rauthyPeople) remove(ctx context.Context, id string) error {
-	return p.do(ctx, "DELETE", "/users/"+url.PathEscape(id), nil, nil)
 }
 
 // --- the admin API ---------------------------------------------------------------------------------
@@ -349,7 +122,7 @@ func respondPeopleErr(w http.ResponseWriter, err error) {
 
 // guardLastAdmin refuses a change that would leave the network without an enabled admin person, or
 // that an administrator would make to their own account (they would lock themselves out).
-func (s *Server) guardLastAdmin(ctx context.Context, self store.Peer, target rauthyUser, losesAdmin bool) error {
+func (s *Server) guardLastAdmin(ctx context.Context, self store.Peer, target personRecord, losesAdmin bool) error {
 	if !losesAdmin {
 		return nil
 	}
@@ -390,7 +163,7 @@ func (s *Server) keptGroup(name string) bool {
 
 // isSelf: the caller's own account, by the provider's subject (the e-mail address only for an older
 // session without one).
-func isSelf(self store.Peer, target rauthyUser) bool {
+func isSelf(self store.Peer, target personRecord) bool {
 	if self.User != "" {
 		return self.User == target.ID
 	}
@@ -401,7 +174,7 @@ func isSelf(self store.Peer, target rauthyUser) bool {
 // safely (I6): one's own (another admin does that), another admin's from a device with nobody
 // signed in (whose root would then take the account over with a setup link), and the last one of
 // the only admin who can sign in.
-func (s *Server) guardPasskey(ctx context.Context, self store.Peer, target rauthyUser) error {
+func (s *Server) guardPasskey(ctx context.Context, self store.Peer, target personRecord) error {
 	if isSelf(self, target) {
 		return errors.New("not on your own account: another admin does that")
 	}
@@ -436,7 +209,7 @@ func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request, self s
 		respondPeopleErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.PeopleList{Provider: s.people.cfg.Kind, People: people, Groups: groups})
+	writeJSON(w, http.StatusOK, api.PeopleList{Provider: s.people.kind(), People: people, Groups: groups})
 }
 
 func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request, self store.Peer) {
@@ -804,24 +577,18 @@ func (s *Server) resolveRuleGroup(ctx context.Context, g string) (string, error)
 
 // --- sign-in policies (0.46) ------------------------------------------------------------------------
 
-// SigninMethods are the ways of signing in the identity provider knows (entowire's build of Rauthy):
-// a policy allows some of them, for the network (the default) or for a people group.
-var SigninMethods = []string{"passkey", "password+passkey", "password+totp"}
+// SigninMethods are the ways of signing in the network's own provider knows: a policy allows some of
+// them, for the network (the default) or for a people group.
+var SigninMethods = entoid.Methods
 
-type rauthyGroup struct {
+type peopleGroup struct {
 	ID   string         `json:"id"`
 	Name string         `json:"name"`
 	Meta map[string]any `json:"meta"`
 }
 
-func (p *rauthyPeople) groupList(ctx context.Context) ([]rauthyGroup, error) {
-	var gs []rauthyGroup
-	err := p.do(ctx, "GET", "/groups", nil, &gs)
-	return gs, err
-}
-
 // groupSignin is a group's own policy (nil: the default).
-func groupSignin(g rauthyGroup) []string {
+func groupSignin(g peopleGroup) []string {
 	raw, ok := g.Meta["signin"].([]any)
 	if !ok {
 		return nil
@@ -835,14 +602,6 @@ func groupSignin(g rauthyGroup) []string {
 	return out
 }
 
-func (p *rauthyPeople) defaultSignin(ctx context.Context) ([]string, error) {
-	var r struct {
-		Default []string `json:"default"`
-	}
-	err := p.do(ctx, "GET", "/signin_policy", nil, &r)
-	return r.Default, err
-}
-
 type personSignin struct {
 	Password bool     `json:"password"`
 	Passkeys int      `json:"passkeys"`
@@ -850,12 +609,6 @@ type personSignin struct {
 	Methods  []string `json:"methods"`
 	Allowed  []string `json:"allowed"`
 	Usable   []string `json:"usable"`
-}
-
-func (p *rauthyPeople) personSignin(ctx context.Context, id string) (personSignin, error) {
-	var r personSignin
-	err := p.do(ctx, "GET", "/users/"+url.PathEscape(id)+"/signin", nil, &r)
-	return r, err
 }
 
 // effectiveSignin is what a person with these groups may use: what all their people groups allow
@@ -880,12 +633,12 @@ func effectiveSignin(groups []string, byGroup map[string][]string, def []string)
 	return out
 }
 
-func checkMethods(ms []string) error {
+func checkMethods(ms, known []string) error {
 	if len(ms) == 0 {
 		return errors.New("at least one way of signing in")
 	}
 	for i, m := range ms {
-		if !slices.Contains(SigninMethods, m) || slices.Contains(ms[:i], m) {
+		if !slices.Contains(known, m) || slices.Contains(ms[:i], m) {
 			return fmt.Errorf("unknown or repeated way of signing in %q", m)
 		}
 	}
@@ -893,7 +646,7 @@ func checkMethods(ms []string) error {
 }
 
 // signinState is the default and every group's own policy, as the provider has them.
-func (s *Server) signinState(ctx context.Context) (def []string, byGroup map[string][]string, groups []rauthyGroup, err error) {
+func (s *Server) signinState(ctx context.Context) (def []string, byGroup map[string][]string, groups []peopleGroup, err error) {
 	if def, err = s.people.defaultSignin(ctx); err != nil {
 		return
 	}
@@ -938,7 +691,7 @@ func (s *Server) handleGetSignin(w http.ResponseWriter, r *http.Request, self st
 		respondPeopleErr(w, err)
 		return
 	}
-	out := api.SigninPolicy{Default: def, Methods: SigninMethods, Groups: map[string][]string{}}
+	out := api.SigninPolicy{Default: def, Methods: s.people.methods(), Groups: map[string][]string{}}
 	for g, pol := range byGroup {
 		if pol != nil {
 			out.Groups[g] = pol
@@ -959,7 +712,7 @@ func (s *Server) handleSetSignin(w http.ResponseWriter, r *http.Request, self st
 		return
 	}
 	if req.Group == "" || req.Methods != nil {
-		if err := checkMethods(req.Methods); err != nil {
+		if err := checkMethods(req.Methods, s.people.methods()); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -970,7 +723,7 @@ func (s *Server) handleSetSignin(w http.ResponseWriter, r *http.Request, self st
 		respondPeopleErr(w, err)
 		return
 	}
-	var target *rauthyGroup
+	var target *peopleGroup
 	if req.Group != "" {
 		for i := range groups {
 			if groups[i].Name == req.Group && !isDeviceGroup(req.Group) {
@@ -1000,23 +753,13 @@ func (s *Server) handleSetSignin(w http.ResponseWriter, r *http.Request, self st
 		return
 	}
 	if target == nil {
-		if err := s.people.do(ctx, "PUT", "/signin_policy", map[string]any{"default": req.Methods}, nil); err != nil {
+		if err := s.people.setDefaultSignin(ctx, req.Methods); err != nil {
 			respondPeopleErr(w, err)
 			return
 		}
 		s.audit(r, &self, "signin_policy", "default "+strings.Join(req.Methods, ","), "ok")
 	} else {
-		meta := map[string]any{}
-		for k, v := range target.Meta {
-			meta[k] = v
-		}
-		meta["kind"] = "people"
-		if req.Methods == nil {
-			delete(meta, "signin")
-		} else {
-			meta["signin"] = req.Methods
-		}
-		if err := s.people.do(ctx, "PUT", "/groups/"+url.PathEscape(target.ID), map[string]any{"group": target.Name, "meta": meta}, nil); err != nil {
+		if err := s.people.setGroupSignin(ctx, *target, req.Methods); err != nil {
 			respondPeopleErr(w, err)
 			return
 		}
@@ -1030,7 +773,7 @@ func (s *Server) handleSetSignin(w http.ResponseWriter, r *http.Request, self st
 }
 
 // checkPersonFits refuses new groups for a person whose ways of signing in they would not allow.
-func (s *Server) checkPersonFits(ctx context.Context, u rauthyUser, groups []string) error {
+func (s *Server) checkPersonFits(ctx context.Context, u personRecord, groups []string) error {
 	def, byGroup, _, err := s.signinState(ctx)
 	if err != nil {
 		return err
@@ -1046,11 +789,11 @@ func (s *Server) checkPersonFits(ctx context.Context, u rauthyUser, groups []str
 	return nil
 }
 
-// accountPage is where people change their own sign-in: entowire's build of Rauthy serves only
-// that on its account page (tools/rauthy, patch 0014). "" where people are not managed here.
+// accountPage is where people change their own sign-in (the provider's account page); "" where
+// people are not managed here.
 func (s *Server) accountPage() string {
-	if s.people == nil || s.cfg.People == nil || s.cfg.People.Kind != "rauthy" {
+	if s.people == nil {
 		return ""
 	}
-	return strings.TrimSuffix(s.cfg.People.API, "/") + "/account"
+	return s.people.accountPage()
 }

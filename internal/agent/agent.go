@@ -220,7 +220,7 @@ func Run(ctx context.Context, cfg Config) error {
 	// identity (and suspends a device bound to a person). Where the process can be told apart from
 	// another that got its PID (Linux, macOS), a second one refuses to start.
 	if r, ok := RunningAgent(cfg.StateDir); ok && r.PID != os.Getpid() && runtime.GOOS != "windows" && agentProcess(r.PID) {
-		return fmt.Errorf("another agent (process %d) is running with %s: stop it first (ento agent down, or stop the service)", r.PID, cfg.StateDir)
+		return fmt.Errorf("another agent (process %d) is running with %s: stop it first (ento down, or stop the service)", r.PID, cfg.StateDir)
 	}
 	// The key signs this device's calls: keep it from other users (Windows: a state directory made
 	// before it was locked down at every write).
@@ -422,9 +422,12 @@ type runner struct {
 	exitAt    time.Time
 	exitNoted string
 	// filterFailed: the last inbound filter could not be applied, so only the control nodes are peers;
-	// filterErr (under mu) says why, for `ento agent status` and the check-ins.
+	// filterErr (under mu) says why, for `ento status` and the check-ins.
 	filterFailed bool
 	filterErr    string
+	// hereGuard (under mu): the filter in place keeps everything the device forwards from its control
+	// nodes' sign-in port (filter_linux.go), which the check-ins say (api.CheckInRequest.HereGuard).
+	hereGuard bool
 	// resolver: the agent's resolver (dns.go), nil when nothing needs it; dnsApplied: the system's
 	// DNS settings made for it (dnsSettings.key, "" for none), dnsAt when; dnsNoted the last thing
 	// logged about it.
@@ -446,14 +449,14 @@ type runner struct {
 	// user and userName: the person the device is bound to (api.Self), for announce.
 	user, userName string
 	announceMu     sync.Mutex // serialises announce's writes
-	// failingFile, when set, keeps the failing checks for `ento agent status` (linked networks).
+	// failingFile, when set, keeps the failing checks for `ento status` (linked networks).
 	failingFile string
 	postureWake chan struct{} // asks for a report now
 	attestErr   string        // why the latest attestation failed, as logged (reportPosture only)
 	started     time.Time     // when the runner started (awaitReport)
 }
 
-// announce writes what `ento agent status` shows of the running agent (home network only).
+// announce writes what `ento status` shows of the running agent (home network only).
 func (a *runner) announce() {
 	if !a.announces {
 		return
@@ -583,7 +586,7 @@ func (a *runner) loop(ctx context.Context) error {
 			a.loginRequired, a.user, a.userName = nm.Self.LoginRequired, nm.Self.User, nm.Self.UserName
 			a.mu.Unlock()
 			if ended {
-				a.cfg.Logf("the single sign-on session of this device ended; run `sudo ento agent login` to reconnect")
+				a.cfg.Logf("the single sign-on session of this device ended; run `sudo ento login` to reconnect")
 			}
 			a.announce()
 		}
@@ -597,7 +600,7 @@ func (a *runner) loop(ctx context.Context) error {
 			}
 			a.mu.Unlock()
 			if changed {
-				a.announce() // `ento agent status` shows the session as it is now (it showed the last one written)
+				a.announce() // `ento status` shows the session as it is now (it showed the last one written)
 			}
 		}
 		if nm.Self.Approved {
@@ -768,6 +771,7 @@ func (a *runner) apply(nm api.NetMap) error {
 		a.cfg.Logf("inbound filter applied: the network's peers are back")
 	}
 	a.filterFailed = filterErr != nil
+	a.hereGuard = filterErr == nil && filter != nil && !a.linked() && kernelTunnel(a.ifc)
 	why := ""
 	if filterErr != nil {
 		why = filterErr.Error()

@@ -15,6 +15,11 @@ Windows (PowerShell as Administrator; needs the OpenSSH client 8.1+, which Windo
 
     [Net.ServicePointManager]::SecurityProtocol = 'Tls12'; irm https://entowire.com/install.ps1 | iex
 
+The commands people use on their own device need no `agent` (0.58): `ento login`, `logout`,
+`status`, `whoami`, `join`, `leave`, `up`, `down` and `exit` are `ento agent login` and so on, which
+still work (scripts, and devices of older versions). Texts the control nodes send devices (the
+dashboard, the sign-in pages) still say `ento agent ...`, which every version understands.
+
 Two WireGuard clients on one machine (since 0.38.2): if the agent's UDP port (51830) is taken, by
 another network's agent or wg-quick, it takes the next free one and logs it, instead of failing to
 start. The port only serves direct connections; peers learn it from the control nodes.
@@ -34,7 +39,7 @@ for ever.
 
 On Linux the installed service gets the TPM's group (`/dev/tpmrm0`, usually `tss`) as a
 supplementary group, so its hardware key can open the TPM despite the service's narrow capability
-set (0.38.2; before, `ento agent status` showed `hw key: unusable: ... permission denied`). Run
+set (0.38.2; before, `ento status` showed `hw key: unusable: ... permission denied`). Run
 `sudo ento agent install` once to rewrite the unit of an agent installed before.
 
 On Linux the agent is a systemd service, and nothing else: on a system without systemd (QNAP's
@@ -80,12 +85,12 @@ service. It then installs `/usr/local/bin/ento` (Windows: `C:\Program Files\ento
 `wintun.dll` and `ento-tray.exe`, see [Signing in on Windows](#signing-in-on-windows)). With `ENTO_JOIN=<domain>` they also install the agent service and enroll with the
 words an administrator reads out (see Enrollment by words); `install.sh` also takes
 `ENTO_TOKEN_FILE=/path/to/token`. Then `ento agent install --join <domain>` or, Linux and macOS
-only, `ento agent install --token-file <token>` (root or Administrator), and `ento agent login`.
+only, `ento agent install --token-file <token>` (root or Administrator), and `ento login`.
 Phones and Windows take words only (0.23.3): they are people's devices, and a token is a file that
 lingers; tokens are for Linux and macOS machines that automation enrolls (servers, prepared
 images). An enrollment only takes on a device that is not enrolled yet: on an enrolled device
 `install` refuses it (0.10.1), and `install --force` forgets the old enrollment (as
-`uninstall --purge`) and enrolls anew; to be in another network as well, `ento agent join DOMAIN`
+`uninstall --purge`) and enrolls anew; to be in another network as well, `ento join DOMAIN`
 (Linux, see [Several networks on one device](#several-networks-on-one-device-051-linux)). State: `/var/lib/ento` (Linux), `/Library/Application Support/ento`
 (macOS), `C:\ProgramData\ento` (Windows, SYSTEM and Administrators only). Logs: the journal (Linux,
 `journalctl -u ento-agent`), `/Library/Logs/ento-agent.log` (macOS), `C:\ProgramData\ento\agent.log`
@@ -93,9 +98,9 @@ images). An enrollment only takes on a device that is not enrolled yet: on an en
 previous 5 MB in `agent.log.1`). Running `ento.exe agent run` by hand on Windows fails at WireGuard's
 control pipe (only SYSTEM may own it): read the service's log instead.
 
-`ento agent down` turns the tunnel off: the service stops and stays off, across reboots and
+`ento down` turns the tunnel off: the service stops and stays off, across reboots and
 re-installs too, and on Linux the kernel's WireGuard interfaces (the device's own and those of
-linked networks) are removed. `ento agent up` turns it on again. Merely stopping or restarting the
+linked networks) are removed. `ento up` turns it on again. Merely stopping or restarting the
 service leaves a kernel interface in place, working with its last configuration, so that restarts
 and upgrades interrupt no connection; `down` is what closes it (elsewhere the interface lives in
 the agent and goes away with it). `ento agent run` runs the agent in the foreground instead of as
@@ -127,6 +132,8 @@ the VPN; the phone's other traffic is untouched. Always-on VPN (Android settings
 address and the network's route and hands its file descriptor to the agent; `MainActivity` enrolls
 with the QR code of the domain and the words an administrator's admin page shows (`ScanActivity`),
 or with both typed (**Type the domain and the words instead**), connects, and signs in or out.
+After joining with words it connects and starts signing in by itself (0.57: for an invited
+account, the sign-in is its setup).
 Since 0.55.1 the main screen holds only what a person needs: the state (connected, signed in as
 whom, an exit in use, a check the device fails and why, an error; a sign-in's outcome below the
 buttons only when it adds to that: a failure, or groups that give the device no access), Connect or
@@ -289,13 +296,15 @@ On the administrator's machine (root):
     ento agent install --token-file admin.token   # enrolls, then runs as a service
 
 With an identity provider, the first administrator also needs their account there, which the
-command line makes too (0.49; Rauthy, with entowire's build for the setup link):
+command line makes too (0.49): with the control nodes' own provider (0.57, below),
 
-    ENTO_PEOPLE_API_KEY='NAME$SECRET' ento control person --people-api https://id.example.com/auth/v1 \
-      [--people-connect-to HOST:PORT] --groups admins admin@example.com
+    ENTO_ID_KEY=... ento control person --id id.example.com --groups admins admin@example.com
+
+With `--reset`, a person who exists loses every way in first (passkeys, password, app) and gets a
+new link: the recovery of an account whose person lost them, from the control nodes alone.
 
 It prints a one-time link to set up the account's passkey (open it on the administrator's device,
-once it has joined: the provider is reached through the tunnel); then `sudo ento agent login`
+once it has joined: the provider is reached through the tunnel); then `sudo ento login`
 signs them in on that device, and the dashboard opens with **Sign in** (Admin web interface). From
 then on that device administers while they are signed in on it (Roles take a person and a device,
 0.54); with nobody signed in, it administers nothing. Run
@@ -327,13 +336,13 @@ token stores the invitation for the service, which redeems it, and shows `joinin
 <domain>...` until the agent has its address (`joined network <domain> as <address>: complete`), or
 stops with the agent's reason (`joining network <domain> failed: ...`: an invitation refused is used
 up or withdrawn, new words are needed; any other failure the agent retries by itself), or, after 90
-seconds, says that it keeps trying; `ento agent join` (another network, below) does the same. Before,
-the installers said `Enrolled.` as soon as the service started, and an `ento agent status` in the
+seconds, says that it keeps trying; `ento join` (another network, below) does the same. Before,
+the installers said `Enrolled.` as soon as the service started, and an `ento status` in the
 next seconds answered `not enrolled`; while the invitation is pending it now says `joining`, with
 the last attempt's error (the file `enroll.error` beside `enroll.token`), and without root, that
 the state is root's. A join that fails still leaves ento installed: on Windows `install.ps1` adds it
 to PATH and starts the tray program before it reports the failure (0.56.3; in 0.56.2 it stopped
-first, so `ento` was not found), and the hints name `ento agent status` in an administrator's
+first, so `ento` was not found), and the hints name `ento status` in an administrator's
 PowerShell there, not `sudo`.
 
 The domain publishes the network's record, the TXT record `_ento.<domain>`, as `ento admin
@@ -529,7 +538,7 @@ answers: it opens nothing into the network, even with a route to it. Nobody reac
 a policy to it: a policy between groups, `*` included, never does, and a route is never a source.
 Ports, posture checks and the admin page (**Routes**, **Allow…** to make the policy) work as for
 any policy. A device that is itself on a network overlapping a route (in the office) leaves the
-route out and reaches the LAN directly; `ento agent status` shows the routes a device uses
+route out and reaches the LAN directly; `ento status` shows the routes a device uses
 (`routes:`) and those it serves (`gateway of:`).
 
 The gateway runs Linux with the kernel's WireGuard (not `--userspace`); its agent turns on IPv4
@@ -555,12 +564,12 @@ leaves from the office's address.
 
     sudo ento admin route add internet --exit --via office-gw            # --default: used unless turned off
     sudo ento admin allow staff route:internet                           # who (--ports: only those)
-    sudo ento agent exit internet      # on a device: use it; off: none; default: the one used by default
-    sudo ento agent exit               # the choice, and the exits offered
+    sudo ento exit internet      # on a device: use it; off: none; default: the one used by default
+    sudo ento exit               # the choice, and the exits offered
 
 Each device decides: an exit is offered to the devices the policy names, and used once the device
-chooses it (`ento agent exit NAME`, or the button in the Android app), or, for an exit added with
-`--default`, unless it turns it off (`ento agent exit off`). In use, everything but the device's
+chooses it (`ento exit NAME`, or the button in the Android app), or, for an exit added with
+`--default`, unless it turns it off (`ento exit off`). In use, everything but the device's
 own networks (its LAN stays reachable directly) goes into the tunnel to the gateway, and names are
 resolved there: the gateway answers DNS on its overlay address, passing queries to its own resolver
 (a firewall on the gateway that drops input must accept TCP and UDP port 53 on the ento interface:
@@ -582,7 +591,7 @@ with other numbers), and points systemd-resolved at the gateway for every name (
 on the interface; without systemd-resolved, names go where they went before, which the agent logs).
 macOS and Windows leave an offered exit unused for now, with a log line. It is no kill switch:
 while the agent is stopped or restarting, traffic takes its normal path; a captive portal (a hotel's
-sign-in page) needs the exit off. `ento agent status` shows the exits offered (`exit:`, which one is
+sign-in page) needs the exit off. `ento status` shows the exits offered (`exit:`, which one is
 in use) and, on a gateway, `exit for:`.
 
 ### Internal DNS (names for devices and office machines)
@@ -622,7 +631,7 @@ systemd-resolved the agent logs what to set. On Android the VPN names the agent 
 (an address no device gets, x.x.0.255, answered inside the agent, since apps cannot listen on port
 53), and the agent asks the DNS servers of the phone's other network for every other name; Private
 DNS in strict mode bypasses it. macOS and Windows: not yet. Linked networks get the names in their
-namespace's hosts file. `ento agent status` shows `dns:` when the device answers them.
+namespace's hosts file. `ento status` shows `dns:` when the device answers them.
 
 Setting the domain, adding and deleting names and zones is for admins and audited
 (`dns_domain_changed`, `dns_record_added`, `dns_record_deleted`, `dns_forward_added`,
@@ -663,9 +672,9 @@ with a timeout:
 Versions compare numerically, part by part (`6.10` is newer than `6.9`; `6.8.0-142-generic` is
 6.8.0); systems a check does not name are not limited by its `--min-os`. `--max-age` is 15 minutes
 to 30 days (default 30 minutes). `ento agent posture` prints what this device reports, collected
-now (`--json` as sent); `ento agent status` shows the last report the network took and the checks
+now (`--json` as sent); `ento status` shows the last report the network took and the checks
 the device fails; `ento admin peers` has a posture column (`enc+ fw+ sb? linux 6.8.0-142-generic (2m ago)`)
-and one for the checks a device fails (`av` is anti-malware); for a linked network, `ento agent status` lists the checks
+and one for the checks a device fails (`av` is anti-malware); for a linked network, `ento status` lists the checks
 the device fails there under the linked networks. The Android app shows the failing checks ("This device needs
 attention: disk not encrypted"). In the admin interface, devices show their report and each check
 (solid where a policy requires it), the **Access** page's **Device checks** add and delete checks (and shows which
@@ -698,7 +707,7 @@ refused; where a policy requires the same check, a failure it still holds counts
     sudo ento admin link update acme --posture laptops,boot        # none: no checks
     sudo ento admin links                                          # POSTURE column
 
-A refused device is told which checks it fails and why; `ento agent status` shows them under its
+A refused device is told which checks it fails and why; `ento status` shows them under its
 linked networks (`link acme: FAILS check laptops: disk not encrypted, which this network's link
 requires`), and the agent keeps asking (every 30 seconds while joining, every minute while renewing;
 within seconds, after reporting at once, when the only reason is a missing or old report). Right
@@ -747,7 +756,7 @@ created the link without them (it first asks whether the control plane can requi
 links, and creates nothing on an older one), and `link update` is refused by older ones. Until every
 home control node runs 0.14, an older one can also delete a check a link requires (it only looks at
 policies): the link's devices are then refused with `no such check` until an admin updates the
-link. Agents older than 0.14 are refused all the same; they only log why instead of showing it in `ento agent status`. The facts are the device's own word: they keep honest devices from drifting out of policy, and do
+link. Agents older than 0.14 are refused all the same; they only log why instead of showing it in `ento status`. The facts are the device's own word: they keep honest devices from drifting out of policy, and do
 not stop a device whose owner (or an attacker with root on it) reports what they like. Phones'
 verified boot and patch levels are the exception (below).
 
@@ -829,14 +838,13 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   the latest activity (0.53).
 - **People**: everyone who signed in on a device, from what the devices know (their groups from
   sign-in, their devices and whether they are signed in now); suspend or resume every device of a
-  person at once, sign them out of one device. With `--people` (below), everyone in the identity
-  provider too: invite a person (the page shows their setup link, to hand over), change their
+  person at once, sign them out of one device. With the control nodes' own provider (`--id`), everyone
+  in it too: invite a person (the page shows their setup link, to hand over), change their
   groups, see and remove their passkeys (a lost key: remove them all, then a new setup link),
   disable or enable them, delete them. Everyone changes their own password, passkeys and
   authenticator app on the identity provider's account page, which their name at the bottom of
-  the dashboard's side bar opens (0.54.1, entowire's build of Rauthy: each change confirmed with a passkey or the
-  password and a code, and none that would leave them without a way to sign in their groups
-  allow).
+  the dashboard's side bar opens (after a full sign-in there, and none that would leave them
+  without a way to sign in their groups allow).
 - **Devices**: every device with its state, checks and last contact, filtered (online, waiting,
   failing a check, suspended, admins) and searched; a device's panel shows its groups, its posture
   report and each check, and does what the admin commands do: approve and unapprove (**Sign out**
@@ -858,7 +866,9 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
 - **Routes**, **Names** (internal DNS) and **Linked networks** (grouped by the network they lead to,
   with the devices that may join and the checks the link requires; authorities).
 - **Activity** (0.53): the network's audit (below), newest first, searched and filtered by result
-  (done, refused, failed) and kind, older entries page by page, and **Export CSV** of what matches.
+  (done, refused, failed) and kind, 50 entries a page with **Newer** and **Older** between pages
+  (0.57; before, older entries were added below the first 100), each with its date and time, and
+  **Export CSV** of what matches. A refresh updates the first page only, so a page being read stays put.
 
 Group names are checked wherever they are set: 1 to 64 characters, no commas or control
 characters, `*` only in rules. The page carries the version of the control node that served it and
@@ -896,6 +906,14 @@ minutes unused) and also ends as soon as that person is no longer signed in on t
 A program on the device that reaches the page from its address lacks the browser's sign-in, and a
 new one takes the person's passkey.
 
+On a device that keeps the device's own sign-in to itself (0.57, The network's own identity
+provider), **Sign in** goes there instead: anyone with an account signs in with their passkey, is
+signed in on the device as they go (whoever was signed in on it is signed out; `binding=changed`),
+and the dashboard opens with that same sign-in, through a ticket for that device that is used once
+within two minutes (`/ui/here`). It still opens only for a person who is an admin, an operator or a
+viewer, on a device that may administer. So a device with nobody signed in opens it too, without a
+command first.
+
 (Code approval: Windows: in a PowerShell run as administrator; Android: **Open the admin page**, then **Approve** with
 the code, in the app, for admin and operator devices; opened on an Android phone, the page shows these steps first
 and the commands for computers below them. While it waits for the approval it shows only the code.) Nothing secret goes to the browser, so a
@@ -908,22 +926,18 @@ the device while it lasts; for such a device, use the command line (signed) and 
 The interface accepts a change only with its own request header, from its own origin
 and for its own name, so other web pages open on an admin device cannot act through it; the plain
 API on port 80 refuses browsers, except that a page opened by name there (someone typing
-`http://net.example.com`, or a browser trying http first) is redirected to the same address over https. Connections to port 443 for any other name still go to
-the identity provider (`--oidc-connect-to`), untouched.
+`http://net.example.com`, or a browser trying http first) is redirected to the same address over https. Connections to port 443 for the provider's name go to
+the control nodes' own provider (`--id`), those for any other name to an outside provider
+(`--oidc-connect-to`), untouched.
 
-People in the identity provider (0.40): `ento control run --people rauthy --people-api
-https://id.example.com/auth/v1`, with the provider's API key in `ENTO_PEOPLE_API_KEY` (Rauthy: an
-API key `NAME$SECRET` with read, create, update and delete on Users and Groups), lets admins manage
-the provider's people from the dashboard's **People** page, so the provider's own administration can
-stay closed. The control node calls the provider's API (through `--oidc-connect-to` when its host
-is the issuer's) for each request, keeps nothing, and audits every change (`person_added`,
+People in the identity provider (0.40; the control nodes' own since 0.57): the dashboard's
+**People** page manages them, in process. Every change is audited (`person_added`,
 `person_changed`, `person_deleted`, `person_passkey_deleted`, `person_setup_link`). New people and
-people without credentials get a setup link the dashboard shows once (the provider sends no mail):
-whoever opens it first registers the account's passkey, so hand it over the way you trust. Groups
-missing in the provider are made there first (it would drop them). Rauthy needs entowire's build
-for the setup link (`POST /users/{id}/setup_link`, tools/rauthy in entowire's repository).
+people without a way in get a setup link the dashboard shows once (the provider sends no mail):
+whoever opens it first sets up the account, so hand it over the way you trust. Groups missing in
+the provider are made there first.
 
-With `--people`, the network's groups are one kind, kept in the identity provider (0.42): a group
+With the control nodes' own provider, the network's groups are one kind, kept in it (0.42): a group
 named for a device, an invitation or a rule is made there too, and the **Groups** page lists the
 provider's groups with their devices and their people, adds and removes either, makes a group (empty,
 if need be) and deletes one that nothing uses (no rule, device, invitation, link or person; audited
@@ -1037,12 +1051,12 @@ needs it removed at the identity provider first).
 
 ### Sign-in policies (0.46)
 
-Where people are managed here (entowire's build of Rauthy), the network allows some ways of signing
+Where people are managed here (the control nodes' own provider), the network allows some ways of signing
 in: `passkey` (passkey only), `password+passkey` and `password+totp` (a password, then a passkey or an
 authenticator app); a password alone never. The default (all three unless changed) applies to people
 groups without their own; a people group may have its own (`admins`: passkey only, say), and someone
-in several groups may use only what all of them allow. Kept in Rauthy (the default in its config, a
-group's in its meta), enforced by Rauthy at every sign-in. Always consistent: changing a policy is
+in several groups may use only what all of them allow. Kept in the network's database (the
+default a setting, a group's with the group), enforced by the provider at every sign-in. Always consistent: changing a policy is
 refused while anyone would be left without a way in (the refusal names them), and so is putting a
 person in a group whose policy their ways of signing in do not meet (a setup link adds one; it also
 finishes an unfinished setup or replaces a lost second factor). The dashboard edits the default
@@ -1060,10 +1074,10 @@ nodes act as a confidential client using the device authorization grant (RFC 862
 
 On an enrolled device:
 
-    ento agent login        # opens the sign-in page in your browser (or prints the link and a code)
+    ento login        # opens the sign-in page in your browser (or prints the link and a code)
 
 The person types the code the device shows on that page (0.50): control nodes no longer pass on
-the provider's link with the code in it, and entowire's Rauthy approves at once only a code typed
+the provider's link with the code in it, and the control nodes' own provider approves at once only a code typed
 on its page; one that came in a link (anyone can send a person a link with their own device's
 code) gets a page saying a device asks to sign in as them, to accept or decline.
 
@@ -1112,8 +1126,8 @@ approved if the user is in an approve group, an admin if in an admin group, and 
 an operator group (and not an admin).
 
 The device knows whom it is bound to (0.22): its network map carries the person's username at the
-identity provider (`preferred_username`) and readable name, `ento agent status` shows them, and
-`ento agent whoami` prints the username for scripts (as root: it reads the running agent's state,
+identity provider (`preferred_username`) and readable name, `ento status` shows them, and
+`ento whoami` prints the username for scripts (as root: it reads the running agent's state,
 which only root can): exit 0 signed in, 2 when the session ended (the device stays bound to that
 person, and the name is still printed), 1 bound to nobody (nothing printed); `--json` gives
 `user`, `user_name` and `session_active`. It is the control plane's word, received through the
@@ -1130,6 +1144,98 @@ network those its authority gave; to bind such a device to a person, an administ
 approval first. A device starts at most one sign-in every 5 seconds. The agent opens only plain
 https sign-in links (anything else a control node sends is printed, not opened), and strips control
 characters from what it prints.
+
+### The network's own identity provider (0.57)
+
+The control nodes can be the network's identity provider themselves, instead of one run beside
+them (`internal/id`):
+
+    export ENTO_ID_KEY=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -outform DER | base64 -w0)
+    export ENTO_OIDC_TOKEN_KEY=$(openssl rand -base64 32)   # both the same on every control node
+    ento control run ... --id id.example.com --id-cert id.crt --id-cert-key id.key --id-title Example \
+      --oidc-approve-groups staff --oidc-admin-groups admins
+
+- **Where.** `https://id.example.com`, on port 443 of each control node's overlay address (the name
+  resolves there, as the dashboard's does), TLS ending at the node with `--id-cert` (read again
+  when it changes). Only enrolled devices that are not suspended get a connection, at most 32 at a
+  time each (a refusal is audited as `id_connection`); nothing of it is reachable from outside the
+  tunnel.
+- **Ways of signing in** (Sign-in policies, above): `passkey` (a passkey with user verification),
+  `password+passkey` (the password, then a passkey), `password+totp` (the password, then a code
+  from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once). Every
+  sign-in asks again: the provider keeps no session. The passkeys' relying party is the name
+  (`id.example.com`). Passwords: at least 12 characters, kept as Argon2id hashes (any PHC Argon2id
+  hash is taken as it is); after 10 wrong passwords or codes in 15 minutes an account takes no more passwords
+  until they have passed (its passkeys still work). App secrets are sealed with a key derived from
+  `ENTO_ID_KEY`.
+- **The account page** (`https://id.example.com/account`, linked from the dashboard's side bar): after
+  a full sign-in, for 15 minutes, people add and remove passkeys, set, change or remove their
+  password, and set up, replace or remove their app. A change that would leave them no way in
+  their groups allow is refused.
+- **Kept in the network's database** (tables `ento_id_*`): people, groups, passkeys, and every
+  short-lived record (authorization requests, codes, passkey ceremonies, setup links, refresh
+  grants), so either control node answers any step. Secrets are kept by their hash. ID tokens are
+  signed with ES256 by `ENTO_ID_KEY`, which is not in the database.
+- **The control nodes sign their devices in with it** unless `--oidc-issuer` names another
+  provider: the client `ento` is built in (its secret derived from `ENTO_ID_KEY`, so nobody keeps
+  it), with the dashboard's callback, `--oidc-app-redirects` and the device grant, and the control
+  nodes ask the provider in process, not over the network. `--oidc-*` group flags, sessions and the
+  refresh check work as with any provider.
+- **The dashboard manages its people** unless `--people` names another provider (People and
+  Groups, provider `ento`). Changes take effect at once: disabling or deleting someone ends their
+  refresh tokens there, so the next check (`--oidc-refresh-interval`) withdraws their devices.
+- **Setup links** (`https://id.example.com/setup#SECRET`): the secret is in the fragment, which
+  browsers never send, and reaches the provider only in the page's own call. Once, for 24 hours; a
+  new link replaces the last; only for an account that cannot sign in yet (never a way into an
+  account in use). The person sets up the first way their groups allow: a passkey, or a password
+  and then a passkey or an app. A failed attempt leaves the link usable.
+- **Devices** (`ento login`) show `https://id.example.com/device` and a code: typed on that
+  page, it is approved with the sign-in; a code that came in a link is shown, and after the
+  sign-in the person accepts or declines it. A device that keeps its own sign-in to itself (next)
+  gets that instead, when a browser opens on it.
+  the provider served a second time, on port 4443 of each control node's overlay address, with the
+  same name, certificate and passkeys (the relying party stays `id.example.com`; the page is a
+  second origin of it). A person who signs in there is signed in on the device their browser runs
+  on, as with a device code, but with nothing to type and nothing that could be sent to someone
+  else: the browser being on the device is the proof. That is the agent's to keep: it drops
+  everything it forwards to port 4443 of its control nodes (from containers, virtual machines, a
+  network behind it; on Linux with the kernel's WireGuard, a rule in the forward chain of `inet
+  ento-filter`) and says so at every check-in (`here_guard`). A device that has not said so in the
+  last 20 minutes (an older agent, macOS, Windows, Android and Linux with `--userspace` so far) gets
+  a page saying to sign in with `sudo ento login`, and a device code there. Any person may
+  sign in on any device this way (the one before is signed out, `binding=changed`), except on a
+  device invited for another account. `ento login` (directly, or through the running agent
+  for a person without sudo) asks for it when it can open a browser on the device (a desktop
+  session; not over SSH), opens it and waits (no QR code: a phone cannot use it); an invited
+  device's setup link is then on port 4443 too, and setting the account up signs the person in on
+  the device. Audited as `id_here`, and the sign-in as `login ... on the device's own sign-in`.
+- **Services beside the control nodes** that are no devices of the network (entowire's platform
+  console on its own nodes) reach it at `--id-listen HOST:PORT`, the same name and certificate on a
+  host address (a private one, such as a mesh between the nodes; never a public one).
+- **Other applications** of the network sign people in too: `--id-clients FILE`, a JSON list of
+  `{"id", "name", "secret" (16 characters or more), "redirect_uris" (exact), "device_grant"}`.
+  Confidential clients only, the authorization code with PKCE (S256) required; tokens carry `sub`
+  (the person's ID), `email` (verified), `preferred_username`, `name`, `given_name`,
+  `family_name`, `amr` (how they signed in) and, always, `groups`. Endpoints: `/.well-known/openid-configuration`,
+  `/authorize`, `/token` (authorization code, refresh token, device code), `/device_authorization`,
+  `/userinfo`, `/jwks`. Refresh tokens are not rotated (a lost answer never signs anyone out) and
+  last 30 days from their last use; ID and access tokens 10 minutes.
+- **Audited** in the network: `id_signin`, `id_device`, `id_here`, `id_setup`, `id_account`, and refusals
+  (`id_token`, `id_authorize`, `id_connection`).
+- **Device groups**: a device group a device has and the provider does not know is added to it,
+  never taken off the device.
+- **One invitation** (0.57): `ento control token --words --person EMAIL` makes words that also
+  invite that account (made first with `ento control person --id ... --no-link`, not set up yet).
+  The device that redeems them is invited for it (`invited` in the audit), and its first sign-in
+  is the account's setup: the app's sign-in, or the page `ento login` opens, is a setup link
+  (it reaches only that device, in the answer to its signed call) whose last step is that very
+  sign-in, done by the provider at once (one passkey, not two: the app is opened with its code, the
+  device code approved). Only that account's sign-in binds the device; anyone else's is refused
+  (`login ... denied`). The Android app connects and starts signing in by itself after joining
+  with words.
+- **The first administrator** (Enroll the first administrator):
+  `ENTO_ID_KEY=... ento control person --id id.example.com --groups admins admin@example.com` on a
+  control node (with `ENTO_DATABASE_URL`) prints their setup link.
 
 ### Forwarded services (0.33; reached by rules since 0.53)
 
@@ -1332,7 +1438,7 @@ open the agent tries both keys in turn until a control node answers. Clearing or
 loses the key: the device's check-ins then go unsigned, so an administrator releases the binding
 (`ento admin unbind ID`, admins only, audited `hwkey_unbound`) and resumes it if it was
 suspended; its next key binds. Downgrading a bound device below 0.31 has the same effect.
-`ento agent status` shows `hw key: tpm, bound` and when its WireGuard key was made, `ento admin
+`ento status` shows `hw key: tpm, bound` and when its WireGuard key was made, `ento admin
 peers` a `HW KEY` column (`--json`: `hardware_key`, `hardware_key_at`, `key_rotated_at`).
 `--hardware-key off` keeps an agent from using its TPM; `--tpm-device` names another one (a socket:
 a software TPM, as the tests use).
@@ -1365,8 +1471,8 @@ sign-in adds: the person's groups and role (from their identity provider groups)
 machine's while it is open. Policies name groups of either layer.
 
     sudo ento admin token --name laptop-anna --words --groups laptops --approve   # the machine layer
-    sudo ento agent login        # on the laptop: the person layer (password and security key)
-    sudo ento agent logout       # the person's rights end; the machine's stay
+    sudo ento login        # on the laptop: the person layer (password and security key)
+    sudo ento logout       # the person's rights end; the machine's stay
     sudo ento admin groups ID laptops && sudo ento admin approve ID   # an existing device's machine layer
 
 The person layer closes when:
@@ -1379,7 +1485,7 @@ The person layer closes when:
   nothing, so its person layer closes too. There is no limit on a session's age by default
   (`--session-max`, 0): a session in use is never cut. Agents before 0.27 report nothing: their
   sessions are judged by when a control node last saw the device, as before;
-- **they sign out**: `ento agent logout` (also at the end of a desktop session, from PAM), or an
+- **they sign out**: `ento logout` (also at the end of a desktop session, from PAM), or an
   administrator's Sign out (`ento admin signout ID`). Told to the control plane within 5 seconds,
   or by the agent once it can reach it; a late logout never closes a session opened since;
 - **the device starts again**: check-ins carry its boot ID (Linux, Android, macOS; Windows since
@@ -1388,16 +1494,16 @@ The person layer closes when:
   kernel and is not a new boot; a restart is;
 - the identity provider withdraws them (below), or the device is suspended.
 
-It opens again with `ento agent login` (which waits for the browser; a sign-in across the device's
+It opens again with `ento login` (which waits for the browser; a sign-in across the device's
 daily key change finishes too since 0.50: before, the command kept waiting with `?` after the person
 had signed in, the sign-in itself done), or, within 7 days of their last full sign-in on the device,
 when the person approves a sign-in to its desktop from another of their devices (an approved sign-in
 approval, service `gdm-password` by default, `--reopen-services`, asked by that device: the PAM
-step at the login screen). After 7 days the next login needs `ento agent login`. Sign-in approvals
+step at the login screen). After 7 days the next login needs `ento login`. Sign-in approvals
 need the machine's approval, not an open person layer (the login screen asks before anyone is signed
 in), and a device approves for its person while bound to them, its layer open or not (a phone that
-sat idle overnight approves the morning's login). `ento agent status` shows the session (`session:
-open since ...` or closed); `ento agent whoami` exits 2 while it is closed.
+sat idle overnight approves the morning's login). `ento status` shows the session (`session:
+open since ...` or closed); `ento whoami` exits 2 while it is closed.
 
 
 Every sign-in should ask for the user's credentials, not reuse a browser session: bind the client
@@ -1454,7 +1560,7 @@ offline token expire well after the reopening window (7 days; Keycloak: the clie
 Session Idle): the refresh every 2 minutes keeps it in use while the device is bound.
 Credentials for linked networks of a device checked this way last at most 10 minutes, so a user
 disabled at home loses their memberships elsewhere within minutes as well. When the person's
-session on the device opens or ends (`ento agent logout`, idle, a new boot, withdrawn), the agent
+session on the device opens or ends (`ento logout`, idle, a new boot, withdrawn), the agent
 asks for those credentials at once, and a refusal ends its access there at once (0.35.1), so a
 sign-out closes the customers' networks as quickly as home's own services.
 
@@ -1480,7 +1586,7 @@ over a device's posture), for a SIEM to collect.
 **Tailscale on the same device.** Tailscale numbers its devices from 100.64.0.0/10 and, by default,
 its firewall drops every packet from that range that does not arrive on `tailscale0`. If this
 network is in that range (the default 100.64.0.0/16 is), the tunnel comes up and handshakes but
-nothing answers: no ping, no sign-in page. `ento agent status` (0.18.2) warns when it finds Tailscale's
+nothing answers: no ping, no sign-in page. `ento status` (0.18.2) warns when it finds Tailscale's
 rule in force; `sudo tailscale set --netfilter-mode=nodivert` keeps Tailscale but stops that
 diversion (the device's own firewall still applies), or stop `tailscaled`. Choosing a network
 outside 100.64.0.0/10 (`ento control run --network`) avoids the clash for everyone.
@@ -1518,15 +1624,15 @@ The device's key, which signs a sign-in, is readable only by the service and adm
 layer. Since 0.35 the agent therefore takes the person's requests on a channel of its own, the
 named pipe `\\.\pipe\ento-session` (interactive users may connect, the network may not):
 
-    ento agent login        # in an ordinary PowerShell: no administrator needed
-    ento agent logout
-    ento agent whoami
-    ento agent status       # without an administrator: only who is signed in and the session
+    ento login        # in an ordinary PowerShell: no administrator needed
+    ento logout
+    ento whoami
+    ento status       # without an administrator: only who is signed in and the session
 
 The agent runs the sign-in with its key and passes back the link and code; the command opens the
 link in the person's browser, where they sign in with their own credentials as anywhere else. Only
 a program in the session at the computer's screen may sign in or out (a remote desktop may only
-ask whether the session is open; an administrator's `ento agent login` still works from there),
+ask whether the session is open; an administrator's `ento login` still works from there),
 and a program trusts only an answer from a process in session 0, the services' (anyone who may use
 the pipe may open an instance of it, so a program of the person's own could otherwise pose as the
 agent and hand out its own sign-in link). Each sign-in and sign-out asked this way is in the
@@ -1550,12 +1656,12 @@ a laptop in its company's network and in a personal one, or in two companies'. T
 installed with stays the first; each other one is joined with the words an administrator of that
 network reads out:
 
-    sudo ento agent join md.entowire.net        # asks for the words, like the installer
-    ento agent status                           # the first network, then every network: interface, address, state
-    sudo ento agent status --network md.entowire.net
-    sudo ento agent login --network md.entowire.net
+    sudo ento join md.entowire.net        # asks for the words, like the installer
+    ento status                           # the first network, then every network: interface, address, state
+    sudo ento status --network md.entowire.net
+    sudo ento login --network md.entowire.net
     sudo ento admin --network md.entowire.net peers   # where that network made the device an administrator
-    sudo ento agent leave md.entowire.net
+    sudo ento leave md.entowire.net
 
 Each joined network gets an interface of its own (`ento1`, `ento2`, ...) and WireGuard port (51831
 and up, free ones) in the device's own namespace, so every program on the device reaches every
@@ -1595,7 +1701,7 @@ all of them.
 Leaving forgets the network on the device (its interface, filter table and state); the network
 keeps the device in its list until an administrator there deletes it. Each network learns what
 the device reports to it (host name, posture), as any network it is in does. macOS, Windows and
-the apps join one network for now (`ento agent join` says so); linked networks remain for keeping
+the apps join one network for now (`ento join` says so); linked networks remain for keeping
 a network apart from the device's other programs (a namespace of its own).
 
 ## Linked networks
@@ -1626,8 +1732,12 @@ See [docs/linked-networks.md](linked-networks.md).
     ENTO_DATABASE_URL=postgres://... test/e2e-netns.sh dist/ento-linux-amd64   # root, kernel WireGuard
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-linked.sh dist/ento-linux-amd64
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-networks.sh dist/ento-linux-amd64   # several networks on one device
+    ENTO_TEST_BROWSER=/path/to/chrome-headless-shell go test ./internal/id/ -run TestBrowser  # the sign-in pages in a browser
 
-The first two end-to-end tests accept `E2E_BLOCK_DIRECT=1` to force traffic through the relay.
+The first two end-to-end tests accept `E2E_BLOCK_DIRECT=1` to force traffic through the relay. The
+browser test drives the identity provider's pages (setup, an application's sign-in, the account
+page, a device code from a link, a password and an app) in headless Chromium with a virtual passkey
+authenticator, over the DevTools protocol.
 
 ## Independence
 

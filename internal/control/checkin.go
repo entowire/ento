@@ -94,6 +94,7 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request, self stor
 		// administrators look, at every check-in while it lasts.
 		s.audit(r, &self, "filter_failed", fmt.Sprintf("%s: %s; only the control nodes are its peers", peerLabel(self), printable(req.FilterFailed, 200)), "failed")
 	}
+	s.noteHereGuard(r.Context(), self, req.HereGuard)
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")

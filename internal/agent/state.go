@@ -55,7 +55,7 @@ var ErrNotEnrolled = errors.New("not enrolled")
 
 // enrollErrorFile holds why the agent's last attempt to redeem the invitation in enroll.token
 // failed, until an attempt succeeds or install stores a new invitation; `ento agent install`
-// waits on it and on the state, and `ento agent status` shows it.
+// waits on it and on the state, and `ento status` shows it.
 const enrollErrorFile = "enroll.error"
 
 // Joining reports whether dir holds an invitation the agent has not redeemed yet.
@@ -126,14 +126,14 @@ type Running struct {
 	Networks bool `json:"networks,omitempty"`
 	// Interface is the home network's interface as the system names it (macOS: utunN).
 	Interface string `json:"interface,omitempty"`
-	// LoginRequired: the home network ended this device's SSO session; `ento agent login`.
+	// LoginRequired: the home network ended this device's SSO session; `ento login`.
 	LoginRequired bool `json:"login_required,omitempty"`
 	// HardwareKey says whether the device has a hardware-held key and whether it is bound (0.31);
 	// KeyCreatedAt when its WireGuard key was made (RFC 3339).
 	HardwareKey  string `json:"hardware_key,omitempty"`
 	KeyCreatedAt string `json:"key_created_at,omitempty"`
 	// User and UserName: the person the home network has the device bound to by single sign-on
-	// (api.Self), as the control plane says; `ento agent whoami`.
+	// (api.Self), as the control plane says; `ento whoami`.
 	User     string `json:"user,omitempty"`
 	UserName string `json:"user_name,omitempty"`
 	// Routes are the routes' networks this device reaches through gateways now; Serves those it

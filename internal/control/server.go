@@ -18,6 +18,7 @@ import (
 
 	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/attest"
+	entoid "entowire.com/ento/internal/id"
 	"entowire.com/ento/internal/ipam"
 	"entowire.com/ento/internal/reqsig"
 	"entowire.com/ento/internal/store"
@@ -41,9 +42,6 @@ type Config struct {
 
 	// OIDC, if set, lets devices log in with SSO (see OIDCConfig).
 	OIDC *OIDCConfig
-
-	// People, if set, lets administrators manage the identity provider's people (people.go).
-	People *PeopleConfig
 
 	// NoGateways are groups whose devices are never a route's gateway or an exit (the operator's own
 	// infrastructure in a network, say): such routes are refused, and existing ones never used.
@@ -107,6 +105,9 @@ type Config struct {
 	// SignIn, if set, makes the control nodes a sign-in provider for the person of the calling device
 	// (signin.go), at https://<AdminUI>/device; it needs AdminUI.
 	SignIn *SignInConfig
+	// ID, if set, makes the control nodes the network's own identity provider (idprovider.go,
+	// package id): its people are then managed from the dashboard.
+	ID *IDConfig
 
 	// Version of the software, shown to administrators; a release (X.Y.Z) is offered to the
 	// network's devices (updates.go) when UpdatesDir is set: downloaded from Releases
@@ -150,7 +151,8 @@ type Server struct {
 
 	relay  *relay
 	oidc   *oidcProvider
-	people *rauthyPeople
+	people peopleBackend
+	id     *entoid.Provider // the network's own identity provider (Config.ID), nil: none
 
 	nonces  reqsig.Nonces // of signed requests accepted by this node
 	uiSwept time.Time     // when expired sessions of the admin interface were last deleted
@@ -244,11 +246,21 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	default:
 		s.rev = attest.NewRevocations(cfg.AttestationRevocations, cfg.Logf)
 	}
+	if cfg.ID != nil {
+		if err := s.startID(); err != nil {
+			wg.Close()
+			return nil, fmt.Errorf("identity provider: %w", err)
+		}
+	}
 	if cfg.OIDC != nil {
 		s.oidc = newOIDCProvider(*cfg.OIDC)
+		if s.id != nil && cfg.OIDC.Issuer == s.id.Issuer() {
+			// The control nodes' own provider: asked in process, never over the network.
+			s.oidc.client.Transport = inProcess{s.id.Handler()}
+		}
 	}
-	if cfg.People != nil {
-		s.people = newPeople(*cfg.People)
+	if s.id != nil {
+		s.people = &idPeople{p: s.id, st: cfg.Store}
 	}
 	s.prefixDeviceGroups(ctx)
 	s.rolesFromGroups(ctx)
@@ -305,10 +317,22 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		wg.Close()
 		return nil, fmt.Errorf("rules of the forwarded services: %w", err)
 	}
-	if len(idpTargets) > 0 || cfg.AdminUI != "" || len(cfg.Forwards) > 0 {
+	if len(idpTargets) > 0 || cfg.AdminUI != "" || len(cfg.Forwards) > 0 || cfg.ID != nil && !cfg.ID.Disabled {
 		if err := s.start443(ctx, idpTargets); err != nil {
 			wg.Close()
 			return nil, fmt.Errorf("port 443 (identity provider, admin interface): %w", err)
+		}
+	}
+	if s.hereOn() && !cfg.ID.Disabled {
+		if err := s.startHere(ctx); err != nil {
+			wg.Close()
+			return nil, fmt.Errorf("port %d (device sign-in): %w", api.SignInPort, err)
+		}
+	}
+	if cfg.ID != nil && cfg.ID.Listen != "" {
+		if err := s.listenID(ctx); err != nil {
+			wg.Close()
+			return nil, fmt.Errorf("identity provider on %s: %w", cfg.ID.Listen, err)
 		}
 	}
 	if err := s.splitTwoWay(ctx); err != nil {

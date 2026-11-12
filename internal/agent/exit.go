@@ -64,7 +64,7 @@ func SetExitChoice(dir, choice string) error {
 		return nil
 	}
 	if choice != ExitOff && names.Check(choice) != nil {
-		return fmt.Errorf("%q is no exit's name (ento agent status lists those offered)", choice)
+		return fmt.Errorf("%q is no exit's name (ento status lists those offered)", choice)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(choice+"\n"), 0o644); err != nil {
@@ -167,7 +167,7 @@ func (a *runner) syncExit(exit *exitPick) {
 	}
 	if !same {
 		if exit != nil {
-			a.cfg.Logf("exit %s through %q (%s) in use: all internet traffic goes through it (ento agent exit off to stop)", exit.Route, exit.Via, exit.Addr)
+			a.cfg.Logf("exit %s through %q (%s) in use: all internet traffic goes through it (ento exit off to stop)", exit.Route, exit.Via, exit.Addr)
 			a.exitNoted = ""
 		} else if a.exit != nil {
 			a.cfg.Logf("exit %s no longer in use: traffic takes its normal path", a.exit.Route)

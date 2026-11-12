@@ -76,7 +76,7 @@ func Install(cfg Config, token string, force bool) error {
 		}
 	}
 	if err := installTray(filepath.Dir(self)); err != nil {
-		cfg.Logf("the tray program was not installed (signing in still works with ento agent login): %v", err)
+		cfg.Logf("the tray program was not installed (signing in still works with ento login): %v", err)
 	}
 	args := []string{"agent", "run", "--state-dir", cfg.StateDir, "--listen-port", strconv.Itoa(cfg.ListenPort),
 		"--mtu", strconv.Itoa(cfg.MTU), "--token-file", filepath.Join(cfg.StateDir, "enroll.token"), "--delete-token"}

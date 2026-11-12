@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -94,6 +95,13 @@ type LoginResult struct {
 
 // StartLogin starts an SSO device login.
 func StartLogin(ctx context.Context, cfg Config) (*LoginFlow, error) {
+	return StartLoginHere(ctx, cfg, false)
+}
+
+// StartLoginHere starts a sign-in; here says a browser opens on this device (0.57): where the
+// control nodes offer the device's own sign-in, Link is that page and there is no code to type
+// (it signs in the device the browser runs on); elsewhere it is a device login, as StartLogin's.
+func StartLoginHere(ctx context.Context, cfg Config, here bool) (*LoginFlow, error) {
 	cfg.defaults()
 	st, err := LoadState(cfg.StateDir)
 	if err != nil {
@@ -101,11 +109,18 @@ func StartLogin(ctx context.Context, cfg Config) (*LoginFlow, error) {
 	}
 	c := &AdminClient{Controls: st.Controls, Key: wgtypes.Key(st.PrivateKey)} // any enrolled peer may sign in
 	var start api.LoginStart
-	if err := c.Do(ctx, "POST", api.PathLogin, nil, &start); err != nil {
+	var req any // nil: as before 0.57
+	if here {
+		req = api.LoginStartRequest{Here: true}
+	}
+	if err := c.Do(ctx, "POST", api.PathLogin, req, &start); err != nil {
 		return nil, err
 	}
 	// The bare address, never a link with the code in it (an older control node still sends one).
 	link := start.VerificationURI
+	if here && start.AuthorizationURL != "" {
+		link = start.AuthorizationURL
+	}
 	if link == "" {
 		link = start.VerificationURIComplete
 	}
@@ -212,7 +227,7 @@ func (f *LoginFlow) refreshKey() {
 // if set, draws the link for a phone to scan, so the sign-in can be finished on another device (one
 // that has the person's security key or passkey); it is called only with a safe link.
 func Login(ctx context.Context, cfg Config, out io.Writer, showQR func(link string)) error {
-	f, err := StartLogin(ctx, cfg)
+	f, err := StartLoginHere(ctx, cfg, canOpenBrowser())
 	if err != nil {
 		return err
 	}
@@ -220,12 +235,10 @@ func Login(ctx context.Context, cfg Config, out io.Writer, showQR func(link stri
 	switch {
 	case !SafeLink(f.Link):
 		fmt.Fprintf(out, "The control node sent a sign-in link that is not a plain https link; it was not opened:\n\n    %s\n\nCode: %s", link, code)
-	case openBrowser(f.Link):
-		fmt.Fprintf(out, "In the browser window that just opened (or at this link), type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
 	default:
-		fmt.Fprintf(out, "Open this link in a browser, type the code and sign in:\n\n    %s\n\nCode: %s", link, code)
+		fmt.Fprint(out, signInText(f.Link, link, code, openBrowser(f.Link)))
 	}
-	if showQR != nil && SafeLink(f.Link) {
+	if showQR != nil && SafeLink(f.Link) && !onDeviceOnly(f.Link) {
 		showQR(f.Link)
 	}
 	fmt.Fprint(out, "\n\nWaiting")
@@ -245,4 +258,30 @@ func Login(ctx context.Context, cfg Config, out io.Writer, showQR func(link stri
 		fmt.Fprintf(out, "\n\nLogged in as %s, but your groups do not approve devices; ask an administrator.\n", Printable(r.User))
 	}
 	return nil
+}
+
+// onDeviceOnly: a link of the device's own sign-in (api.SignInPort), which works only in a
+// browser on this device, so it is never drawn for a phone.
+func onDeviceOnly(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Port() == strconv.Itoa(api.SignInPort)
+}
+
+// signInText tells the person what to do with a sign-in link (shown as link) and its code. A setup
+// link (0.57: a device invited for an account that is not set up yet) needs no code: the account is
+// set up there, and the device signed in when it is done; nor does the device's own sign-in (0.57),
+// which signs in the device its browser runs on.
+func signInText(raw, link, code string, opened bool) string {
+	where := "Open this link in a browser"
+	if opened {
+		where = "In the browser window that just opened (or at this link)"
+	}
+	if u, err := url.Parse(raw); err == nil && u.Path == "/setup" {
+		return fmt.Sprintf("%s, set up your account; this device is signed in when it is done:\n\n    %s", where, link)
+	}
+	if u, err := url.Parse(raw); err == nil && u.Path == "/here" && code == "" {
+		// The device's own sign-in (0.57): it works only in a browser on this device.
+		return fmt.Sprintf("%s on this device, sign in; this device is signed in when you are done:\n\n    %s", where, link)
+	}
+	return fmt.Sprintf("%s, type the code and sign in:\n\n    %s\n\nCode: %s", where, link, code)
 }

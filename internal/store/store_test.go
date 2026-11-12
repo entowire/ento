@@ -42,7 +42,8 @@ func backends(t *testing.T) map[string]func(t *testing.T) Store {
 			}
 			_, err = conn.Exec(ctx, `DROP TABLE IF EXISTS ento_settings, ento_state, ento_control_nodes,
 				ento_peers, ento_tokens, ento_policies, ento_authorities, ento_links, ento_link_keys, ento_ui_sessions, ento_admin_sessions, ento_sso_tokens,
-				ento_posture, ento_posture_checks, ento_link_posture, ento_approvals, ento_checkins, ento_hwkeys, ento_routes, ento_dns_records, ento_dns_forwards, ento_signin_codes, ento_signin_use, ento_update_policy, ento_release_offers, ento_audit`)
+				ento_posture, ento_posture_checks, ento_link_posture, ento_approvals, ento_checkins, ento_hwkeys, ento_routes, ento_dns_records, ento_dns_forwards, ento_signin_codes, ento_signin_use, ento_update_policy, ento_release_offers, ento_audit,
+				ento_id_passkeys, ento_id_people, ento_id_groups, ento_id_state`)
 			conn.Close(ctx)
 			if err != nil {
 				t.Fatal(err)

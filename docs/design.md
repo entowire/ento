@@ -34,7 +34,7 @@ A single binary, `ento`:
 | `ento agent` | Runs on every device. Configures a WireGuard interface (kernel WireGuard on Linux), enrolls with a token, keeps the network map up to date and applies it. |
 | `ento admin …` | Administration through the control API, as a peer that has the admin flag. |
 | admin web interface | Served by `ento control` itself on port 443 of its overlay address for one name (`--admin-ui`): the node reads the server name of each TLS connection, terminates those for the interface and passes all others through to the identity provider. Authorization is the calling device (admin flag), as for the API; changes need the interface's own header, origin and name (cross-site requests from other pages cannot make them), and the plain API refuses browsers. |
-| `ento agent join DOMAIN` | Joins another network besides the first, with its own invitation, on an interface of its own (see "Several networks on one device"). |
+| `ento join DOMAIN` | Joins another network besides the first, with its own invitation, on an interface of its own (see "Several networks on one device"). |
 | `ento agent link NAME` | Joins a linked network (see "Linked networks") in namespace `ento-NAME`. |
 | `ento control token …` | Local bootstrap commands operating directly on the database (first admin token). |
 
@@ -125,11 +125,85 @@ A single binary, `ento`:
   reopens the layer. The agent takes `status`, `login` and `logout` on a named pipe open to
   interactive users (`internal/agent/session.go`): it runs the device login with its key and hands
   back only the link and code, so the person gains nothing they could not do with an administrator's
-  `ento agent login`, and the sign-in still needs their own credentials at the provider. Acting is
+  `ento login`, and the sign-in still needs their own credentials at the provider. Acting is
   limited to a program in the console's session; clients trust only a pipe server in session 0,
   because writing to a pipe also allows opening instances of it, so a user's program could
   otherwise answer in the agent's place with its own link. `ento-tray.exe` uses the channel to
   show the session and sign the person in when it has ended.
+
+## The network's own identity provider
+
+The control nodes can be the network's OpenID Connect provider (`internal/id`, 0.57), so that a
+network needs no identity provider of its own beside them. Why it is safe:
+
+- **Only inside the tunnel.** It is served on the control nodes' overlay port 443 under its name,
+  to enrolled devices that are not suspended (others' connections end before TLS), like the
+  dashboard. Nothing changes for 1.1: from outside, only WireGuard answers.
+- **A full sign-in every time.** There is no session at the provider, so no cookie to steal and no
+  "remember me": every authorization and every device code takes the person's way in again (a
+  passkey with user verification, or a password and then a passkey or an app's code, as their
+  groups allow; tokens say which in `amr`). Verification is `github.com/go-webauthn/webauthn` (no cryptography of ours); the
+  relying party is the provider's name, the origin `https://<name>` only. A passkey whose counter
+  goes back (copied) is refused, as is a disabled person's.
+- **One use, short lives, kept by hash.** Authorization requests (10 minutes), passkey ceremonies
+  (5), codes (1), device codes (10), setup links (24 hours, replaced by a new one) are each taken
+  once from the shared database, whichever control node answers; secrets are stored only as
+  SHA-256 hashes with a purpose label.
+- **Standard checks.** Confidential clients only, redirect URIs matched exactly (an unknown one is
+  shown, never redirected to), PKCE with S256 required, `prompt=none` refused (no session), nonce
+  and state passed back, ID tokens ES256 with a key outside the database (as the device sign-in's,
+  2.6), `iss` in the authorization response.
+- **The pages cannot be driven by other sites.** Their calls take a JSON body (a cross-site form
+  cannot send one without a preflight, never answered) and a same-origin `Sec-Fetch-Site`; the
+  pages run no inline script, load nothing from elsewhere and cannot be framed (CSP
+  `default-src 'none'`, `frame-ancestors 'none'`).
+- **Passwords and apps.** Argon2id (64 MiB, 3 passes; at most two at once on a node, so guesses
+  cannot exhaust memory), a hash checked even for unknown addresses (answers take as long), one
+  answer for a wrong address or password; 10 failures in 15 minutes stop the account's passwords and
+  codes, wherever they come from, never its passkeys (so nobody locks a person out of their
+  passkey). App secrets are sealed (AES-GCM, a key derived from the signing key, bound to the
+  person), so the database alone gives no codes; a code is taken once (its time step is kept).
+- **The account page** opens for 15 minutes after a full sign-in, with a `__Host-`, `HttpOnly`,
+  `SameSite=Strict` cookie kept by its hash; every change happens within minutes of a sign-in, and
+  none may leave the person without a way in their groups allow.
+- **A setup link is no way into an account in use.** It is given only for an account that cannot
+  sign in yet, and its secret is in the URL's fragment, which browsers never send (no proxy or log
+  sees it); the page sends it in its own call and drops it from the address bar. A failed attempt
+  does not use it up.
+- **A device code from a link is not approved at once** (as since 0.50): anyone
+  can send a person a link with their own device's code, so after the passkey the page asks.
+- **Leavers.** Disabling or deleting a person ends their refresh and access tokens at the provider;
+  the control nodes' next refresh is refused (`invalid_grant`) and their devices are withdrawn.
+  Refresh tokens are not rotated: a rotation whose answer is lost would sign the person out, and
+  only the control nodes (which keep them encrypted) and the network's own applications hold them.
+- **One invitation for the first administrator** (0.57). The words carry the account they invite
+  (kept with the provider's records, under the token, then under the device that redeemed them);
+  the setup link exists only once that device starts signing in, is returned only to it (signed
+  call), lives 30 minutes, and its last step is that device's own sign-in. Whoever holds the words
+  could set the account up, as whoever held the words and the link before (both were handed over
+  together): for a new network's first administrator there is nothing yet to take, and the real
+  administrator sees the words refused and the network is made again. An invited device binds only
+  to that account.
+- **The control nodes' own client** has a secret derived from the signing key (HMAC-SHA256), so
+  there is no secret to keep or hand over, and its calls stay in process.
+- **The device's own sign-in** (0.57, constitution 2.5). A device code proves that the person sees
+  the device's screen, not that the browser is on the device, which is why it can be phished (a
+  link or a code sent to someone else). The provider is served a second time on port 4443 of the
+  control nodes' overlay addresses (`/here`), where a sign-in signs in the device the connection
+  comes from: the provider makes the built-in client's tokens itself and hands them to the control
+  node (`id.Here`), which binds the person exactly as a device code's sign-in would. The tunnel
+  says which device the connection comes from, but not that the browser runs on it: a gateway, an
+  exit, or any Linux machine with containers forwards others' connections under its own address
+  (Docker masquerades). So the device's agent drops everything it forwards to that port (a rule in
+  the forward hook, which sees every packet not made on the machine itself) and says so at each
+  check-in; the control node takes that as valid for 20 minutes and offers the page only then. An
+  agent cannot be made to say it by anything but root on the device, which can sign anyone in with
+  the device's key anyway. Any process on the device reaches the page, as any program reaches a
+  browser; what the sign-in rests on is the person's own way in, which no process can supply. The
+  passkeys stay the provider name's (another port is another origin of the same relying party),
+  so nothing is set up twice. Any person may sign in on any device; a device invited for an
+  account takes only that one. The dashboard's **Sign in** uses it on such devices and opens its
+  session with a ticket bound to the device, used once within two minutes.
 
 ## Copied identities
 
@@ -320,7 +394,7 @@ filter is applied before the peers are, and one that cannot be applied leaves th
 the only peers until it can (0.50; before, it was only logged and every peer reached every port).
 Since 0.51 the table is looked for at every application of the map (every few seconds; before,
 once a minute, so `nft flush ruleset` left no filter for up to a minute), and a filter that cannot
-be applied is said: `ento agent status` shows a WARNING with the reason, and each check-in carries
+be applied is said: `ento status` shows a WARNING with the reason, and each check-in carries
 it to the control plane, which audits `filter_failed` (failed) while it lasts.
 With the Linux kernel's WireGuard the agent keeps an nftables table of its own (`inet
 ento-filter`: a prerouting chain after conntrack, for answers, and before the system's DNAT, so it
@@ -484,7 +558,7 @@ done inside the tunnel):
   request (joining and renewal) as for policies (the live evaluation, plus a facts-based failure the
   stored results still hold back for that check), and while the device fails one it issues neither a
   credential nor the linked network's token; the refusal names the failing checks
-  (`posture_failing` in the error body), which the agent keeps for `ento agent status`. Issued
+  (`posture_failing` in the error body), which the agent keeps for `ento status`. Issued
   credentials are not revoked by the home network: they expire (renewal at half their lifetime), but
   the device's agent ends them when a renewal is refused (0.35.1: peers dropped at once, the linked
   network asked to withdraw the approval, `/v1/credential/end`, audited `credential_ended`) and
@@ -557,7 +631,7 @@ done inside the tunnel):
 ## Several networks on one device
 
 A device may be in several networks as equals (0.51, Linux): the first, whose state is the agent's
-state directory, and each network joined with `ento agent join DOMAIN`, whose state is
+state directory, and each network joined with `ento join DOMAIN`, whose state is
 `<state dir>/networks/<domain>/` (`internal/agent/networks.go`). One agent runs them all: one
 service, and on the phones, which give a device one VPN interface, the only way it can be done
 there later. Each joined network is a runner like the first's on an interface of its own (`ento1`,
@@ -775,8 +849,8 @@ A kernel interface outlives the agent: stopping or restarting it leaves the inte
 its last configuration, so restarts and upgrades interrupt nothing, not even connections bound to
 the interface (a new interface would break those). While no agent runs, nothing updates it either:
 a peer removed in the meantime is dropped by the control nodes and the other agents, not by this
-device. `ento agent down` closes it for good: the service is stopped and disabled, and the
-device's interfaces (its own and those of linked networks) are deleted, until `ento agent up`. An
+device. `ento down` closes it for good: the service is stopped and disabled, and the
+device's interfaces (its own and those of linked networks) are deleted, until `ento up`. An
 in-process interface goes away with the agent.
 
 Mobile systems own the interface: an app asks the system for a VPN (Android's `VpnService`), which

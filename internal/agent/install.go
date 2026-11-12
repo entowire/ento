@@ -12,11 +12,11 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// downFile marks a device whose tunnel was turned off with `ento agent down`: install then leaves
-// the service off, and status says so, until `ento agent up` (or until an agent runs again).
+// downFile marks a device whose tunnel was turned off with `ento down`: install then leaves
+// the service off, and status says so, until `ento up` (or until an agent runs again).
 const downFile = "down"
 
-// IsDown reports whether the device's tunnel was turned off with `ento agent down`.
+// IsDown reports whether the device's tunnel was turned off with `ento down`.
 func IsDown(stateDir string) bool {
 	_, err := os.Stat(filepath.Join(stateDir, downFile))
 	return err == nil
