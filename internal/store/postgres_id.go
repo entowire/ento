@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS ento_id_people (
 ALTER TABLE ento_id_people ADD COLUMN IF NOT EXISTS password text NOT NULL DEFAULT '';
 ALTER TABLE ento_id_people ADD COLUMN IF NOT EXISTS totp bytea;
 ALTER TABLE ento_id_people ADD COLUMN IF NOT EXISTS totp_step bigint NOT NULL DEFAULT 0;
+-- 0.59: the accounts at outside providers that sign the person in (issuer: subject).
+ALTER TABLE ento_id_people ADD COLUMN IF NOT EXISTS links jsonb NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS ento_id_passkeys (
 	credential_id bytea PRIMARY KEY,
 	person_id     text NOT NULL REFERENCES ento_id_people (id) ON DELETE CASCADE,
@@ -48,12 +50,12 @@ CREATE INDEX IF NOT EXISTS ento_id_state_person ON ento_id_state (person, kind);
 CREATE INDEX IF NOT EXISTS ento_id_state_expires ON ento_id_state (expires_at);
 `
 
-const idPersonColumns = `id, email, given_name, family_name, groups, disabled, created_at, last_sign_in, password, totp, totp_step`
+const idPersonColumns = `id, email, given_name, family_name, groups, disabled, created_at, last_sign_in, password, totp, totp_step, links`
 
 func scanIDPerson(row pgx.Row) (IDPerson, error) {
 	var p IDPerson
 	var last *time.Time
-	err := row.Scan(&p.ID, &p.Email, &p.GivenName, &p.FamilyName, &p.Groups, &p.Disabled, &p.CreatedAt, &last, &p.Password, &p.TOTP, &p.TOTPStep)
+	err := row.Scan(&p.ID, &p.Email, &p.GivenName, &p.FamilyName, &p.Groups, &p.Disabled, &p.CreatedAt, &last, &p.Password, &p.TOTP, &p.TOTPStep, &p.Links)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return IDPerson{}, ErrNotFound
 	}
@@ -63,7 +65,18 @@ func scanIDPerson(row pgx.Row) (IDPerson, error) {
 	if p.Groups == nil {
 		p.Groups = []string{}
 	}
+	if len(p.Links) == 0 {
+		p.Links = nil
+	}
 	return p, err
+}
+
+// nonNilLinks is a person's links as the column takes them (an empty object for none).
+func nonNilLinks(l map[string]string) map[string]string {
+	if l == nil {
+		return map[string]string{}
+	}
+	return l
 }
 
 func (p *Postgres) IDPeople(ctx context.Context) ([]IDPerson, error) {
@@ -92,8 +105,8 @@ func (p *Postgres) IDPersonByEmail(ctx context.Context, email string) (IDPerson,
 }
 
 func (p *Postgres) CreateIDPerson(ctx context.Context, x IDPerson) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO ento_id_people (`+idPersonColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		x.ID, x.Email, x.GivenName, x.FamilyName, nonNil(x.Groups), x.Disabled, x.CreatedAt, nullTime(x.LastSignIn), x.Password, x.TOTP, x.TOTPStep)
+	_, err := p.pool.Exec(ctx, `INSERT INTO ento_id_people (`+idPersonColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		x.ID, x.Email, x.GivenName, x.FamilyName, nonNil(x.Groups), x.Disabled, x.CreatedAt, nullTime(x.LastSignIn), x.Password, x.TOTP, x.TOTPStep, nonNilLinks(x.Links))
 	if isUniqueViolation(err) {
 		return ErrExists
 	}
@@ -113,8 +126,8 @@ func (p *Postgres) UpdateIDPerson(ctx context.Context, id string, fn func(IDPers
 		}
 		n.ID = id
 		_, err = tx.Exec(ctx, `UPDATE ento_id_people SET email = $2, given_name = $3, family_name = $4, groups = $5,
-			disabled = $6, last_sign_in = $7, password = $8, totp = $9, totp_step = $10 WHERE id = $1`,
-			id, n.Email, n.GivenName, n.FamilyName, nonNil(n.Groups), n.Disabled, nullTime(n.LastSignIn), n.Password, n.TOTP, n.TOTPStep)
+			disabled = $6, last_sign_in = $7, password = $8, totp = $9, totp_step = $10, links = $11 WHERE id = $1`,
+			id, n.Email, n.GivenName, n.FamilyName, nonNil(n.Groups), n.Disabled, nullTime(n.LastSignIn), n.Password, n.TOTP, n.TOTPStep, nonNilLinks(n.Links))
 		if isUniqueViolation(err) {
 			return ErrExists
 		}

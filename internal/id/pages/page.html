@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/ento-id.css">
 <script src="/ento-id.js" defer></script>
 </head>
-<body data-mode="{{.Mode}}" data-request="{{.Request}}" data-client="{{.Client}}" data-title="{{.Title}}" data-device="{{.Device}}">
+<body data-mode="{{.Mode}}" data-request="{{.Request}}" data-client="{{.Client}}" data-title="{{.Title}}" data-device="{{.Device}}" data-providers="{{.Providers}}">
 <main>
   <p class="network">{{.Title}}</p>
 
@@ -48,6 +48,11 @@
     <p>Sign in to use <strong>{{.Device}}</strong> as yourself. Whoever was signed in on it is signed out.</p>
   </section>
 
+  <section id="upstream" hidden>
+    <h1>Signing in</h1>
+    <p id="upstream-wait">One moment…</p>
+  </section>
+
   <section id="account-signin" hidden>
     <h1>Your account</h1>
     <p>Sign in to see and change how you sign in.</p>
@@ -56,6 +61,7 @@
   <!-- How people sign in: shared by applications, devices and the account page. -->
   <div id="signin" hidden>
     <div id="signin-start">
+      <div id="providers"></div>
       <button id="passkey-go" type="button">Sign in with your passkey</button>
       <p class="alt"><a href="#" id="password-show">Sign in with your password</a></p>
     </div>

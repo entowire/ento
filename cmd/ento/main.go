@@ -2046,6 +2046,9 @@ func adminCmd(ctx context.Context, args []string) error {
 	case "dns":
 		return adminDNSCmd(ctx, c, rest)
 
+	case "providers":
+		return adminProvidersCmd(ctx, c, rest)
+
 	case "updates":
 		return adminUpdatesCmd(ctx, c, rest)
 

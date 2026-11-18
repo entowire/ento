@@ -404,3 +404,8 @@ body.viewer :is(.row-actions, .dfoot, .builder, #add-device, [data-add-device], 
 #act-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; }
 #act-pager button:disabled { visibility: hidden; }
 #ov-activity > .item { grid-template-columns: 6.5em minmax(0, 1fr) auto; }
+/* Sign-in providers (0.59) */
+.provider-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.provider-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.provider-list small { display: block; overflow-wrap: anywhere; }
+.term.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }

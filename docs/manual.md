@@ -452,7 +452,15 @@ Port rules are `all` (the default), `tcp`, `udp`, `tcp/22`, `tcp/8000-8100`, `ud
 Answers always pass: a device that opens a connection gets its answers (TCP: every segment but an
 opening SYN; UDP: datagrams from the address and port it sent to, until 2 minutes after its last
 one; ICMP other than echo requests: replies and errors). Traffic from the control nodes (the
-control plane, relayed packets) always passes.
+control plane, relayed packets) always passes. A host firewall of the device's own (ufw,
+firewalld) is another matter: it may drop what reaches the ento interface, ento's filter cannot
+let through what it drops, and connections from peers to the device pass only where it allows
+them. Relayed packets pass it anyway since 0.59: every agent but a phone's sends each control node
+an empty relay frame every 20 s from its relay port (UDP 3479 on its overlay address), so a
+stateful firewall takes what the control nodes relay as answers. Before, a device whose firewall
+drops incoming connections (ufw's default) received nothing from peers that reached it only
+through the relay, and could not reach them either (found on md: SSH from a laptop with ufw to a
+server behind a NAT that changes ports, until `ufw allow in on ento0`).
 
 The device that receives a connection enforces the rule, so a peer whose own agent is modified
 gains nothing. The control node sends each device, for every peer in its map, what that peer may
@@ -1169,7 +1177,8 @@ them (`internal/id`):
   tunnel.
 - **Ways of signing in** (Sign-in policies, above): `passkey` (a passkey with user verification),
   `password+passkey` (the password, then a passkey), `password+totp` (the password, then a code
-  from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once). Every
+  from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once), `provider`
+  (an outside provider, below). Every
   sign-in asks again: the provider keeps no session. The passkeys' relying party is the name
   (`id.example.com`); no WebAuthn extension is asked for, and one a passkey manager returns unasked
   (Android's always adds `credProps`) is ignored, not refused. Passwords: at least 12 characters, kept as Argon2id hashes (any PHC Argon2id
@@ -1217,6 +1226,46 @@ them (`internal/id`):
   session; not over SSH), opens it and waits (no QR code: a phone cannot use it); an invited
   device's setup link is then on port 4443 too, and setting the account up signs the person in on
   the device. Audited as `id_here`, and the sign-in as `login ... on the device's own sign-in`.
+  Microsoft Entra ID, Okta or any OpenID Connect provider instead of a passkey here. Full
+  administration names them (`ento admin providers set NAME --title TITLE --issuer URL --client-id
+  ID [--domains D,D]`, the client secret asked for or piped in; or the dashboard's Groups page,
+  **Sign-in providers**), and every page then offers "Continue with TITLE" above the passkey. ento
+  id stays the network's identity provider: people, their groups and roles stay here (the
+  dashboard), so a provider that sends no groups (Google) works; devices, apps, the dashboard and
+  the device's own sign-in all sign in as before, one more way being offered on the page.
+  - **At the provider**: a web application client (confidential), with
+    `https://id.example.com/upstream/callback` and `https://id.example.com:4443/upstream/callback`
+    as where it sends people back (`ento admin providers` lists them). The issuer must be exactly
+    what the provider's discovery names: Google `https://accounts.google.com`; Microsoft a
+    tenant's own, `https://login.microsoftonline.com/<tenant ID>/v2.0` (the shared `common` and
+    `organizations` are refused, as anyone's tenant signs in there); Okta
+    `https://<org>.okta.com` (or an authorization server's). Google Workspace: an **Internal** app,
+    so only the Workspace's accounts sign in, and `--domains` with its domain.
+  - **Who it signs in**: only people the network has. The first time, the person whose address the
+    provider's ID token names (lower case; refused when the token says it is not verified, and
+    outside `--domains` when they are given, Google's `hd` too); the provider's account (its
+    `sub`) is then linked to them (`ento_id_people.links`), and from then on only that account
+    signs them in, whatever address it shows later. Another account showing their address is
+    refused (`linked to another account at the provider`): an address given to someone else signs
+    no one in. `ento admin providers unlink EMAIL NAME` forgets the link (a lost account), so that
+    their next sign-in links the account their address then names.
+  - **The sign-in**: the authorization code flow with PKCE (S256), a state and a nonce, `max_age=0`
+    and `prompt=select_account`; the ID token is checked against the provider's published keys
+    (`internal/oidcrp`, as the control nodes check theirs: issuer, audience, authorized party,
+    expiry, nonce) and, when it says when the person signed in there (`auth_time`), refused if that
+    was more than 5 minutes before the sign-in started. Nothing of the provider's is kept but the
+    link: no tokens, so the provider's own session and second factor are its business, and someone
+    disabled or deleted there can no longer sign in here but keeps a device session already open
+    until its limits (disable them here to end it at once).
+  - **A way of signing in** like the others: `provider` in the sign-in policies (the default,
+    unset, allows it; a policy that leaves it out refuses it, `provider is not allowed`). Someone
+    counts as able to use one when their account there is linked, or their address is in its
+    domains (a provider without domains counts for everyone), so a person who has only that needs
+    no setup link, and removing a provider that is someone's only way in is refused (and with it
+    the last admin's).
+  - **Kept** in the network's database (setting `id_upstreams`), each client secret sealed with a
+    key derived from `ENTO_ID_KEY`, bound to its issuer. Audited: `id_provider` (added, changed,
+    removed, refused, unlinked) and `id_signin ... via NAME` for each refusal.
 - **Services beside the control nodes** that are no devices of the network (entowire's platform
   console on its own nodes) reach it at `--id-listen HOST:PORT`, the same name and certificate on a
   host address (a private one, such as a mesh between the nodes; never a public one).
@@ -1228,7 +1277,7 @@ them (`internal/id`):
   `/authorize`, `/token` (authorization code, refresh token, device code), `/device_authorization`,
   `/userinfo`, `/jwks`. Refresh tokens are not rotated (a lost answer never signs anyone out) and
   last 30 days from their last use; ID and access tokens 10 minutes.
-- **Audited** in the network: `id_signin`, `id_device`, `id_here`, `id_setup`, `id_account`, and refusals
+- **Audited** in the network: `id_signin`, `id_device`, `id_here`, `id_setup`, `id_account`, `id_provider`, and refusals
   (`id_token`, `id_authorize`, `id_connection`).
 - **Device groups**: a device group a device has and the provider does not know is added to it,
   never taken off the device.

@@ -86,6 +86,8 @@ type Config struct {
 	Here       Here
 	HereOrigin string
 	HereClient string
+	// UpstreamHTTP calls outside providers (upstream.go; nil: a client with a 15 s timeout).
+	UpstreamHTTP *http.Client
 }
 
 // Lifetimes and limits.
@@ -130,6 +132,8 @@ type Provider struct {
 	limitMu  sync.Mutex
 	limitWin time.Time
 	limitN   map[string]int
+
+	ups upstreamCache // outside providers' discovery and keys (upstream.go)
 }
 
 // New checks cfg and returns a provider.
@@ -238,6 +242,9 @@ func (p *Provider) routes() {
 	m.HandleFunc("POST /setup/password", p.setupPassword)
 	m.HandleFunc("POST /setup/totp", p.setupTOTP)
 	m.HandleFunc("POST /device/answer", p.deviceAnswer)
+	m.HandleFunc("POST /upstream/begin", p.upstreamBegin)
+	m.HandleFunc("POST /upstream/finish", p.upstreamFinish)
+	m.HandleFunc("GET "+UpstreamCallback, p.upstreamPage)
 	m.HandleFunc("POST /setup/begin", p.setupBegin)
 	m.HandleFunc("POST /setup/finish", p.setupFinish)
 	m.HandleFunc("GET /{$}", p.homePage)

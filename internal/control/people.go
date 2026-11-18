@@ -229,6 +229,9 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request, self st
 	if si, err := s.people.personSignin(r.Context(), u.ID); err == nil {
 		p.Signin = &api.PersonSignin{Password: si.Password, Passkeys: si.Passkeys, TOTP: si.TOTP, Methods: si.Methods, Allowed: si.Allowed, Usable: si.Usable}
 	}
+	if names, err := s.linkedProviders(r.Context(), p.ID); err == nil {
+		p.Providers = names
+	}
 	writeJSON(w, http.StatusOK, p)
 }
 

@@ -110,6 +110,22 @@ function signIn(goal, then) {
     try { await then(await busy(fn)); }
     catch (e) { error(passkeyError(e)); }
   };
+  // Outside providers: their sign-in comes back to /upstream/callback (upstream below).
+  const box = $("providers");
+  box.replaceChildren();
+  for (const p of JSON.parse(body.providers || "[]")) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "secondary provider";
+    b.textContent = "Continue with " + p.title;
+    b.onclick = async () => {
+      try {
+        const out = await busy(() => call("/upstream/begin", { ...goal, provider: p.name }));
+        location.assign(out.url);
+      } catch (e) { error(e.message); }
+    };
+    box.append(b);
+  }
   $("passkey-go").onclick = () => { if (!noPasskeys()) finish(() => usePasskey("/passkey/begin", goal)); };
   $("password-show").onclick = (ev) => {
     ev.preventDefault();
@@ -198,15 +214,37 @@ function device() {
   };
 }
 
+// hereSignedIn: the device the browser runs on is signed in.
+function hereSignedIn(out) {
+  if (out.next) { location.assign(out.next); return; }
+  done("Signed in", out.device + " is signed in as " + out.person + ". You can close this tab.");
+  setTimeout(() => window.close(), 1500);
+}
+
 // here signs the person in on the device the browser runs on.
 function here() {
   show("here");
   const then = new URLSearchParams(location.search).get("then") || "";
-  signIn({ goal: "here", then }, (out) => {
-    if (out.next) { location.assign(out.next); return; }
-    done("Signed in", out.device + " is signed in as " + out.person + ". You can close this tab.");
-    setTimeout(() => window.close(), 1500);
-  });
+  signIn({ goal: "here", then }, hereSignedIn);
+}
+
+// upstream finishes a sign-in at an outside provider, which sent the browser back here, and goes on
+// with what it was for, as a passkey's sign-in would.
+async function upstream() {
+  show("upstream");
+  const q = new URLSearchParams(location.search);
+  history.replaceState(null, "", location.pathname);
+  try {
+    const out = await busy(() => call("/upstream/finish", { state: q.get("state") || "", code: q.get("code") || "", error: q.get("error") || "" }));
+    const g = out.goal || {};
+    show("upstream", false);
+    if (g.goal === "device") { show("device"); deviceSignedIn((g.user_code || "").toUpperCase())(out); }
+    else if (g.goal === "here") hereSignedIn(out);
+    else if (out.redirect) location.assign(out.redirect);
+  } catch (e) {
+    show("upstream-wait", false);
+    error(e.message);
+  }
 }
 
 // --- the account page ------------------------------------------------------------------------------
@@ -366,4 +404,4 @@ async function setup() {
   await next();
 }
 
-({ authorize, device, here, setup, account, home: () => show("home"), error: () => {} })[body.mode]?.();
+({ authorize, device, here, upstream, setup, account, home: () => show("home"), error: () => {} })[body.mode]?.();

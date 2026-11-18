@@ -83,3 +83,5 @@ a { color: var(--ink); }
 img { display: block; margin: 0 auto 12px; background: #fff; padding: 8px; border-radius: 8px; }
 .notice { margin: 16px 0 0; }
 form + form, button + p { margin-top: 8px; }
+/* Outside providers (upstream.go): one button each, above the passkey's. */
+#providers button { margin-bottom: 10px; }

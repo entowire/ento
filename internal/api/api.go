@@ -96,6 +96,8 @@ const (
 	PathGroups = "/v1/admin/groups"
 	// PathSignin: the sign-in policies (GET SigninPolicy; PUT SetSigninRequest), 0.46.
 	PathSignin = "/v1/admin/signin"
+	// PathProviders: the outside providers people sign in through (0.59; GET IDProviders; PUT
+	PathProviders = "/v1/admin/providers"
 
 	// RelayPort is the UDP port, on control nodes' and agents' overlay addresses, that carries
 	// relayed WireGuard packets between peers that cannot reach each other directly.
@@ -1009,6 +1011,9 @@ type Person struct {
 	LastLogin  string        `json:"last_login,omitempty"`
 	Passkeys   []Passkey     `json:"passkeys,omitempty"` // only for one person
 	Signin     *PersonSignin `json:"signin,omitempty"`   // only for one person (0.46)
+	// Providers are the outside providers whose account signs this person in (only for one
+	// person, 0.59): linked at their first sign-in through it.
+	Providers []string `json:"providers,omitempty"`
 }
 
 type Passkey struct {
@@ -1104,3 +1109,34 @@ type AuditPage struct {
 
 // MaxAuditExport is the most entries one export (format=csv) holds.
 const MaxAuditExport = 100000
+
+// IDProvider is an outside provider people sign in through (0.59): ento id offers "Continue with
+// Title" and signs in the person the provider names, once their address matched and from then on
+// that same account there.
+type IDProvider struct {
+	Name     string   `json:"name"`
+	Title    string   `json:"title"`
+	Issuer   string   `json:"issuer"`
+	ClientID string   `json:"client_id"`
+	Domains  []string `json:"domains,omitempty"`
+}
+
+// IDProviders are the network's outside providers, and the addresses to register with each
+// provider for its client (where it sends people back).
+type IDProviders struct {
+	Providers    []IDProvider `json:"providers"`
+	RedirectURIs []string     `json:"redirect_uris"`
+	// Allowed reports whether the network's default sign-in policy allows "provider": when not,
+	// only people in groups whose own policy allows it sign in through one.
+	Allowed bool `json:"allowed"`
+}
+
+// SetIDProviderRequest adds or changes an outside provider (the name is in the path). The client
+// secret may be left out when changing one whose issuer stays: the one kept is used.
+type SetIDProviderRequest struct {
+	Title        string   `json:"title"`
+	Issuer       string   `json:"issuer"`
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	Domains      []string `json:"domains,omitempty"`
+}

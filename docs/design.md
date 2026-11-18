@@ -205,6 +205,45 @@ network needs no identity provider of its own beside them. Why it is safe:
   account takes only that one. The dashboard's **Sign in** uses it on such devices and opens its
   session with a ticket bound to the device, used once within two minutes.
 
+## Outside providers
+
+People can sign in at ento id through an outside OpenID Connect provider (`internal/id/upstream.go`,
+0.59): Google Workspace, Microsoft Entra ID, Okta. ento id stays the network's identity provider,
+and the outside one is only another way of proving who someone is. Why that is safe:
+
+- **People stay the network's.** The provider never creates anyone, and gives no groups or roles:
+  those are the network's (the dashboard), so whoever runs the provider's directory cannot make
+  themselves an admin of the network by adding a group there. Naming or removing a provider is full
+- **An account, not an address.** The first sign-in through a provider finds the person by the
+  address its ID token names, and links that account (its `sub`, stable and never reassigned) to
+  them; from then on only that account signs them in. Addresses move (a leaver's mailbox given to
+  the next person, an address someone may set on their own account at some providers: Microsoft's
+  `email` claim is not checked, the "nOAuth" problem), so a second account showing a linked
+  person's address is refused, not linked. What is left is the first sign-in: an account that shows
+  someone's address before that person ever used the provider could take the link. Against that:
+  an issuer that is one organization's (Microsoft's shared `common` endpoint is refused because
+  anyone's tenant signs in there; Google's Internal apps sign in only the Workspace's accounts),
+  `--domains` (Google's `hd`, which only Workspace sets, is checked against them too), a token that
+  says the address is unverified is refused, and an admin who sees a wrong link unlinks it.
+- **Checked like every token ento takes.** The code flow with PKCE, a state kept server-side for
+  one use, a nonce, and the ID token verified against the provider's published keys with an
+  allow-list of algorithms (`internal/oidcrp`, the same code that checks the control nodes'
+  provider), its issuer, audience, authorized party and expiry. The token endpoint is reached over
+  verified TLS, with the client secret, which is kept sealed with a key derived from the signing key
+  (not in the database in the clear, and useless without that key).
+- **The provider's own sign-in stands for a passkey here.** That is a choice the network makes, and
+  why it is a sign-in policy (`provider`) like the others: a group whose people must use a passkey
+  here (admins, say) leaves it out. ento cannot see how the provider signed someone in (Google
+  names no method); `max_age=0` asks it for a fresh sign-in, and an `auth_time` older than the
+  sign-in is refused where the provider sends one.
+- **Nothing kept of the provider's.** No tokens are stored, so the provider is asked again at each
+  sign-in, and nothing of it can be stolen from the database. The other side: someone disabled at
+  the provider keeps a device session already open until its own limits (idle, absolute) end it;
+  disabling them in the network ends it at once.
+- **Outbound only.** The control nodes call the provider's discovery, keys and token endpoint;
+  nothing of the provider calls in, and the person's browser carries the code back to ento id's
+  callback inside the tunnel (1.1, entowire principle 2).
+
 ## Copied identities
 
 A device is its WireGuard key, kept in the agent's state; a copy of that state is the device. Step
@@ -617,7 +656,10 @@ done inside the tunnel):
   control node, which checks that both peers are approved and allowed by policy and forwards the
   frame to the destination's overlay address. The payload is the peer-to-peer WireGuard packet, so
   the control node cannot read it. A relayed peer is tried directly again when its published
-  endpoint changes.
+  endpoint changes. Every agent but a phone's sends each control node an empty frame (the header
+  alone, which control nodes ignore) every 20 s from its relay port (0.59), so that a stateful host
+  firewall on the device (ufw drops incoming connections by default) takes relayed frames as
+  answers instead of dropping them: 20 s stays below Linux's 30 s for an unanswered UDP flow.
 
 ## Control plane high availability
 

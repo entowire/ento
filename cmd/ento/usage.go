@@ -153,6 +153,15 @@ agent join; operators: ordinary devices, tokens and policies only):
                          address; devices resolve it when they reach the address (admins)
   ento admin dns forward ZONE SERVER[,SERVER...] | dns unforward ZONE   names in ZONE are asked of
                          its name servers, e.g. an office's own DNS through its route (admins)
+  ento admin providers  the outside providers people sign in through (0.59): Google Workspace,
+                         Microsoft Entra ID, Okta or any OpenID Connect provider, and the addresses
+                         to register with each as where it sends people back
+  ento admin providers set NAME --title TITLE --issuer URL --client-id ID [--domains D,D] [--keep-secret]
+                         add or change one (admins; the client secret is asked for, or piped in):
+                         the sign-in page offers "Continue with TITLE"; it signs in only people the
+                         network has, by address the first time, then that same account
+  ento admin providers remove NAME | providers unlink EMAIL NAME   remove one (not while it is
+                         someone's only way in), or forget the account that signs EMAIL in there
   ento admin policy ID --ports RULE[,RULE...]|all   change its ports
 
 Device posture (checks: admins add and delete them, operators list them):

@@ -139,6 +139,44 @@ func TestBrowser(t *testing.T) {
 	b.eval(fmt.Sprintf(`document.getElementById("code").value = %q`, totpCode(sec, time.Now().Unix()/30+1)))
 	b.eval(`document.getElementById("second-code").requestSubmit()`)
 	b.wait(`location.pathname === "/cb" && new URLSearchParams(location.search).get("state") === "s2"`)
+
+	// An outside provider (upstream.go): "Continue with Fake" on the pages, the provider sends the
+	// browser back, and the sign-in goes on as a passkey's: an application's, the account page's and
+	// a device code's from a link.
+	up := newFakeUpstream(t)
+	p.cfg.UpstreamHTTP = up.srv.Client()
+	up.auto = map[string]any{"sub": "fake-ana", "email": "ana@example.com", "email_verified": true}
+	st.SetSetting(ctx, SettingUpstreams, EncodeUpstreams([]Upstream{{Name: "fake", Title: "Fake", Issuer: up.srv.URL,
+		ClientID: fakeClient, Secret: SealUpstreamSecret(key, up.srv.URL, fakeSecret)}}))
+	viaFake := `document.querySelector("#providers button").click()`
+	q.Set("state", "s3")
+	b.open(origin + "/authorize?" + q.Encode())
+	b.wait(`document.querySelector("#providers button") !== null && document.querySelector("#providers button").textContent === "Continue with Fake"`)
+	b.eval(viaFake)
+	b.wait(`location.pathname === "/cb" && new URLSearchParams(location.search).get("state") === "s3"`)
+	if x, _ := st.IDPerson(ctx, ana.ID); x.Links[up.srv.URL] != "fake-ana" {
+		t.Fatalf("not linked after the provider's sign-in: %+v", x.Links)
+	}
+
+	b.send(b.session, "Network.clearBrowserCookies", nil) // the account page's session from above
+	b.open(origin + "/account")
+	b.waitVisible("passkey-go")
+	b.eval(viaFake)
+	b.waitText("acct-email", "ana@example.com")
+
+	resp, err = http.PostForm(origin+"/device_authorization", url.Values{"client_id": {"app"}, "client_secret": {testSecret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	da = map[string]any{}
+	json.NewDecoder(resp.Body).Decode(&da)
+	resp.Body.Close()
+	b.open(strings.Replace(da["verification_uri_complete"].(string), p.Issuer(), origin, 1))
+	b.waitVisible("passkey-go")
+	b.eval(viaFake)
+	b.waitVisible("device-accept")
+	b.click("device-accept")
+	b.waitText("done-title", "Signed in")
 }
 
 // browser is a headless Chromium driven over the DevTools protocol: one page, with a virtual

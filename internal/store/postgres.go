@@ -75,7 +75,6 @@ CREATE TABLE IF NOT EXISTS ento_policies (
 	UNIQUE (source, destination)
 );
 ALTER TABLE ento_tokens ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAULT '';
-ALTER TABLE ento_checkins ADD COLUMN IF NOT EXISTS update_failed text NOT NULL DEFAULT '';
 ALTER TABLE ento_peers ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAULT '';
 ALTER TABLE ento_peers ADD COLUMN IF NOT EXISTS approved_until timestamptz;
 ALTER TABLE ento_peers ADD COLUMN IF NOT EXISTS login_at timestamptz;
@@ -266,6 +265,8 @@ CREATE TABLE IF NOT EXISTS ento_checkins (
 	suspected    text NOT NULL,
 	suspected_at timestamptz
 );
+-- 0.58.3: why the device's last self-update failed (after the table: a new database has none before).
+ALTER TABLE ento_checkins ADD COLUMN IF NOT EXISTS update_failed text NOT NULL DEFAULT '';
 -- 0.53: the network's audit, shared by its control nodes; entries are only ever added.
 CREATE TABLE IF NOT EXISTS ento_audit (
 	id        bigserial PRIMARY KEY,

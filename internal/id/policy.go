@@ -17,7 +17,7 @@ const (
 )
 
 // Methods are the ways of signing in the provider knows.
-var Methods = []string{MethodPasskey, MethodPasswordPasskey, MethodPasswordTOTP}
+var Methods = []string{MethodPasskey, MethodPasswordPasskey, MethodPasswordTOTP, MethodProvider}
 
 // SettingDefaultSignin is the store setting holding the network's default ways of signing in
 // (comma-separated; unset: every way).
@@ -64,8 +64,9 @@ func Allowed(groups []string, all []store.IDGroup, def []string) []string {
 	return out
 }
 
-// Has is what a person can complete: the ways of signing in their credentials make up.
-func Has(x store.IDPerson, passkeys int) []string {
+// Has is what a person can complete: the ways of signing in their credentials make up, and an
+// outside provider of ups that can sign them in (upstreamFor).
+func Has(x store.IDPerson, passkeys int, ups []Upstream) []string {
 	var out []string
 	if passkeys > 0 {
 		out = append(out, MethodPasskey)
@@ -76,6 +77,9 @@ func Has(x store.IDPerson, passkeys int) []string {
 	if x.Password != "" && x.TOTP != nil {
 		out = append(out, MethodPasswordTOTP)
 	}
+	if upstreamFor(x, ups) {
+		out = append(out, MethodProvider)
+	}
 	return out
 }
 
@@ -83,6 +87,7 @@ func Has(x store.IDPerson, passkeys int) []string {
 type access struct {
 	allowed, has []string
 	passkeys     []store.IDPasskey
+	ups          []Upstream
 }
 
 func (a access) can(m string) bool { return slices.Contains(a.allowed, m) && slices.Contains(a.has, m) }
@@ -105,9 +110,13 @@ func (p *Provider) access(ctx context.Context, x store.IDPerson) (access, error)
 	if err != nil {
 		return access{}, err
 	}
-	return access{allowed: Allowed(x.Groups, gs, def), has: Has(x, len(keys)), passkeys: keys}, nil
+	ups, err := Upstreams(ctx, p.cfg.Store)
+	if err != nil {
+		return access{}, err
+	}
+	return access{allowed: Allowed(x.Groups, gs, def), has: Has(x, len(keys), ups), passkeys: keys, ups: ups}, nil
 }
 
 // setUp reports whether a person can sign in at all (with what they have, whatever is allowed):
 // a setup link is only for those who cannot.
-func setUp(x store.IDPerson, passkeys int) bool { return len(Has(x, passkeys)) > 0 }
+func setUp(x store.IDPerson, passkeys int) bool { return len(Has(x, passkeys, nil)) > 0 }

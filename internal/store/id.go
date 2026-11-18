@@ -26,6 +26,9 @@ type IDPerson struct {
 	// time step a code was accepted for (a code works once).
 	TOTP     []byte
 	TOTPStep int64
+	// Links are the accounts at outside providers that sign this person in (id.Upstream): the
+	// provider's issuer to the account's subject there, set at the first sign-in through it.
+	Links map[string]string
 }
 
 // IDPasskey is a passkey a person registered. Credential is the verifier's record of it

@@ -1,9 +1,12 @@
 package id
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 	"html/template"
 	"net/http"
+	"time"
 )
 
 //go:embed pages
@@ -20,10 +23,27 @@ type pageData struct {
 	Client  string // authorize: the application's name
 	Message string // error: what went wrong
 	Device  string // here: the device the browser runs on
+	// Providers are the outside providers offered (JSON: [{"name","title"}]).
+	Providers string
 }
 
 func (p *Provider) page(w http.ResponseWriter, status int, d pageData) {
 	d.Title = p.cfg.Title
+	d.Providers = "[]"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if ups, err := Upstreams(ctx, p.cfg.Store); err == nil && len(ups) > 0 {
+		type offered struct {
+			Name  string `json:"name"`
+			Title string `json:"title"`
+		}
+		list := make([]offered, 0, len(ups))
+		for _, u := range ups {
+			list = append(list, offered{u.Name, u.Title})
+		}
+		b, _ := json.Marshal(list)
+		d.Providers = string(b)
+	}
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)

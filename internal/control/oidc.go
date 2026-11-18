@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"entowire.com/ento/internal/api"
+	"entowire.com/ento/internal/oidcrp"
 	"entowire.com/ento/internal/store"
 )
 
@@ -108,7 +109,7 @@ type oidcProvider struct {
 	cfg    OIDCConfig
 	client *http.Client
 
-	keys      jwksCache // the provider's signing keys (oidc_jwt.go)
+	keys      *oidcrp.Keys // the provider's signing keys (oidc_jwt.go), made on first use
 	mu        sync.Mutex
 	discovery *oidcDiscovery
 	logins    map[int64]*deviceLogin // by peer ID

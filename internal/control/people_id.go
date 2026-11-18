@@ -53,8 +53,12 @@ func (b *idPeople) record(ctx context.Context, x store.IDPerson) (personRecord, 
 	if err != nil {
 		return personRecord{}, err
 	}
+	ups, err := entoid.Upstreams(ctx, b.st)
+	if err != nil {
+		return personRecord{}, err
+	}
 	kind := "set up"
-	if len(entoid.Has(x, len(keys))) == 0 {
+	if len(entoid.Has(x, len(keys), ups)) == 0 {
 		kind = "new"
 	}
 	r := personRecord{ID: x.ID, Email: x.Email, GivenName: x.GivenName, FamilyName: x.FamilyName, Groups: slices.Clone(x.Groups),
@@ -246,8 +250,12 @@ func (b *idPeople) personSignin(ctx context.Context, personID string) (personSig
 	if err != nil {
 		return personSignin{}, err
 	}
+	ups, err := entoid.Upstreams(ctx, b.st)
+	if err != nil {
+		return personSignin{}, err
+	}
 	out := personSignin{Password: x.Password != "", Passkeys: len(keys), TOTP: x.TOTP != nil,
-		Methods: entoid.Has(x, len(keys)), Allowed: entoid.Allowed(x.Groups, gs, def), Usable: []string{}}
+		Methods: entoid.Has(x, len(keys), ups), Allowed: entoid.Allowed(x.Groups, gs, def), Usable: []string{}}
 	if out.Methods == nil {
 		out.Methods = []string{}
 	}

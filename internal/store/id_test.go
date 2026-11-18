@@ -43,6 +43,18 @@ func testIDStore(t *testing.T, s Store) {
 	if got, _ := s.IDPerson(ctx, "p2"); got.Password != "$argon2id$x" || string(got.TOTP) != "\x07\x08" || got.TOTPStep != 42 {
 		t.Fatalf("password and app kept: %+v", got)
 	}
+	if _, err := s.UpdateIDPerson(ctx, "p2", func(p IDPerson) (IDPerson, error) {
+		p.Links = map[string]string{"https://accounts.example.com": "sub-42"}
+		return p, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.IDPerson(ctx, "p2"); got.Links["https://accounts.example.com"] != "sub-42" || len(got.Links) != 1 {
+		t.Fatalf("links kept: %+v", got.Links)
+	}
+	if got, _ := s.IDPerson(ctx, "p1"); got.Links != nil {
+		t.Fatalf("no links: %+v", got.Links)
+	}
 	if _, err := s.IDPerson(ctx, "nobody"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown person: %v", err)
 	}

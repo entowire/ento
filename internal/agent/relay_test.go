@@ -91,3 +91,37 @@ func TestRelaySocketCap(t *testing.T) {
 		t.Fatal("a socket beyond the cap was opened")
 	}
 }
+
+// The agent keeps its relay port open through stateful host firewalls: an empty frame (the header
+// alone, which control nodes ignore) goes to every control node at once and every interval.
+func TestRelayKeepOpen(t *testing.T) {
+	ctl, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	r, err := newRelayer(netip.MustParseAddr("127.0.0.1"), 51820, t.Logf, func(*net.UDPAddr) (*net.UDPConn, error) {
+		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ctlPort = ctl.LocalAddr().(*net.UDPAddr).Port
+	r.SetControls([]api.Control{{Address: "127.0.0.1"}})
+	go r.keepOpen(50 * time.Millisecond)
+	buf := make([]byte, 100)
+	for i := 0; i < 2; i++ {
+		_ = ctl.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, from, err := ctl.ReadFromUDP(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != api.RelayHeaderLen || buf[0] != api.RelayVersion {
+			t.Fatalf("frame %d: %x", i, buf[:n])
+		}
+		if from.Port != r.overlay.LocalAddr().(*net.UDPAddr).Port {
+			t.Fatalf("sent from port %d, not the relay socket's", from.Port)
+		}
+	}
+	r.Close()
+}

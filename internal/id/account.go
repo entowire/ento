@@ -93,7 +93,7 @@ func stamp(t time.Time) string {
 
 // keepsAWayIn refuses a change after which the person could not sign in as their groups allow.
 func keepsAWayIn(w http.ResponseWriter, a access, after store.IDPerson, passkeys int) bool {
-	if slices.ContainsFunc(Has(after, passkeys), func(m string) bool { return slices.Contains(a.allowed, m) }) {
+	if slices.ContainsFunc(Has(after, passkeys, a.ups), func(m string) bool { return slices.Contains(a.allowed, m) }) {
 		return true
 	}
 	fail(w, http.StatusConflict, "After this change you could not sign in any more. Add another way first.")

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
@@ -22,6 +23,7 @@ import (
 type relayer struct {
 	overlay  *net.UDPConn // bound to this agent's overlay address and api.RelayPort
 	wgPort   int
+	ctlPort  int // control nodes' relay port: api.RelayPort, another in tests
 	control  atomic.Pointer[netip.Addr]
 	controls atomic.Pointer[map[netip.Addr]bool]  // frames are only accepted from these
 	peers    atomic.Pointer[map[wgtypes.Key]bool] // and only for these: the network map's peers
@@ -38,7 +40,7 @@ const maxRelaySockets = 1024
 // sockets the kernel sends relayed packets to stay in the agent's namespace, where the WireGuard
 // interface's own socket lives.
 func newRelayer(address netip.Addr, wgPort int, logf func(string, ...any), listen func(*net.UDPAddr) (*net.UDPConn, error)) (*relayer, error) {
-	r := &relayer{wgPort: wgPort, logf: logf, sockets: map[wgtypes.Key]*net.UDPConn{}, closed: make(chan struct{})}
+	r := &relayer{wgPort: wgPort, ctlPort: api.RelayPort, logf: logf, sockets: map[wgtypes.Key]*net.UDPConn{}, closed: make(chan struct{})}
 	conn, err := listen(&net.UDPAddr{IP: address.AsSlice(), Port: api.RelayPort})
 	if err != nil {
 		// Something else on the machine holds the port: WSL's mirrored networking shares one port
@@ -114,7 +116,41 @@ func (r *relayer) toControl(peer wgtypes.Key, s *net.UDPConn) {
 		if ctl == nil {
 			continue
 		}
-		_, _ = r.overlay.WriteToUDP(buf[:api.RelayHeaderLen+n], &net.UDPAddr{IP: ctl.AsSlice(), Port: api.RelayPort})
+		_, _ = r.overlay.WriteToUDP(buf[:api.RelayHeaderLen+n], &net.UDPAddr{IP: ctl.AsSlice(), Port: r.ctlPort})
+	}
+}
+
+// relayKeepalive is how often an agent sends each control node an empty relay frame. Relayed
+// frames reach an agent as new UDP packets to its overlay address's port 3479, which a host
+// firewall that drops incoming connections (ufw's default) drops unless they answer something the
+// device sent: found on md, where a laptop with ufw received nothing from a peer that relayed to
+// it, while its own packets to that peer left. The empty frame makes them answers, from every
+// control node, since a peer may relay through another than this agent's. Linux keeps an unanswered
+// UDP flow for 30 s (nf_conntrack_udp_timeout), so the interval stays below it.
+const relayKeepalive = 20 * time.Second
+
+// keepOpen sends every control node an empty relay frame (the header alone, which control nodes
+// ignore, as every version since the relay did) at once and every interval, until Close. Not on
+// quiet devices (phones), whose radio each packet wakes and which have no such firewall.
+func (r *relayer) keepOpen(interval time.Duration) {
+	if r.overlay == nil {
+		return
+	}
+	frame := make([]byte, api.RelayHeaderLen)
+	frame[0] = api.RelayVersion
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		if m := r.controls.Load(); m != nil {
+			for a := range *m {
+				_, _ = r.overlay.WriteToUDP(frame, &net.UDPAddr{IP: a.AsSlice(), Port: r.ctlPort})
+			}
+		}
+		select {
+		case <-r.closed:
+			return
+		case <-t.C:
+		}
 	}
 }
 

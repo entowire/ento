@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ type idMemory struct {
 func clonePerson(p IDPerson) IDPerson {
 	p.Groups = slices.Clone(p.Groups)
 	p.TOTP = bytes.Clone(p.TOTP)
+	p.Links = maps.Clone(p.Links)
 	return p
 }
 

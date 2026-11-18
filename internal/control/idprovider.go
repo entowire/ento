@@ -40,6 +40,8 @@ type IDConfig struct {
 	// platform console on entowire's own nodes, over their mesh). Never a public address.
 	Listen   string
 	Disabled bool // for tests: no listener on the overlay
+	// UpstreamHTTP calls the outside providers people sign in through (nil: ento id's own client).
+	UpstreamHTTP *http.Client
 }
 
 // IDIssuer is the issuer of the provider named name.
@@ -69,7 +71,7 @@ func (s *Server) startID() error {
 		clients = append(clients, c)
 	}
 	idc := entoid.Config{Name: cfg.Name, Title: cfg.Title, Key: cfg.Key, Clients: clients, Store: s.cfg.Store,
-		Logf: s.cfg.Logf, Audit: s.idAudit}
+		Logf: s.cfg.Logf, Audit: s.idAudit, UpstreamHTTP: cfg.UpstreamHTTP}
 	if o := s.cfg.OIDC; o != nil && o.Issuer == IDIssuer(cfg.Name) {
 		// The device's own sign-in (here.go): with the built-in client, served by startHere.
 		idc.Here, idc.HereOrigin, idc.HereClient = s, hereOrigin(cfg.Name), o.ClientID

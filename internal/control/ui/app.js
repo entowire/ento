@@ -202,9 +202,10 @@ async function load(which, auto = false) {
       renderDevices();
       renderTokens();
     } else if (t === "groups") {
-      [policies, peers, tokens, links, idp, signin] = await Promise.all([get("/v1/admin/policies"), get("/v1/admin/peers"),
+      [policies, peers, tokens, links, idp, signin, providers] = await Promise.all([get("/v1/admin/policies"), get("/v1/admin/peers"),
         get("/v1/admin/tokens"), get("/v1/admin/links"), info.people && isAdmin() ? get("/v1/admin/people") : null,
-        info.people && isAdmin() ? get("/v1/admin/signin") : null]);
+        info.people && isAdmin() ? get("/v1/admin/signin") : null,
+        info.people && isAdmin() ? get("/v1/admin/providers").catch(() => null) : null]);
       renderGroupsPage();
     } else if (t === "access") {
       [policies, peers, checks, tokens, links, routes, idp] = await Promise.all([get("/v1/admin/policies"), get("/v1/admin/peers"),
@@ -1280,7 +1281,8 @@ function renderAccess() {
 
 // --- sign-in policies ------------------------------------------------------------------------------
 let signin = null; // api.SigninPolicy, where people are managed here
-const methodNames = { "passkey": "Passkey", "password+passkey": "Password + passkey", "password+totp": "Password + authenticator app" };
+const methodNames = { "passkey": "Passkey", "password+passkey": "Password + passkey", "password+totp": "Password + authenticator app",
+  "provider": "An outside provider (Sign-in providers)" };
 const methodName = (m) => methodNames[m] || m;
 
 // methodBoxes: a checkbox for each way of signing in, those given ticked.
@@ -1340,6 +1342,62 @@ function renderGroupsPage() {
   renderGroupDetail(ui.group, members);
   $("group-none").hidden = !!ui.group;
   renderSigninDefault();
+  renderProviders();
+}
+
+// --- outside providers (0.59) ----------------------------------------------------------------------
+let providers = null; // api.IDProviders, where the network's own sign-in (ento id) runs here
+
+function renderProviders() {
+  const card = $("providers-card");
+  card.hidden = !providers || !!ui.group;
+  if (!providers || ui.group) return;
+  const rows = providers.providers.map((p) => el("li", {},
+    el("div", {}, el("b", {}, p.title), el("small", { class: "dim" }, ` ${p.name} · ${p.issuer}` + (p.domains && p.domains.length ? ` · only ${p.domains.join(", ")}` : ""))),
+    el("div", { class: "row-actions" }, button("Change", () => editProvider(p), "btn xs"),
+      button("Remove", () => removeProvider(p), "btn xs danger"))));
+  put(card, el("div", { class: "card-head" }, el("h2", { id: "pv-h" }, "Sign-in providers"),
+    button("Add", () => editProvider(null), "btn xs primary")),
+    el("div", { class: "card-body" },
+      rows.length ? el("ul", { class: "provider-list" }, ...rows) : el("p", { class: "dim" }, "None: people sign in with passkeys, passwords and apps."),
+      el("p", { class: "hint" }, "People can sign in with Google Workspace, Microsoft Entra ID, Okta or any OpenID Connect provider. " +
+        "Only people the network has: the first time by their address, then always that same account. Groups and roles stay here."),
+      providers.providers.length && !providers.allowed ? el("p", { class: "hint warn-text" },
+        "The default sign-in methods leave outside providers out: only people in groups that allow them can use them.") : null,
+      el("h3", {}, "Register where the provider sends people back"),
+      ...providers.redirect_uris.map((u) => el("pre", { class: "term wrap" }, u))));
+}
+
+async function editProvider(p) {
+  const f = (ph, v, label) => el("input", { class: "input", placeholder: ph, value: v || "", autocomplete: "off", "aria-label": label });
+  const name = f("google", p && p.name, "Name"), title = f("Google", p && p.title, "Title");
+  const issuer = f("https://accounts.google.com", p && p.issuer, "Issuer"), client = f("client ID", p && p.client_id, "Client ID");
+  const secret = el("input", { class: "input", type: "password", placeholder: p ? "client secret (empty: keep it)" : "client secret", autocomplete: "off", "aria-label": "Client secret" });
+  const domains = f("example.com (optional)", p && (p.domains || []).join(", "), "Domains");
+  if (p) name.disabled = true;
+  const label = (t, i) => el("label", { class: "field" }, el("span", {}, t), i);
+  if (!await ask(p ? `Change ${p.title}` : "Add a sign-in provider",
+    "Register a web application client at the provider first, with the addresses below this card as where it sends people back. " +
+    "Microsoft: your tenant's issuer (https://login.microsoftonline.com/<tenant ID>/v2.0), not common.",
+    { body: el("div", { class: "stack" }, label("Name", name), label("Shown as \"Continue with…\"", title), label("Issuer", issuer),
+      label("Client ID", client), label("Client secret", secret), label("Only addresses in", domains)), ok: p ? "Save" : "Add" })) return;
+  const body = { title: title.value.trim(), issuer: issuer.value.trim(), client_id: client.value.trim(),
+    domains: domains.value.split(/[\s,]+/).filter(Boolean) };
+  if (secret.value) body.client_secret = secret.value;
+  try {
+    await call("PUT", "/v1/admin/providers/" + encodeURIComponent(name.value.trim()), body);
+    notice(`${body.title} saved: the sign-in page offers it.`, true);
+  } catch (e) { notice(e.message); }
+  load();
+}
+
+async function removeProvider(p) {
+  if (!await ask(`Remove ${p.title}?`, "People who sign in only through it would have no way in: that is refused. Their accounts stay.", { ok: "Remove", danger: true })) return;
+  try {
+    await call("DELETE", "/v1/admin/providers/" + encodeURIComponent(p.name));
+    notice(`${p.title} removed.`, true);
+  } catch (e) { notice(e.message); }
+  load();
 }
 
 function renderGroupDetail(g, members) {

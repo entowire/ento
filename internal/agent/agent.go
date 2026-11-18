@@ -279,6 +279,9 @@ func startNetwork(cfg Config, env netEnv, st State, onApply func(api.NetMap), me
 		ifc.Close()
 		return nil, err
 	}
+	if !cfg.Quiet {
+		go rel.keepOpen(relayKeepalive)
+	}
 	a := &runner{cfg: cfg, env: env, st: st, ifc: ifc, relay: rel, onApply: onApply, started: time.Now(),
 		paths: map[wgtypes.Key]*path{}, last: api.NetMap{Controls: st.Controls}, postureWake: make(chan struct{}, 1),
 		personChanged: make(chan struct{}), member: member}
