@@ -862,7 +862,10 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   without a way to sign in their groups allow).
 - **Devices**: every device with its state, checks, last contact and the ento version it reported
   (0.58; marked **old** when older than the control node's, **update failed** with the reason its
-  agent gave at its last check-in (0.58.2; also audited as `update_failed` when it changes), and
+  agent gave at its last check-in (0.58.2; also audited as `update_failed` when it changes; before
+  0.59.6 a release's download was cut off after 40 s, the agent's limit for any request, so a
+  device on a slower connection failed with "context deadline exceeded ... while reading body"
+  and stayed behind until updated by hand: downloads now have 10 minutes), and
   **update by hand** on Windows and Android, which do not update themselves yet; searchable), filtered (online, waiting,
   failing a check, suspended, admins) and searched; a device's panel shows its groups, its posture
   report and each check, and does what the admin commands do: approve and unapprove (**Sign out**

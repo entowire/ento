@@ -148,6 +148,11 @@ func (a *runner) maybeUpdate(ctx context.Context, ctl api.Control, u *api.Update
 
 func (a *runner) selfUpdate(ctx context.Context, ctl api.Control, v string) error {
 	base := fmt.Sprintf("http://%s%s/%s/", ctl.Address, api.PathUpdate, v)
+	// The agent's client ends every request after 40 s, body included: a release (about 20 MB) over
+	// a slower tunnel never arrived ("context deadline exceeded ... while reading body", found with
+	// nJoy's laptop, which stayed on 0.59.3). Downloads go by the 10 minutes below only.
+	dl := *a.env.http
+	dl.Timeout = 0
 	get := func(name string, limit int64) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
@@ -155,7 +160,7 @@ func (a *runner) selfUpdate(ctx context.Context, ctl api.Control, v string) erro
 		if err != nil {
 			return nil, err
 		}
-		resp, err := a.env.http.Do(req)
+		resp, err := dl.Do(req)
 		if err != nil {
 			return nil, err
 		}

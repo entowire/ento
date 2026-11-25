@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/update"
@@ -156,5 +157,28 @@ func TestSelfUpdate(t *testing.T) {
 	}
 	if _, err := os.Stat(bin + ".new"); !os.IsNotExist(err) {
 		t.Fatal("a .new file was left")
+	}
+}
+
+// The agent's client limits a whole request to 40 s; a release's download goes by its own 10
+// minutes instead, or a slower tunnel never got one (0.59.6, nJoy's laptop): a client that would
+// time out at once still downloads it.
+func TestSelfUpdateIgnoresClientTimeout(t *testing.T) {
+	script := func(v string) string { return "#!/bin/sh\necho " + v + "\n" }
+	srv, _ := releaseServer(t, "0.37.0", script("0.37.0"))
+	bin := filepath.Join(t.TempDir(), "ento")
+	os.WriteFile(bin, []byte(script("0.36.0")), 0o755)
+	oldPath, oldExec := selfPath, execSelf
+	defer func() { selfPath, execSelf = oldPath, oldExec }()
+	selfPath = func() (string, error) { return bin, nil }
+	execSelf = func(string) error { return nil }
+	c := srv.Client()
+	c.Timeout = time.Nanosecond
+	a := &runner{cfg: Config{Version: "0.36.0", StateDir: t.TempDir(), Logf: t.Logf}, env: netEnv{http: c}}
+	if err := a.selfUpdate(context.Background(), api.Control{Address: strings.TrimPrefix(srv.URL, "http://")}, "0.37.0"); err != nil {
+		t.Fatalf("download under a short client timeout: %v", err)
+	}
+	if c.Timeout != time.Nanosecond {
+		t.Fatal("the agent's own client was changed")
 	}
 }
