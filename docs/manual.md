@@ -1083,7 +1083,7 @@ and what they can use now. API: `GET`/`PUT /v1/admin/signin`.
 
 A setup link starts with the first way the person's policy allows (a passkey, by default); where
 it also allows `password+totp`, the page offers it under the passkey button ("No passkey? Use a
-password and an authenticator app", 0.59.3), for someone without a device that can hold a passkey,
+password and an app", 0.59.3; the app is an authenticator app), for someone without a device that can hold a passkey,
 or whose security key cannot make one.
 
 ### Single sign-on
