@@ -67,13 +67,13 @@ func browserCommand() ([]string, bool) {
 	}
 	runtime := "/run/user/" + u.Uid
 	base := []string{"XDG_RUNTIME_DIR=" + runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus",
-		"HOME=" + u.HomeDir, "USER=" + u.Username, "PATH=/usr/local/bin:/usr/bin:/bin"}
+		"HOME=" + u.HomeDir, "USER=" + u.Username, "PATH=/usr/local/bin:/usr/bin:/bin:/snap/bin"}
 	out, err := exec.Command("runuser", append([]string{"-u", u.Username, "--", "env"},
 		append(base, "systemctl", "--user", "show-environment")...)...).Output()
 	if err != nil {
 		return nil, false
 	}
-	var display []string
+	var display, desktop []string
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
 		for _, k := range []string{"DISPLAY=", "WAYLAND_DISPLAY=", "XAUTHORITY="} {
@@ -81,9 +81,20 @@ func browserCommand() ([]string, bool) {
 				display = append(display, sc.Text())
 			}
 		}
+		// Which browser is the user's: xdg-open asks the desktop (XDG_CURRENT_DESKTOP) and finds
+		// applications through XDG_DATA_DIRS, where a snap's (Ubuntu's Firefox) are listed. Without
+		// them it fell back to fetching the page and opening its HTML in a text editor (found with
+		// nJoy, Ubuntu 26.04, 2026-11-25).
+		for _, k := range []string{"XDG_CURRENT_DESKTOP=", "XDG_SESSION_DESKTOP=", "XDG_SESSION_TYPE=", "DESKTOP_SESSION=",
+			"XDG_DATA_DIRS=", "XDG_CONFIG_DIRS="} {
+			if strings.HasPrefix(sc.Text(), k) {
+				desktop = append(desktop, sc.Text())
+			}
+		}
 	}
 	if len(display) == 0 {
 		return nil, false
 	}
-	return append([]string{"runuser", "-u", u.Username, "--", "env"}, append(append(base, display...), "xdg-open")...), true
+	env := append(append(base, display...), desktop...)
+	return append([]string{"runuser", "-u", u.Username, "--", "env"}, append(env, "xdg-open")...), true
 }

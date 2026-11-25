@@ -88,7 +88,10 @@ their agents could never update themselves. A device installed before 0.50 updat
 service. It then installs `/usr/local/bin/ento` (Windows: `C:\Program Files\ento`, with
 `wintun.dll` and `ento-tray.exe`, see [Signing in on Windows](#signing-in-on-windows)). With `ENTO_JOIN=<domain>` they also install the agent service and enroll with the
 words an administrator reads out (see Enrollment by words); `install.sh` also takes
-`ENTO_TOKEN_FILE=/path/to/token`. Then `ento agent install --join <domain>` or, Linux and macOS
+`ENTO_TOKEN_FILE=/path/to/token`. Where `sudo` is sudo-rs (Ubuntu since 25.10), a script read
+from a pipe never gets what is typed, so `install.sh` with `ENTO_JOIN` installs ento and then
+shows the one command that joins, `sudo ento agent install --join <domain>`, instead of waiting
+for words that never arrive (found with nJoy, on Ubuntu 26.04). Then `ento agent install --join <domain>` or, Linux and macOS
 only, `ento agent install --token-file <token>` (root or Administrator), and `ento login`.
 Phones and Windows take words only (0.23.3): they are people's devices, and a token is a file that
 lingers; tokens are for Linux and macOS machines that automation enrolls (servers, prepared
@@ -1078,6 +1081,11 @@ finishes an unfinished setup or replaces a lost second factor). The dashboard ed
 (Groups) and each people group's methods, and shows a person's: what they have, what they may use
 and what they can use now. API: `GET`/`PUT /v1/admin/signin`.
 
+A setup link starts with the first way the person's policy allows (a passkey, by default); where
+it also allows `password+totp`, the page offers it under the passkey button ("No passkey? Use a
+password and an authenticator app", 0.59.3), for someone without a device that can hold a passkey,
+or whose security key cannot make one.
+
 ### Single sign-on
 
 With an OpenID Connect provider, access follows identity instead of manual approval. The control
@@ -1095,6 +1103,12 @@ The person types the code the device shows on that page (0.50): control nodes no
 the provider's link with the code in it, and the control nodes' own provider approves at once only a code typed
 on its page; one that came in a link (anyone can send a person a link with their own device's
 code) gets a page saying a device asks to sign in as them, to accept or decline.
+
+On Linux, run with sudo, `ento login` opens the page as the person who ran it, in their desktop
+session: since 0.59.2 with that session's desktop and application paths too (`XDG_CURRENT_DESKTOP`,
+`XDG_DATA_DIRS`, ...) and `/snap/bin`, so `xdg-open` finds their browser even when it is a snap
+(Ubuntu's Firefox); without them it fell back to fetching the page and opening its HTML in a text
+editor (Ubuntu 26.04).
 
 **Apps sign in without a code** (0.56). An app on the device (the Android app) starts the sign-in
 with the address it catches (RFC 8252, e.g. `com.entowire.ento://signed-in`), and where the control
@@ -1179,7 +1193,11 @@ them (`internal/id`):
   `password+passkey` (the password, then a passkey), `password+totp` (the password, then a code
   from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once), `provider`
   (an outside provider, below). Every
-  sign-in asks again: the provider keeps no session. The passkeys' relying party is the name
+  sign-in asks again: the provider keeps no session. A new passkey must verify the person (a PIN,
+fingerprint or the device's own lock): a security key with no PIN set answers with a touch only and
+is refused, and since 0.59.2 the page says so (set a PIN on the key, or use another device) and the
+audit log names the check that failed; before, the page cleared its message at once, so a touch
+seemed to do nothing (found with nJoy, 2026-11-25). The passkeys' relying party is the name
   (`id.example.com`); no WebAuthn extension is asked for, and one a passkey manager returns unasked
   (Android's always adds `credProps`) is ignored, not refused. Passwords: at least 12 characters, kept as Argon2id hashes (any PHC Argon2id
   hash is taken as it is); after 10 wrong passwords or codes in 15 minutes an account takes no more passwords

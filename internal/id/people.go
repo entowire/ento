@@ -137,7 +137,11 @@ func (p *Provider) SetupLink(ctx context.Context, person string, life time.Durat
 
 // setupFor reads a setup link's person, and what they set up: the way their groups allow first
 // (a passkey before a password and passkey, before a password and app) and its next step.
-func (p *Provider) setupFor(w http.ResponseWriter, r *http.Request, sec string) (key string, l setupLink, x store.IDPerson, a access, way, step string, ok bool) {
+//
+// want is the way the person chose on the page (0.59.2: someone without a passkey, or whose key
+// cannot make one, takes a password and an authenticator app where the network allows it); empty,
+// or one not allowed, is the first allowed.
+func (p *Provider) setupFor(w http.ResponseWriter, r *http.Request, sec, want string) (key string, l setupLink, x store.IDPerson, a access, way, step string, ok bool) {
 	key = "setup:" + hash("setup", sec)
 	if _, err := p.getState(r.Context(), key, false, &l); err != nil {
 		fail(w, http.StatusGone, "This link has expired or was already used. Ask your administrator for a new one.")
@@ -162,6 +166,9 @@ func (p *Provider) setupFor(w http.ResponseWriter, r *http.Request, sec string) 
 			break
 		}
 	}
+	if want != "" && want != MethodProvider && slices.Contains(a.allowed, want) {
+		way = want
+	}
 	switch {
 	case way == "":
 		fail(w, http.StatusConflict, "No way of signing in is allowed for this account. Ask your administrator.")
@@ -181,6 +188,7 @@ func (p *Provider) setupFor(w http.ResponseWriter, r *http.Request, sec string) 
 func (p *Provider) setupBegin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Secret string `json:"secret"`
+		Way    string `json:"way"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -189,11 +197,18 @@ func (p *Provider) setupBegin(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusTooManyRequests, "Too many attempts. Wait a minute and try again.")
 		return
 	}
-	key, _, x, a, way, step, ok := p.setupFor(w, r, in.Secret)
+	key, _, x, a, way, step, ok := p.setupFor(w, r, in.Secret, in.Way)
 	if !ok {
 		return
 	}
-	out := map[string]any{"email": x.Email, "name": personName(x), "way": way, "step": step}
+	// The ways the page may offer instead (an outside provider is not set up here).
+	var ways []string
+	for _, m := range Methods {
+		if m != MethodProvider && slices.Contains(a.allowed, m) {
+			ways = append(ways, m)
+		}
+	}
+	out := map[string]any{"email": x.Email, "name": personName(x), "way": way, "step": step, "ways": ways}
 	switch step {
 	case "passkey":
 		creation, session, err := p.beginRegistration(x, a.passkeys)
@@ -225,11 +240,12 @@ func (p *Provider) setupPassword(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Secret   string `json:"secret"`
 		Password string `json:"password"`
+		Way      string `json:"way"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	_, _, x, _, _, step, ok := p.setupFor(w, r, in.Secret)
+	_, _, x, _, _, step, ok := p.setupFor(w, r, in.Secret, in.Way)
 	if !ok {
 		return
 	}
@@ -321,7 +337,7 @@ func (p *Provider) setupFinish(w http.ResponseWriter, r *http.Request) {
 	name, err := p.addPasskey(r, x, c.Session, in.Credential)
 	if err != nil {
 		p.audit(r, "id_setup", x.Email+": "+err.Error(), "denied")
-		fail(w, http.StatusBadRequest, "The passkey was not accepted.")
+		fail(w, http.StatusBadRequest, passkeyTell(err))
 		return
 	}
 	method := MethodPasskey
@@ -337,11 +353,12 @@ func (p *Provider) setupTOTP(w http.ResponseWriter, r *http.Request) {
 		Secret string `json:"secret"`
 		App    string `json:"app"`
 		Code   string `json:"code"`
+		Way    string `json:"way"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	key, _, x, _, _, step, ok := p.setupFor(w, r, in.Secret)
+	key, _, x, _, _, step, ok := p.setupFor(w, r, in.Secret, in.Way)
 	if !ok {
 		return
 	}

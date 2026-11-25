@@ -357,9 +357,10 @@ async function setup() {
     }
     done("Your account is ready", "You sign in to " + body.title + " with it from now on. You can close this tab.");
   };
+  let way = ""; // the way the person chose; empty: the network's first
   const next = async () => {
     let st;
-    try { st = await busy(() => call("/setup/begin", { secret })); }
+    try { st = await busy(() => call("/setup/begin", { secret, way })); }
     catch (e) { error(e.message); return; }
     $("setup-email").textContent = st.email;
     show("setup-for");
@@ -370,13 +371,17 @@ async function setup() {
       $("setup-password-form").onsubmit = async (ev) => {
         ev.preventDefault();
         try {
-          await busy(() => call("/setup/password", { secret, password: $("setup-password").value }));
+          await busy(() => call("/setup/password", { secret, way, password: $("setup-password").value }));
           $("setup-password").value = "";
           await next();
         } catch (e) { error(e.message); }
       };
     } else if (st.step === "passkey") {
-      if (noPasskeys()) return;
+      // Without a passkey (or with a key that cannot make one): a password and an app, if allowed.
+      const other = (st.ways || []).includes("password+totp");
+      show("setup-other", other);
+      $("setup-totp-way").onclick = () => { way = "password+totp"; next(); };
+      if (noPasskeys() && !other) return;
       show("setup-passkey");
       $("setup-go").onclick = async () => {
         try {
@@ -386,8 +391,11 @@ async function setup() {
           });
           finished(out);
         } catch (e) {
-          error(passkeyError(e));
-          await next(); // a ceremony is used once: start another for the next try
+          // A ceremony is used once: another is started for the next try, and the reason shown after
+          // it (starting it clears the message: a refused passkey looked like nothing happened).
+          const msg = passkeyError(e);
+          await next();
+          error(msg);
         }
       };
     } else if (st.step === "totp") {
@@ -396,7 +404,7 @@ async function setup() {
       $("setup-totp-key").textContent = st.offer.secret;
       $("setup-totp-form").onsubmit = async (ev) => {
         ev.preventDefault();
-        try { finished(await busy(() => call("/setup/totp", { secret, app: st.app, code: $("setup-totp-code").value }))); }
+        try { finished(await busy(() => call("/setup/totp", { secret, way, app: st.app, code: $("setup-totp-code").value }))); }
         catch (e) { error(e.message); }
       };
     }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -255,4 +256,48 @@ func (f *fixture) signInAt(a *idtest.Authenticator, path string, begin map[strin
 	f.t.Helper()
 	start := f.call(path, begin, 200)
 	return f.call("/passkey/finish", map[string]any{"ceremony": start["ceremony"], "credential": a.Get(start["publicKey"].(map[string]any))}, want)
+}
+
+// Where the network allows both, the setup page may choose a password and an app instead of the
+// passkey it starts with (0.59.2: a security key without a PIN could make no passkey, and the
+// person had no other way); a way the network does not allow is not taken.
+func TestSetupChoosesWay(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.st.PutIDGroup(ctx, store.IDGroup{Name: "staff", Kind: "people", Signin: []string{MethodPasskey, MethodPasswordTOTP}})
+	x, _ := f.p.NewPerson(ctx, "s@example.com", "", "", []string{"staff"})
+	link, _, _ := f.p.SetupLink(ctx, x.ID, 0, "")
+	s := strings.SplitN(link, "#", 2)[1]
+	st := f.call("/setup/begin", map[string]any{"secret": s}, 200)
+	if st["step"] != "passkey" || !slices.Contains(toStrings(st["ways"]), MethodPasswordTOTP) {
+		t.Fatalf("setup starts with %v", st)
+	}
+	st = f.call("/setup/begin", map[string]any{"secret": s, "way": MethodPasswordPasskey}, 200)
+	if st["way"] != MethodPasskey {
+		t.Fatalf("a way not allowed was taken: %v", st)
+	}
+	st = f.call("/setup/begin", map[string]any{"secret": s, "way": MethodPasswordTOTP}, 200)
+	if st["step"] != "password" || st["way"] != MethodPasswordTOTP {
+		t.Fatalf("chosen way: %v", st)
+	}
+	f.call("/setup/password", map[string]any{"secret": s, "way": MethodPasswordTOTP, "password": "a long enough password"}, 204)
+	st = f.call("/setup/begin", map[string]any{"secret": s, "way": MethodPasswordTOTP}, 200)
+	if st["step"] != "totp" {
+		t.Fatalf("after the password: %v", st)
+	}
+	var n newApp
+	f.p.getState(ctx, "newapp:"+st["app"].(string), false, &n)
+	sec, _ := f.p.openTOTP(x.ID, n.Sealed)
+	f.call("/setup/totp", map[string]any{"secret": s, "way": MethodPasswordTOTP, "app": st["app"], "code": totpCode(sec, f.now.Unix()/30)}, 200)
+	f.call("/setup/begin", map[string]any{"secret": s}, 410)
+}
+
+func toStrings(v any) []string {
+	var out []string
+	l, _ := v.([]any)
+	for _, x := range l {
+		s, _ := x.(string)
+		out = append(out, s)
+	}
+	return out
 }

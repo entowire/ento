@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -194,7 +195,7 @@ func (p *Provider) accountPasskeyFinish(w http.ResponseWriter, r *http.Request) 
 	name, err := p.addPasskey(r, x, c.Session, in.Credential)
 	if err != nil {
 		p.audit(r, "id_account", x.Email+": passkey not added: "+err.Error(), "denied")
-		fail(w, http.StatusBadRequest, "The passkey was not accepted.")
+		fail(w, http.StatusBadRequest, passkeyTell(err))
 		return
 	}
 	p.audit(r, "id_account", x.Email+": passkey "+name+" added", "ok")
@@ -351,7 +352,7 @@ func (p *Provider) addPasskey(r *http.Request, x store.IDPerson, session webauth
 	u := &user{person: x, handle: []byte(x.ID)}
 	cred, err := p.wa.CreateCredential(u, session, parsed)
 	if err != nil {
-		return "", err
+		return "", passkeyRefused(err)
 	}
 	rec, err := json.Marshal(passkeyRecord{Credential: *cred, UserHandle: u.handle})
 	if err != nil {
@@ -376,4 +377,35 @@ func (p *Provider) addPasskey(r *http.Request, x store.IDPerson, session webauth
 		}
 	}
 	return "", err
+}
+
+// refusedPasskey is a new passkey the server would not keep: Error is the whole reason, for the audit
+// log (go-webauthn keeps the specific check in DevInfo, which Error leaves out: "Error validating
+// the authenticator response" alone did not say which), Tell what the person is told.
+type refusedPasskey struct{ reason, tell string }
+
+func (e *refusedPasskey) Error() string { return e.reason }
+
+// passkeyRefused explains a refused passkey. A security key without a PIN (or fingerprint) answers
+// with a touch only, which does not verify the person: found with nJoy's first administrator, whose
+// key's touch did nothing visible (2026-11-25).
+func passkeyRefused(err error) error {
+	reason, tell := err.Error(), "The passkey was not accepted."
+	var pe *protocol.Error
+	if errors.As(err, &pe) && pe.DevInfo != "" {
+		reason += ": " + pe.DevInfo
+		if strings.Contains(pe.DevInfo, "User verification required") {
+			tell = "This security key did not check that it is you: it has no PIN or fingerprint set. Set a PIN on the key (in Chrome: Settings, Privacy and security, Security, Manage security keys), or make the passkey on another device, then try again."
+		}
+	}
+	return &refusedPasskey{reason: reason, tell: tell}
+}
+
+// passkeyTell is what the person is told about a refused passkey.
+func passkeyTell(err error) string {
+	var rp *refusedPasskey
+	if errors.As(err, &rp) {
+		return rp.tell
+	}
+	return "The passkey was not accepted."
 }
