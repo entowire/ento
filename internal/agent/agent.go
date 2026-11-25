@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/vishvananda/netns"
@@ -541,7 +540,7 @@ func (a *runner) loop(ctx context.Context) error {
 		var nm api.NetMap
 		url := fmt.Sprintf("http://%s%s?since=%d", ctl.Address, api.PathNetMap, a.version)
 		if a.cfg.Quiet && a.saveFn == nil { // approvals come with the map (0.34)
-			url += fmt.Sprintf("&approvals=%d", mapApprovalsCount())
+			url += fmt.Sprintf("&approvals=%d", mapApprovalsCount(a.cfg.StateDir))
 		}
 		// Signed although control nodes do not require it yet, so that a later version can.
 		req, err := signedRequest(ctx, http.MethodGet, url, nil, a.key(), ctl)
@@ -573,7 +572,7 @@ func (a *runner) loop(ctx context.Context) error {
 		}
 		a.version = nm.Version
 		if a.cfg.Quiet && a.saveFn == nil {
-			noteMapApprovals(nm)
+			noteMapApprovals(a.cfg.StateDir, nm)
 		}
 		if a.home() {
 			a.confirmUpdate()
@@ -986,80 +985,6 @@ func EnrollInProcess(ctx context.Context, cfg Config, tokenText string) (State, 
 		return State{}, err
 	}
 	return st, SaveState(cfg.StateDir, st)
-}
-
-// RunOnTUN runs the home network like Run, on a TUN interface someone else created and configured
-// (address and routes of the state's network): a mobile system's VPN service hands over its file
-// descriptor. protect, if set, receives WireGuard's own sockets to exempt them from that interface
-// (Android's VpnService.protect). Linked networks are not run.
-func RunOnTUN(ctx context.Context, cfg Config, t tunDevice, protect func(fd int) bool) error {
-	cfg.defaults()
-	st, err := LoadState(cfg.StateDir)
-	if err != nil {
-		return err
-	}
-	env := hostEnv()
-	env.open = func(cfg Config) (tunnel, error) { return userspaceOnTUN(t, cfg.ListenPort, protect, cfg.Logf) }
-	a, err := startRunner(cfg, env, st, nil)
-	if err != nil {
-		return err
-	}
-	defer a.close()
-	current.Store(a)
-	defer current.Store(nil)
-	go a.reevaluate(ctx)
-	go a.reportPosture(ctx)
-	go a.checkIns(ctx)
-	return a.loop(ctx)
-}
-
-// current is the runner of RunOnTUN, for Peers of an in-process agent (no control socket there).
-var current atomic.Pointer[runner]
-
-// InProcessRoutes returns the routes' networks the agent running in this process (RunOnTUN) wants
-// in the tunnel, sorted, with 0.0.0.0/0 while an exit is in use: a mobile system's VPN fixes its
-// routes when it is created, so the app creates it again when these change.
-func InProcessRoutes() []string {
-	a := current.Load()
-	if a == nil {
-		return nil
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]string, 0, len(a.osRoutes)+1)
-	for n := range a.osRoutes {
-		out = append(out, n.String())
-	}
-	if a.exit != nil {
-		out = append(out, exitNetwork.String())
-	}
-	slices.Sort(out)
-	return out
-}
-
-// InProcessSelf returns what the network map of the agent running in this process (RunOnTUN) says
-// about the device itself (approval, groups, whether its sign-in ended), once one arrived.
-func InProcessSelf() (api.Self, bool) {
-	a := current.Load()
-	if a == nil {
-		return api.Self{}, false
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.last.Self, a.version != 0
-}
-
-// InProcessPeers returns the peers of the agent running in this process (RunOnTUN), if any.
-func InProcessPeers() (map[wgtypes.Key]PeerStatus, bool, bool) {
-	a := current.Load()
-	if a == nil {
-		return nil, false, false
-	}
-	st, err := a.ifc.Status()
-	if err != nil {
-		return nil, true, a.loginRequired
-	}
-	return st, true, a.loginRequired
 }
 
 // routeNetworks are the networks this device reaches through peer p (its routes), less those that

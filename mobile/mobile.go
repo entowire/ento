@@ -101,16 +101,82 @@ func EnrollWords(stateDir, record, words, hostname string) (err error) {
 }
 
 // Network is what the VPN service needs to create the interface: {"address", "prefix_bits",
-// "network", "mtu"}, or "" when not enrolled.
+// "network", "mtu"} of the first network, and "networks": every network's {"domain", "address",
+// "prefix_bits", "network"}, the first first (0.60: the VPN carries every network's address and
+// range); "" when not enrolled.
 func Network(stateDir string) string {
 	st, err := agent.LoadState(stateDir)
 	if err != nil {
 		return ""
 	}
+	nets := []map[string]any{netInfo(st)}
+	for _, d := range agent.Networks(stateDir) {
+		if m, err := agent.LoadState(agent.NetworkDir(stateDir, d)); err == nil {
+			nets = append(nets, netInfo(m))
+		}
+	}
 	b, _ := json.Marshal(map[string]any{"address": st.Address.String(), "prefix_bits": st.Network.Bits(),
-		"network": st.Network.Masked().String(), "mtu": 1380})
+		"network": st.Network.Masked().String(), "mtu": 1380, "networks": nets})
 	return string(b)
 }
+
+func netInfo(st agent.State) map[string]any {
+	return map[string]any{"domain": st.RecordDomain, "address": st.Address.String(), "prefix_bits": st.Network.Bits(),
+		"network": st.Network.Masked().String()}
+}
+
+// Networks lists the phone's networks as JSON: [{"domain", "first"}], the first first ("" as its
+// domain when its control nodes never named it).
+func Networks(stateDir string) string {
+	out := []map[string]any{}
+	if _, err := agent.LoadState(stateDir); err == nil {
+		out = append(out, map[string]any{"domain": agent.FirstDomain(stateDir), "first": true})
+		for _, d := range agent.Networks(stateDir) {
+			if _, err := agent.LoadState(agent.NetworkDir(stateDir, d)); err == nil {
+				out = append(out, map[string]any{"domain": d, "first": false})
+			}
+		}
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// JoinWords joins another network (0.60), domain, with the words its administrator read out, in the
+// network of record (as LookupRecord returned it for domain): enrolled at once (Argon2id first, a few seconds: off the
+// main thread); the running agent brings it up within seconds, and the app creates its VPN again
+// with the network's address (Network).
+func JoinWords(stateDir, domain, record, words, hostname string) (err error) {
+	defer plain(&err)
+	rec, err := token.ParseRecord(record)
+	if err != nil {
+		return err
+	}
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	if !agent.ValidDomain(domain) {
+		return fmt.Errorf("%q is not a network's domain", domain)
+	}
+	// Refused before the words: a network the phone is in, or one overlapping its ranges.
+	if err := agent.CheckJoinInProcess(stateDir, domain, rec.Network); err != nil {
+		return err
+	}
+	tok, err := agent.WordsToken(record, words)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return agent.JoinInProcess(ctx, cfg(stateDir, hostname), domain, rec.Network, tok)
+}
+
+// Leave forgets a joined network on this phone (not the first: the app's own reset does). The
+// network keeps the device until an administrator deletes it.
+func Leave(stateDir, domain string) (err error) {
+	defer plain(&err)
+	return agent.LeaveInProcess(stateDir, domain)
+}
+
+// dir is the state directory of a network: the first for "" or its domain.
+func dir(stateDir, domain string) (string, error) { return agent.NetworkStateDir(stateDir, domain) }
 
 var (
 	mu      sync.Mutex
@@ -143,7 +209,11 @@ func Start(stateDir string, fd int32, hostname string, p SocketProtector) (err e
 	cancel, done, lastErr = c, make(chan struct{}), ""
 	go func() {
 		defer close(done)
-		err := agent.RunOnTUN(ctx, cfg(stateDir, hostname), t, func(fd int) bool { return p.Protect(int32(fd)) })
+		var protect func(fd int) bool // nil: nothing to protect (a test on plain Linux)
+		if p != nil {
+			protect = func(fd int) bool { return p.Protect(int32(fd)) }
+		}
+		err := agent.RunOnTUN(ctx, cfg(stateDir, hostname), t, protect)
 		switch {
 		case err != nil && ctx.Err() == nil:
 			writeLog("agent", "stopped: "+err.Error())
@@ -237,16 +307,26 @@ func SetAttestor(a Attestor) {
 // once the agent reported its posture "posture" (a summary), "posture_failing" (the checks the
 // device fails: [{"check", "reason"}]) and "attested" (what the control plane found in the
 // phone's attestation, api.Attested; absent when it sent none).
-func Status(stateDir string) string {
-	out := map[string]any{"enrolled": false, "version": version}
-	if st, err := agent.LoadState(stateDir); err == nil {
+//
+// domain names the network ("" for the first, 0.60); routes, exits, exit and dns are the phone's,
+// whichever network is asked about.
+func Status(stateDir, domain string) string {
+	out := map[string]any{"enrolled": false, "version": version, "domain": domain}
+	d, err := dir(stateDir, domain)
+	if err != nil {
+		out["error"] = err.Error()
+		b, _ := json.Marshal(out)
+		return string(b)
+	}
+	if st, err := agent.LoadState(d); err == nil {
 		out["enrolled"] = true
 		out["address"] = st.Address.String()
+		out["domain"] = st.RecordDomain
 	}
-	peers, running, loginRequired := agent.InProcessPeers()
+	peers, running, loginRequired := agent.InProcessPeers(domain)
 	out["running"] = running
 	out["login_required"] = loginRequired
-	if self, ok := agent.InProcessSelf(); ok {
+	if self, ok := agent.InProcessSelf(domain); ok {
 		out["approved"] = self.Approved
 		out["groups"] = self.Groups
 		out["administers"] = self.Approved && (self.Admin || self.Operator)
@@ -263,7 +343,7 @@ func Status(stateDir string) string {
 		out["exit"] = agent.InProcessExit()
 		out["dns"] = agent.InProcessDNS()
 	}
-	if facts, _, failing := agent.InProcessPosture(); facts != nil || len(failing) > 0 {
+	if facts, _, failing := agent.InProcessPosture(domain); facts != nil || len(failing) > 0 {
 		if facts != nil {
 			out["posture"] = agent.PostureSummary(*facts)
 			if facts.Attested != nil {
@@ -300,8 +380,11 @@ var (
 // opens the URL in a browser. With redirect, the address the app catches (0.56), the sign-in ends
 // in the app where the control node allows it: code is then empty (nothing to type), and the app
 // passes the address it is opened with to LoginFinish. The outcome is reported by LoginState.
-func LoginStart(stateDir, redirect string) (_ string, err error) {
+func LoginStart(stateDir, domain, redirect string) (_ string, err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	var f *agent.LoginFlow
 	if redirect != "" {
@@ -332,8 +415,11 @@ func LoginStart(stateDir, redirect string) (_ string, err error) {
 
 // AdminPage returns the address of the network's admin interface, for admin and operator devices.
 // The page shows a code, which AdminApprove approves.
-func AdminPage(stateDir string) (_ string, err error) {
+func AdminPage(stateDir, domain string) (_ string, err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return agent.AdminUIURL(ctx, cfg(stateDir, ""))
@@ -341,8 +427,11 @@ func AdminPage(stateDir string) (_ string, err error) {
 
 // AdminApprove opens the admin page that shows code in a browser on this phone. The request is
 // signed with the device's key, which only this app holds: no other app on the phone can.
-func AdminApprove(stateDir, code string) (err error) {
+func AdminApprove(stateDir, domain, code string) (err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return agent.ApproveAdminUI(ctx, cfg(stateDir, ""), code)
@@ -350,8 +439,11 @@ func AdminApprove(stateDir, code string) (err error) {
 
 // LoginFinish hands the control node the address the identity provider opened the app with at the
 // end of a sign-in LoginStart began (redirect?code=...&state=...). LoginState reports the outcome.
-func LoginFinish(stateDir, address string) (err error) {
+func LoginFinish(stateDir, domain, address string) (err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := agent.FinishAppLogin(ctx, cfg(stateDir, ""), address); err != nil {
@@ -364,8 +456,11 @@ func LoginFinish(stateDir, address string) (err error) {
 // Logout signs the phone's person out (closes the device's person layer, as ento agent logout).
 // It tells the control plane now if it can (true), or the running agent tells it once it can
 // (false). The device stays in the network, as itself.
-func Logout(stateDir string) (_ bool, err error) {
+func Logout(stateDir, domain string) (_ bool, err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return false, err
+	}
 	setLogin("")
 	return agent.Logout(context.Background(), cfg(stateDir, ""), 10*time.Second)
 }
@@ -382,8 +477,11 @@ func setLogin(s string) { loginMu.Lock(); loginState = s; loginMu.Unlock() }
 // PendingApprovals returns the sign-ins waiting for this phone's person to approve, as JSON (a list
 // of {"id", "device", "user", "service", "choices", "expires_at"}), waiting up to waitSeconds (at
 // most 25) for one. The agent must be running (the call goes through the tunnel).
-func PendingApprovals(stateDir string, waitSeconds int32) (_ string, err error) {
+func PendingApprovals(stateDir, domain string, waitSeconds int32) (_ string, err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(waitSeconds+15)*time.Second)
 	defer cancel()
 	list, err := agent.PendingApprovals(ctx, cfg(stateDir, ""), time.Duration(waitSeconds)*time.Second)
@@ -410,8 +508,11 @@ func WaitApprovals(last int32, supported bool, waitSeconds int32) string {
 // AnswerApproval answers a sign-in approval with the number the person picked (approve false
 // refuses it). It returns the approval's state: approved, or denied when the number is not the one
 // the device that asks shows. The answer is signed with this phone's key, which only this app holds.
-func AnswerApproval(stateDir, id string, number int32, approve bool) (_ string, err error) {
+func AnswerApproval(stateDir, domain, id string, number int32, approve bool) (_ string, err error) {
 	defer plain(&err)
+	if stateDir, err = dir(stateDir, domain); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return agent.AnswerApproval(ctx, cfg(stateDir, ""), id, int(number), approve)

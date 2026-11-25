@@ -78,7 +78,7 @@ public class AdvancedActivity extends Activity {
     private void show() {
         rows.removeAllViews();
         try {
-            JSONObject s = new JSONObject(Mobile.status(Agent.stateDir(this)));
+            JSONObject s = new JSONObject(Mobile.status(Agent.stateDir(this), ""));
             if (s.getBoolean("enrolled")) {
                 row("Address", s.optString("address"));
                 String net = Mobile.network(Agent.stateDir(this));
@@ -131,6 +131,19 @@ public class AdvancedActivity extends Activity {
             if (s.has("attested")) row("Attestation", s.get("attested").toString());
             row("Last error", s.optString("error"));
             row("Agent version", s.optString("version"));
+            // The networks joined besides the first (0.60), each on its own lines.
+            JSONArray nets = new JSONArray(Mobile.networks(Agent.stateDir(this)));
+            for (int i = 0; i < nets.length(); i++) {
+                JSONObject n = nets.getJSONObject(i);
+                if (n.optBoolean("first")) continue;
+                JSONObject o = new JSONObject(Mobile.status(Agent.stateDir(this), n.getString("domain")));
+                StringBuilder v = new StringBuilder(o.optString("address"));
+                v.append(o.optBoolean("running") ? ", running" : ", not running");
+                if (o.has("approved")) v.append(o.optBoolean("approved") ? ", approved" : ", not approved");
+                if (!o.optString("user").isEmpty()) v.append("\nsigned in as ").append(o.optString("user"));
+                if (!o.optString("error").isEmpty()) v.append("\n").append(o.optString("error"));
+                row("Network " + n.getString("domain"), v.toString());
+            }
         } catch (Exception e) {
             row("Error", String.valueOf(e.getMessage()));
         }
@@ -173,7 +186,8 @@ public class AdvancedActivity extends Activity {
                 sb.append("ento logs, ").append(java.time.Instant.now()).append('\n')
                         .append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append(", Android ").append(Build.VERSION.RELEASE)
                         .append(" (SDK ").append(Build.VERSION.SDK_INT).append(", patch ").append(Build.VERSION.SECURITY_PATCH).append(")\n")
-                        .append("status: ").append(Mobile.status(Agent.stateDir(this))).append("\n\n")
+                        .append("status: ").append(Mobile.status(Agent.stateDir(this), "")).append("\n\n")
+                        .append("networks: ").append(Mobile.networks(Agent.stateDir(this))).append("\n\n")
                         .append(Mobile.logs());
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(LogsProvider.file(this))) {
                     out.write(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));

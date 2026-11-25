@@ -13,41 +13,75 @@ import (
 // (WaitMapApprovals) and fetches the approvals only then, instead of keeping a long poll of its
 // own open: one radio wake every long poll instead of two.
 
+// Every network of the app keeps its own (0.60): the app waits for any of them to change.
 var mapApprovals struct {
 	sync.Mutex
-	seen      bool // a map arrived
+	nets    map[string]mapApprovalState // by the network's state directory
+	changed chan struct{}               // closed and replaced on every change
+}
+
+type mapApprovalState struct {
 	supported bool // its control node fills Self.PendingApprovals
 	count     int
-	changed   chan struct{} // closed and replaced on every change
 }
 
 func init() { mapApprovals.changed = make(chan struct{}) }
 
-func mapApprovalsCount() int {
+// noteMapApprovals records what a network's map says of pending approvals.
+func noteMapApprovals(stateDir string, nm api.NetMap) {
 	mapApprovals.Lock()
 	defer mapApprovals.Unlock()
-	return mapApprovals.count
-}
-
-// noteMapApprovals records what a network map says of pending approvals.
-func noteMapApprovals(nm api.NetMap) {
-	mapApprovals.Lock()
-	defer mapApprovals.Unlock()
-	if mapApprovals.seen && mapApprovals.supported == nm.Approvals && mapApprovals.count == nm.Self.PendingApprovals {
+	want := mapApprovalState{supported: nm.Approvals, count: nm.Self.PendingApprovals}
+	if old, ok := mapApprovals.nets[stateDir]; ok && old == want {
 		return
 	}
-	mapApprovals.seen, mapApprovals.supported, mapApprovals.count = true, nm.Approvals, nm.Self.PendingApprovals
+	if mapApprovals.nets == nil {
+		mapApprovals.nets = map[string]mapApprovalState{}
+	}
+	mapApprovals.nets[stateDir] = want
 	close(mapApprovals.changed)
 	mapApprovals.changed = make(chan struct{})
 }
 
-// WaitMapApprovals waits until what the network map says of pending approvals differs from
-// (last, lastSupported), or ctx ends, and returns the count, whether the control node reports it at
-// all (else the app asks for approvals itself) and whether a map arrived yet.
+// mapApprovalsCount is the number of approvals a network's last map said wait.
+func mapApprovalsCount(stateDir string) int {
+	mapApprovals.Lock()
+	defer mapApprovals.Unlock()
+	return mapApprovals.nets[stateDir].count
+}
+
+// dropMapApprovals forgets a network left or stopped.
+func dropMapApprovals(stateDir string) {
+	mapApprovals.Lock()
+	defer mapApprovals.Unlock()
+	if _, ok := mapApprovals.nets[stateDir]; !ok {
+		return
+	}
+	delete(mapApprovals.nets, stateDir)
+	close(mapApprovals.changed)
+	mapApprovals.changed = make(chan struct{})
+}
+
+// mapApprovalsNow sums the networks: the approvals waiting in all, whether every network's control
+// node reports them, and whether any map arrived; the caller holds the lock.
+func mapApprovalsNow() (count int, supported, seen bool) {
+	supported = true
+	for _, s := range mapApprovals.nets {
+		count += s.count
+		supported = supported && s.supported
+		seen = true
+	}
+	return count, supported && seen, seen
+}
+
+// WaitMapApprovals waits until what the networks' maps say of pending approvals differs from
+// (last, lastSupported), or ctx ends, and returns the count in all networks, whether every
+// network's control node reports it (else the app asks for approvals itself) and whether a map
+// arrived yet.
 func WaitMapApprovals(ctx context.Context, last int, lastSupported bool) (count int, supported, seen bool) {
 	for {
 		mapApprovals.Lock()
-		count, supported, seen = mapApprovals.count, mapApprovals.supported, mapApprovals.seen
+		count, supported, seen = mapApprovalsNow()
 		ch := mapApprovals.changed
 		mapApprovals.Unlock()
 		if seen && (count != last || supported != lastSupported) {

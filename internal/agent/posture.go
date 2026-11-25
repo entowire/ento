@@ -355,18 +355,6 @@ func FailingText(f []api.PostureFailure) []string {
 	return out
 }
 
-// InProcessPosture returns the latest report of the agent running in this process (RunOnTUN), when
-// it made one, and the checks the device fails.
-func InProcessPosture() (*api.Posture, time.Time, []api.PostureFailure) {
-	a := current.Load()
-	if a == nil {
-		return nil, time.Time{}, nil
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.posture, a.postureAt, slices.Clone(a.failing)
-}
-
 // CollectPosture finds out the device's posture now, as the agent would report it.
 // postureNotes say how a fact was found when that is not the usual way, or why it is unknown (a
 // fallback, an error), for the agent's log and `ento agent posture`; set while collecting.

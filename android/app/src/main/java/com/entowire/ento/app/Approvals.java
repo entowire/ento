@@ -51,10 +51,10 @@ final class Approvals {
                     // and another asked between two maps leave the number as it was.
                     if (now == count && now == 0) continue;
                     count = now;
-                    show(c, nm, shown, new JSONArray(Mobile.pendingApprovals(dir, 0)));
+                    show(c, nm, shown, pending(dir, 0));
                 } else {
                     count = -1; // ask the map again at once next time, then ask ourselves
-                    JSONArray list = new JSONArray(Mobile.pendingApprovals(dir, 25));
+                    JSONArray list = pending(dir, 25);
                     // The control plane answers at once while one is pending: do not ask in a loop.
                     if (show(c, nm, shown, list) == 0 && list.length() > 0) Thread.sleep(2000);
                 }
@@ -72,6 +72,34 @@ final class Approvals {
                 }
             }
         }
+    }
+
+    /**
+     * The approvals waiting in every network of the phone (0.60), each with its network's domain
+     * ("network", "" for the first) for the answer. Only one network waits (up to waitSeconds) for
+     * one to arrive, the first: the others are asked at once.
+     */
+    private static JSONArray pending(String dir, int waitSeconds) throws Exception {
+        JSONArray out = new JSONArray(), nets = new JSONArray(Mobile.networks(dir));
+        for (int i = 0; i < nets.length(); i++) {
+            JSONObject n = nets.getJSONObject(i);
+            String domain = n.optBoolean("first") ? "" : n.getString("domain");
+            JSONArray list;
+            try {
+                list = new JSONArray(Mobile.pendingApprovals(dir, domain, i == 0 && nets.length() == 1 ? waitSeconds : 0));
+            } catch (Exception e) {
+                if (i == 0) throw e;
+                continue; // a joined network not up yet
+            }
+            for (int j = 0; j < list.length(); j++) {
+                JSONObject a = list.getJSONObject(j);
+                a.put("network", domain);
+                a.put("network_name", n.getString("domain"));
+                out.put(a);
+            }
+        }
+        if (nets.length() > 1 && out.length() == 0 && waitSeconds > 0) Thread.sleep(waitSeconds * 1000L / 5);
+        return out;
     }
 
     /** Shows a notification for each new approval and takes away those gone; returns how many are new. */
@@ -107,7 +135,8 @@ final class Approvals {
         Notification.Builder b = new Notification.Builder(c, CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle("Sign in to " + a.getString("device") + "?")
-                .setContentText(a.getString("user") + " (" + a.getString("service") + "): tap to approve or deny")
+                .setContentText(a.getString("user") + " (" + a.getString("service") + ")"
+                        + (a.optString("network_name").isEmpty() ? "" : ", " + a.optString("network_name")) + ": tap to approve or deny")
                 .setCategory(Notification.CATEGORY_STATUS)
                 .setContentIntent(pi)
                 .setAutoCancel(true)

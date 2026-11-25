@@ -34,7 +34,7 @@ public class ApprovalActivity extends Activity {
     private static final int CONFIRM = 1;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private String id, device, user, service;
+    private String id, device, user, service, network;
     private long expires;
     private TextView message;
     private LinearLayout numbers;
@@ -54,6 +54,7 @@ public class ApprovalActivity extends Activity {
             device = a.getString("device");
             user = a.getString("user");
             service = a.getString("service");
+            network = a.optString("network"); // "" the first network (0.60)
             expires = Instant.parse(a.getString("expires_at")).toEpochMilli();
             TextView title = text("Sign in to " + device + "?", 24, R.color.fg);
             title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -158,7 +159,7 @@ public class ApprovalActivity extends Activity {
         new Thread(() -> {
             String outcome;
             try {
-                String state = Mobile.answerApproval(dir, id, n, approve);
+                String state = Mobile.answerApproval(dir, network, id, n, approve);
                 outcome = "approved".equals(state) ? "Approved."
                         : approve ? "Denied: that is not the number " + device + " shows." : "Denied.";
             } catch (Exception e) {

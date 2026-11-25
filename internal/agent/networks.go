@@ -534,3 +534,13 @@ func takenRange(ifName string, network netip.Prefix) string {
 	}
 	return ""
 }
+
+// memberConfig is the agent's configuration for a joined network: its own state directory,
+// interface and port, and its lines in the log named after it.
+func memberConfig(cfg Config, m Membership) Config {
+	c := cfg
+	c.StateDir, c.Interface, c.ListenPort = NetworkDir(cfg.StateDir, m.Domain), m.Interface, m.ListenPort
+	logf := cfg.Logf
+	c.Logf = func(format string, args ...any) { logf("network "+m.Domain+": "+format, args...) }
+	return c
+}

@@ -27,6 +27,13 @@ func openNetstack(addr netip.Addr, mtu int, logf func(string, ...any)) (tunnel, 
 		u.dev.Close()
 		return nil, nil, err
 	}
+	// Joining another network while the app's VPN runs: WireGuard's sockets stay out of it.
+	if protect := inProcessProtect(); protect != nil {
+		if err := protectSockets(u.dev, protect); err != nil {
+			u.dev.Close()
+			return nil, nil, err
+		}
+	}
 	c := &http.Client{Timeout: httpClient.Timeout, Transport: &http.Transport{DialContext: tnet.DialContext}}
 	return u, c, nil
 }

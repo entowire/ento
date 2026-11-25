@@ -23,6 +23,10 @@ import org.json.JSONObject;
  * the phone's other network, which the service gives it). WireGuard's own sockets are protected
  * (protect(int), called by the agent) so they never enter the tunnel, even towards endpoints inside
  * the overlay range.
+ *
+ * A phone in several networks (0.60) has one VPN for all: every network's address and range, every
+ * network's routes; the agent sends each packet to its network. Joining or leaving one creates the
+ * VPN again with the networks then.
  */
 public class EntoVpnService extends VpnService implements SocketProtector {
     static final String START = "com.entowire.ento.START";
@@ -35,6 +39,8 @@ public class EntoVpnService extends VpnService implements SocketProtector {
     // The VPN's DNS server, the agent's resolver ("" for none).
     private volatile String dns = "";
     private volatile boolean watching;
+    // The networks' addresses the VPN was created with ("address/bits" each, the first first).
+    private volatile java.util.List<String> addresses = new java.util.ArrayList<>();
     // Whether routes and dns were taken from the last session of this enrollment (remembered): the
     // VPN is created with them at once, instead of without them and again seconds later, when the
     // network map names them (the person saw it connect, disconnect and connect).
@@ -68,12 +74,20 @@ public class EntoVpnService extends VpnService implements SocketProtector {
                 loaded = true;
                 remembered(n.getString("address"));
             }
-            String[] network = n.getString("network").split("/");
             Builder b = new Builder()
                     .setSession("ento")
-                    .setMtu(n.getInt("mtu"))
-                    .addAddress(n.getString("address"), n.getInt("prefix_bits"))
-                    .addRoute(network[0], Integer.parseInt(network[1]));
+                    .setMtu(n.getInt("mtu"));
+            addresses = addressesOf(n);
+            org.json.JSONArray nets = n.optJSONArray("networks");
+            if (nets == null) { // an agent older than 0.60
+                nets = new org.json.JSONArray().put(n);
+            }
+            for (int i = 0; i < nets.length(); i++) {
+                JSONObject x = nets.getJSONObject(i);
+                String[] network = x.getString("network").split("/");
+                b.addAddress(x.getString("address"), x.getInt("prefix_bits"))
+                        .addRoute(network[0], Integer.parseInt(network[1]));
+            }
             for (String r : routes) {
                 String[] p = r.split("/");
                 b.addRoute(p[0], Integer.parseInt(p[1]));
@@ -96,7 +110,7 @@ public class EntoVpnService extends VpnService implements SocketProtector {
             Agent.reportPosture(this);
             giveUpstreamDns();
             Mobile.start(dir, pfd.detachFd(), Agent.hostname(this), this); // the agent owns the interface now
-            Logs.i("VPN up: routes " + routes + (dns.isEmpty() ? "" : ", DNS " + dns));
+            Logs.i("VPN up: " + addresses + ", routes " + routes + (dns.isEmpty() ? "" : ", DNS " + dns));
             if (!running) { // sign-in approvals for this phone's person, while the tunnel is up
                 running = true;
                 new Thread(() -> Approvals.poll(this, dir, () -> running), "approvals").start();
@@ -117,11 +131,20 @@ public class EntoVpnService extends VpnService implements SocketProtector {
             try {
                 Thread.sleep(3000);
                 giveUpstreamDns(); // the phone may have changed networks
-                JSONObject s = new JSONObject(Mobile.status(dir));
+                JSONObject s = new JSONObject(Mobile.status(dir, ""));
                 org.json.JSONArray a = s.optJSONArray("routes");
                 java.util.List<String> want = new java.util.ArrayList<>();
                 if (a != null) for (int i = 0; i < a.length(); i++) want.add(a.getString(i));
                 String server = s.optString("dns");
+                // A network joined or left: its address comes or goes with the VPN created again.
+                String net = Mobile.network(dir);
+                java.util.List<String> have = net.isEmpty() ? addresses : addressesOf(new JSONObject(net));
+                if (s.optBoolean("running") && !have.equals(addresses)) {
+                    Logs.i("networks now " + have + ": creating the VPN again");
+                    Mobile.stop();
+                    start();
+                    continue;
+                }
                 // Only once the network map arrived (a restarted agent knows no routes before it).
                 if (!s.optBoolean("running") || !s.has("approved") || (want.equals(routes) && server.equals(dns))) continue;
                 Logs.i("routes now " + want + (server.isEmpty() ? "" : ", DNS " + server) + ": creating the VPN again");
@@ -137,6 +160,21 @@ public class EntoVpnService extends VpnService implements SocketProtector {
             }
         }
         watching = false;
+    }
+
+    /** The networks' addresses Mobile.network names, "address/bits" each, the first first. */
+    private static java.util.List<String> addressesOf(JSONObject n) throws org.json.JSONException {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        org.json.JSONArray nets = n.optJSONArray("networks");
+        if (nets == null) {
+            out.add(n.getString("address") + "/" + n.getInt("prefix_bits"));
+            return out;
+        }
+        for (int i = 0; i < nets.length(); i++) {
+            JSONObject x = nets.getJSONObject(i);
+            out.add(x.getString("address") + "/" + x.getInt("prefix_bits"));
+        }
+        return out;
     }
 
     /** Loads the routes and DNS server the VPN last had for this enrollment (its address). */

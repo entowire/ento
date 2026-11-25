@@ -114,32 +114,6 @@ func chooseExit(nm api.NetMap, choice string) (exitPick, bool) {
 // exitNetwork is what the gateway's peer carries for an exit.
 var exitNetwork = netip.MustParsePrefix("0.0.0.0/0")
 
-// InProcessExit returns the exit the agent running in this process (RunOnTUN) uses ("" when none):
-// the app routes 0.0.0.0/0 into its VPN then (InProcessRoutes lists it).
-func InProcessExit() string {
-	a := current.Load()
-	if a == nil {
-		return ""
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.exit == nil {
-		return ""
-	}
-	return a.exit.Route
-}
-
-// InProcessExits returns the exits offered to the agent running in this process (RunOnTUN).
-func InProcessExits() []RunningExit {
-	a := current.Load()
-	if a == nil {
-		return nil
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.runningExits()
-}
-
 // noteExit logs what keeps an exit unused, once while it stays the same; the caller holds a.mu.
 func (a *runner) noteExit(msg string) {
 	if msg != a.exitNoted {

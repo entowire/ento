@@ -166,23 +166,3 @@ func (a *runner) noteDNS(msg string) {
 		a.cfg.Logf("%s", msg)
 	}
 }
-
-// InProcessDNS returns the DNS server the VPN of the agent running in this process (RunOnTUN)
-// names, "" for none: the agent's resolver in the packet path (dnsAddress), once it can answer every
-// name (an exit in use, or the phone's DNS servers known: SetUpstreamDNS).
-func InProcessDNS() string {
-	a := current.Load()
-	if a == nil {
-		return ""
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.resolver == nil {
-		return ""
-	}
-	c := a.resolver.conf.Load()
-	if !c.exit.IsValid() && len(c.upstream) == 0 {
-		return ""
-	}
-	return dnsAddress(a.st.Network).String()
-}

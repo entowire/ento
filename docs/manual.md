@@ -132,11 +132,13 @@ once someone is; 0.56.1: someone is signed in while their layer is open, so Sign
 after Sign out, and Advanced shows whose phone it stays). Since 0.56 the sign-in page opens in the browser and, once the person has signed
 in, returns to the app by itself: no code to type (see Single sign-on, apps). Only the network's own range goes through
 the VPN; the phone's other traffic is untouched. Always-on VPN (Android settings) works too.
+Since 0.60 the phone can be in several networks at once: **Join another network**, then the QR
+code or the domain and words of that network (see Several networks on one device).
 
 ## Android app
 
 `android/` is a small Java app: `EntoVpnService` creates the VPN interface with the device's
-address and the network's route and hands its file descriptor to the agent; `MainActivity` enrolls
+address and the network's route (every network's, 0.60) and hands its file descriptor to the agent; `MainActivity` enrolls
 with the QR code of the domain and the words an administrator's admin page shows (`ScanActivity`),
 or with both typed (**Type the domain and the words instead**), connects, and signs in or out.
 After joining with words it connects and starts signing in by itself (0.57: for an invited
@@ -161,6 +163,19 @@ other platforms, bound with gomobile (`mobile/`, pinned in `go.mod`):
 - the running agent drives wireguard-go on the VPN's interface (`agent.RunOnTUN`); WireGuard's own
   sockets are exempted with `VpnService.protect`, so endpoints inside the network's range (carrier
   NAT uses 100.64.0.0/10) never loop into the tunnel;
+- several networks (0.60): Android gives an app one VPN interface, so every network the phone is in
+  shares it. The interface carries each network's address and range and their routes; the agent
+  runs one WireGuard per network and hands each packet the system sends to the network whose range
+  or routes hold its destination (the first network takes the rest: its exit), and writes what
+  every network sends back to the one interface (`internal/agent/muxtun.go`). Android picks one
+  source address whatever the destination, often the first network's: a packet for another
+  network leaves with that network's own address, and its answers get the address the program used
+  back (addresses and checksums rewritten; flows kept 3 minutes idle, TCP 2 hours). The VPN's one
+  DNS server is the first network's resolver, which hands the names another network holds (its
+  domain, fixed names, forwarded zones) to that network's resolver. Joining another network runs
+  its enrollment on a network stack of its own, its sockets protected, and the VPN is created
+  again with the new address; approvals come from every network, each notification naming its
+  network. `test/e2e-mobile-networks.sh` tries it on Linux, `test/mobilehost` playing the app;
 - the service starts the agent only once Android reports the VPN network: sockets opened before
   would reach the control nodes outside the tunnel;
 - while the tunnel is up, the app shows a notification for each sign-in approval waiting for the
@@ -1732,7 +1747,7 @@ nothing: it asks the agent every 15 seconds over the same channel. A device nobo
 (a shared or new one) shows a grey icon and is not nagged. `install.ps1` starts it for the person
 who ran it, through Explorer, so it does not run elevated.
 
-## Several networks on one device (0.51, Linux)
+## Several networks on one device (0.51, Linux; 0.60, Android)
 
 A device can be in more than one network at once, each joined with its own invitation, as equals:
 a laptop in its company's network and in a personal one, or in two companies'. The network it was
@@ -1787,9 +1802,19 @@ all of them.
 
 Leaving forgets the network on the device (its interface, filter table and state); the network
 keeps the device in its list until an administrator there deletes it. Each network learns what
-the device reports to it (host name, posture), as any network it is in does. macOS, Windows and
-the apps join one network for now (`ento join` says so); linked networks remain for keeping
+the device reports to it (host name, posture), as any network it is in does. macOS and Windows
+join one network for now (`ento join` says so); linked networks remain for keeping
 a network apart from the device's other programs (a namespace of its own).
+
+The Android app (0.60) joins further networks too: **Join another network** on the main screen,
+then the network's QR code, or its domain and words, as for the first (a network the phone is in,
+or whose range overlaps one of its ranges or routes, is refused before the words are checked).
+Once the phone is in more than one, a row at the top picks the network the screen is about: its
+state, **Sign in** or **Sign out**, the admin page, and **Leave DOMAIN on this phone** for a joined
+one. **Connect** is the phone's (one VPN for all), exits are the first network's, and approvals
+arrive from every network, each naming its network. Advanced lists each joined network with its
+address, whether it runs and who is signed in. The networks are kept apart as on Linux: ranges,
+routes and names (see Android app for how they share the one VPN).
 
 ## Linked networks
 

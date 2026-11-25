@@ -32,6 +32,11 @@ import org.json.JSONObject;
  * take no tokens). The technical details (address, groups, peers, routes, posture, versions) and
  * Send logs are on AdvancedActivity, behind a discreet link at the bottom. Sign-in approvals open
  * ApprovalActivity.
+ *
+ * A phone can be in several networks (0.60), all through its one VPN: once it is in more than one,
+ * a row at the top picks the network the screen is about (its sign-in, admin page and state);
+ * Connect, exits (the first network's) and approvals (every network's) are the phone's. "Join
+ * another network" joins one more with its QR code or words, as the first was.
  */
 public class MainActivity extends Activity {
     private static final int VPN_PERMISSION = 1;
@@ -48,6 +53,11 @@ public class MainActivity extends Activity {
     private String lastLogin = ""; // the sign-in outcome last shown, so it shows once
     private TextView joinInfo;
     private String joinRecord; // the network record found for joinDomain, for the words
+    private String joinFor = ""; // the domain joinRecord was found for
+    private String network = ""; // the network the screen is about: "" the first, else a joined one's domain
+    private boolean joiningAnother; // the join controls are shown for another network
+    private LinearLayout networks; // the row that picks the network, when the phone is in several
+    private TextView joinAnother, leave;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -65,6 +75,15 @@ public class MainActivity extends Activity {
         word.setPadding(dp(10), 0, 0, 0);
         header.addView(word);
         root.addView(header);
+
+        networks = new LinearLayout(this);
+        networks.setOrientation(LinearLayout.HORIZONTAL);
+        networks.setPadding(0, dp(20), 0, 0);
+        networks.setVisibility(View.GONE);
+        android.widget.HorizontalScrollView scroll = new android.widget.HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(networks);
+        root.addView(scroll);
 
         state = Ui.text(this, "", 26, R.color.fg);
         state.setTypeface(Typeface.DEFAULT_BOLD);
@@ -125,6 +144,17 @@ public class MainActivity extends Activity {
         adminApprove = Ui.button(this, "Approve", v -> approveAdminPage(adminCode.getText().toString()));
         adminApprove.setVisibility(View.GONE);
         root.addView(adminApprove);
+        joinAnother = Ui.link(this, "Join another network", v -> {
+            joiningAnother = !joiningAnother;
+            joinRecord = null;
+            joinInfo.setVisibility(View.GONE);
+            show();
+        });
+        joinAnother.setVisibility(View.GONE);
+        root.addView(joinAnother);
+        leave = Ui.link(this, "", v -> leaveNetwork());
+        leave.setVisibility(View.GONE);
+        root.addView(leave);
         message = Ui.text(this, "", 15, R.color.muted);
         message.setTextIsSelectable(true);
         message.setPadding(0, dp(16), 0, 0);
@@ -162,7 +192,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             String result = "";
             try {
-                Mobile.loginFinish(Agent.stateDir(this), address);
+                Mobile.loginFinish(Agent.stateDir(this), signingIn(), address);
             } catch (Exception e) {
                 result = "Sign-in failed: " + e.getMessage();
             }
@@ -211,19 +241,31 @@ public class MainActivity extends Activity {
 
     private void show() {
         try {
-            JSONObject s = new JSONObject(Mobile.status(Agent.stateDir(this)));
+            String dir = Agent.stateDir(this);
+            JSONArray nets = new JSONArray(Mobile.networks(dir));
+            showNetworks(nets);
+            JSONObject s = new JSONObject(Mobile.status(dir, network));
             boolean enrolled = s.getBoolean("enrolled"), running = s.getBoolean("running");
-            scan.setVisibility(shown(!enrolled));
-            if (enrolled) {
+            // Joining: the phone's first network, or another one when asked for.
+            boolean joining = !enrolled || joiningAnother;
+            scan.setVisibility(shown(joining));
+            if (!joining) {
                 typeInstead.setVisibility(View.GONE);
                 joinDomain.setVisibility(View.GONE);
                 lookUp.setVisibility(View.GONE);
+            } else if (joinDomain.getVisibility() == View.GONE && lookUp.getVisibility() == View.GONE) {
+                typeInstead.setVisibility(View.VISIBLE);
             }
-            if (enrolled || joinRecord == null) {
-                if (enrolled) joinInfo.setVisibility(View.GONE);
+            if (!joining || joinRecord == null) {
+                if (!joining) joinInfo.setVisibility(View.GONE);
                 joinWords.setVisibility(View.GONE);
                 join.setVisibility(View.GONE);
             }
+            joinAnother.setVisibility(shown(enrolled));
+            joinAnother.setText(joiningAnother ? "Cancel joining" : "Join another network");
+            boolean joined = enrolled && !network.isEmpty();
+            leave.setVisibility(shown(joined && !joiningAnother));
+            if (joined) leave.setText("Leave " + network + " on this phone");
             connect.setVisibility(shown(enrolled));
             String login = Mobile.loginState();
             // A sign-in's outcome, once, as it happens: who is signed in shows above, so a plain
@@ -280,13 +322,17 @@ public class MainActivity extends Activity {
             account.setVisibility(shown(running));
             account.setText(signedIn ? "Sign out" : "Sign in");
             Ui.setPrimary(account, !signedIn && (loginRequired || waiting));
+            if (joiningAnother) {
+                state.setText("Join another network");
+                detail.setText("Scan the QR code its administrator shows you, or type its domain and the five words they give you.");
+            }
             boolean administers = running && s.optBoolean("administers", false);
             adminPage.setVisibility(shown(administers));
             if (!administers) {
                 adminCode.setVisibility(View.GONE);
                 adminApprove.setVisibility(View.GONE);
             }
-            showExit(s, running);
+            showExit(s, running && network.isEmpty()); // exits are the first network's
         } catch (Exception e) {
             state.setText("Error");
             detail.setText(String.valueOf(e.getMessage()));
@@ -296,6 +342,67 @@ public class MainActivity extends Activity {
     private static void line(StringBuilder d, String s) {
         if (d.length() > 0) d.append('\n');
         d.append(s);
+    }
+
+    /** The row of networks, shown once the phone is in more than one: tapping one shows it. */
+    private void showNetworks(JSONArray nets) throws org.json.JSONException {
+        boolean known = network.isEmpty();
+        for (int i = 0; i < nets.length(); i++) {
+            if (!nets.getJSONObject(i).optBoolean("first") && nets.getJSONObject(i).getString("domain").equals(network)) known = true;
+        }
+        if (!known) network = ""; // left meanwhile
+        networks.setVisibility(shown(nets.length() > 1));
+        if (nets.length() <= 1) {
+            networks.removeAllViews();
+            return;
+        }
+        StringBuilder key = new StringBuilder(network).append('|');
+        for (int i = 0; i < nets.length(); i++) key.append(nets.getJSONObject(i).getString("domain")).append(',');
+        if (key.toString().equals(networks.getTag())) return;
+        networks.setTag(key.toString());
+        networks.removeAllViews();
+        for (int i = 0; i < nets.length(); i++) {
+            JSONObject n = nets.getJSONObject(i);
+            boolean first = n.optBoolean("first");
+            String domain = n.getString("domain");
+            String id = first ? "" : domain;
+            Button b = Ui.button(this, domain.isEmpty() ? "First network" : domain, v -> {
+                network = id;
+                joiningAnother = false;
+                message.setText("");
+                show();
+            });
+            Ui.setPrimary(b, id.equals(network));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = dp(8);
+            networks.addView(b, lp);
+        }
+    }
+
+    /** Leaves the joined network shown (the network keeps the phone until an administrator deletes it). */
+    private void leaveNetwork() {
+        String domain = network;
+        if (domain.isEmpty()) return;
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Leave " + domain + "?")
+                .setMessage("This phone stops reaching " + domain + ". Joining again needs new words from its administrator.")
+                .setPositiveButton("Leave", (d, w) -> new Thread(() -> {
+                    String result;
+                    try {
+                        Mobile.leave(Agent.stateDir(this), domain);
+                        result = "Left " + domain + ".";
+                    } catch (Exception e) {
+                        result = "Could not leave: " + e.getMessage();
+                    }
+                    String r = result;
+                    runOnUiThread(() -> {
+                        message.setText(r);
+                        network = "";
+                        show();
+                    });
+                }).start())
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /**
@@ -368,6 +475,7 @@ public class MainActivity extends Activity {
             String i = info, rec = record;
             runOnUiThread(() -> {
                 joinRecord = rec;
+                joinFor = d.toLowerCase(java.util.Locale.ROOT);
                 joinInfo.setText(i);
                 int shown = rec == null ? View.GONE : View.VISIBLE;
                 joinWords.setVisibility(shown);
@@ -406,13 +514,15 @@ public class MainActivity extends Activity {
 
     private void joinWithWords(String words) {
         if (joinRecord == null || words.trim().isEmpty()) return;
-        String record = joinRecord;
+        String record = joinRecord, domain = joinFor;
+        boolean another = joiningAnother;
         message.setText("Joining (deriving the key from the words takes a few seconds)...");
         join.setEnabled(false);
         new Thread(() -> {
             String result;
             try {
-                Mobile.enrollWords(Agent.stateDir(this), record, words, Agent.hostname(this));
+                if (another) Mobile.joinWords(Agent.stateDir(this), domain, record, words, Agent.hostname(this));
+                else Mobile.enrollWords(Agent.stateDir(this), record, words, Agent.hostname(this));
                 result = "Enrolled. Connecting...";
             } catch (Exception e) {
                 result = "Joining failed: " + e.getMessage();
@@ -428,16 +538,33 @@ public class MainActivity extends Activity {
                     // Joined with words: connect and sign in, in one go (0.57). For a network's first
                     // administrator the sign-in is their account's setup, which ends signed in.
                     signInOnceConnected = true;
-                    toggle();
+                    if (another) {
+                        // Another network: the VPN is created again with its address (the service
+                        // sees it), then the sign-in is that network's.
+                        joiningAnother = false;
+                        network = domain;
+                        if (running()) signInWhenReady();
+                        else toggle();
+                    } else {
+                        toggle();
+                    }
                 }
                 show();
             });
         }).start();
     }
 
+    private boolean running() {
+        try {
+            return new JSONObject(Mobile.status(Agent.stateDir(this), "")).getBoolean("running");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void toggle() {
         try {
-            if (new JSONObject(Mobile.status(Agent.stateDir(this))).getBoolean("running")) {
+            if (new JSONObject(Mobile.status(Agent.stateDir(this), "")).getBoolean("running")) {
                 Logs.i("Disconnect tapped");
                 startService(new Intent(this, EntoVpnService.class).setAction(EntoVpnService.STOP));
                 return;
@@ -470,11 +597,13 @@ public class MainActivity extends Activity {
 
     /** Waits (at most a minute) until the agent runs and has its network map, then signs in. */
     private void signInWhenReady() {
+        signInOnceConnected = false;
         message.setText("Connecting, then signing in...");
+        String net = network;
         new Thread(() -> {
             for (int i = 0; i < 120; i++) {
                 try {
-                    JSONObject st = new JSONObject(Mobile.status(Agent.stateDir(this)));
+                    JSONObject st = new JSONObject(Mobile.status(Agent.stateDir(this), net));
                     if (st.optBoolean("running") && st.has("approved")) {
                         if (st.optString("user").isEmpty()) runOnUiThread(this::signIn);
                         return;
@@ -489,11 +618,18 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /** The network a sign-in started for, which its return to the app finishes (kept: the app may be closed meanwhile). */
+    private String signingIn() {
+        return getSharedPreferences("signin", MODE_PRIVATE).getString("network", "");
+    }
+
     private void signIn() {
         message.setText("Starting sign-in...");
+        String net = network;
         new Thread(() -> {
             try {
-                JSONObject l = new JSONObject(Mobile.loginStart(Agent.stateDir(this), SIGNED_IN));
+                getSharedPreferences("signin", MODE_PRIVATE).edit().putString("network", net).apply();
+                JSONObject l = new JSONObject(Mobile.loginStart(Agent.stateDir(this), net, SIGNED_IN));
                 String url = l.optString("url"), code = l.optString("code");
                 runOnUiThread(() -> {
                     // No code: the sign-in returns to the app by itself. A code: an older control
@@ -519,7 +655,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             String result;
             try {
-                result = Mobile.logout(Agent.stateDir(this))
+                result = Mobile.logout(Agent.stateDir(this), network)
                         ? "Signed out."
                         : "Signed out on this phone; the network hears of it once it can be reached.";
             } catch (Exception e) {
@@ -539,7 +675,7 @@ public class MainActivity extends Activity {
         message.setText("Opening the admin page...");
         new Thread(() -> {
             try {
-                String url = Mobile.adminPage(Agent.stateDir(this));
+                String url = Mobile.adminPage(Agent.stateDir(this), network);
                 runOnUiThread(() -> {
                     message.setText("Type the code the page shows below, then Approve.");
                     adminCode.setText("");
@@ -563,7 +699,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             String result;
             try {
-                Mobile.adminApprove(Agent.stateDir(this), code.trim());
+                Mobile.adminApprove(Agent.stateDir(this), network, code.trim());
                 result = "Approved: the page opens in a moment, for this phone only.";
             } catch (Exception e) {
                 result = "Not approved: " + e.getMessage();

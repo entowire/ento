@@ -255,24 +255,42 @@ func (r *resolver) route(q []byte, src netip.Addr) (answer []byte, servers []str
 		return nil, nil
 	}
 	name := strings.ToLower(qs.Name.String())
-	if addrs, ok := c.fixed[name]; ok {
-		if qs.Type != dnsmessage.TypeA && qs.Type != dnsmessage.TypeALL {
-			return reply(h, qs, dnsmessage.RCodeSuccess), nil // no AAAA: the control nodes are IPv4 inside the tunnel
-		}
-		return reply(h, qs, dnsmessage.RCodeSuccess, addrs...), nil
+	if answer, servers, ok := c.own(h, qs, name); ok {
+		return answer, servers
 	}
-	zone := slices.IndexFunc(c.zones, func(z resolverZone) bool { return within(name, z.zone) })
+	// A phone in several networks (0.60): its VPN names this resolver, the first network's; the
+	// names another network holds are that network's resolver's to answer.
+	for _, o := range otherResolvers(r) {
+		if answer, servers, ok := o.conf.Load().own(h, qs, name); ok {
+			return answer, servers
+		}
+	}
 	switch {
-	case zone >= 0 && (c.domain == "" || !within(name, c.domain) || len(c.zones[zone].zone) > len(c.domain)):
-		return nil, c.zones[zone].servers
-	case c.domain != "" && within(name, c.domain):
-		return c.answer(h, qs, name), nil
 	case c.exit.IsValid():
 		return nil, []string{netip.AddrPortFrom(c.exit, 53).String()}
 	case len(c.upstream) > 0:
 		return nil, c.upstream
 	}
 	return reply(h, qs, dnsmessage.RCodeRefused), nil
+}
+
+// own answers a name the network holds (fixed names, forwarded zones, its domain): an answer or
+// the servers to ask; ok false for a name it does not hold.
+func (c *resolverConf) own(h dnsmessage.Header, qs dnsmessage.Question, name string) (answer []byte, servers []string, ok bool) {
+	if addrs, ok := c.fixed[name]; ok {
+		if qs.Type != dnsmessage.TypeA && qs.Type != dnsmessage.TypeALL {
+			return reply(h, qs, dnsmessage.RCodeSuccess), nil, true // no AAAA: the control nodes are IPv4 inside the tunnel
+		}
+		return reply(h, qs, dnsmessage.RCodeSuccess, addrs...), nil, true
+	}
+	zone := slices.IndexFunc(c.zones, func(z resolverZone) bool { return within(name, z.zone) })
+	switch {
+	case zone >= 0 && (c.domain == "" || !within(name, c.domain) || len(c.zones[zone].zone) > len(c.domain)):
+		return nil, c.zones[zone].servers, true
+	case c.domain != "" && within(name, c.domain):
+		return c.answer(h, qs, name), nil, true
+	}
+	return nil, nil, false
 }
 
 // notSelf drops this resolver's own address from a list of servers (never ask itself).
