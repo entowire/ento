@@ -86,9 +86,12 @@ type totpOffer struct {
 
 func (p *Provider) offerTOTP(x store.IDPerson, secret []byte) totpOffer {
 	b32 := strings.TrimRight(base32.StdEncoding.EncodeToString(secret), "=")
-	label := url.PathEscape(p.cfg.Title + ":" + x.Email)
+	// The app shows the network and the person: the network's domain (the provider's name without
+	// "id.") as issuer, unique where a title may not be, then the address.
+	net := strings.TrimPrefix(p.cfg.Name, "id.")
+	label := url.PathEscape(net + ":" + x.Email)
 	uri := fmt.Sprintf("otpauth://totp/%s?secret=%s&issuer=%s&algorithm=SHA1&digits=%d&period=%d",
-		label, b32, url.QueryEscape(p.cfg.Title), totpDigits, totpPeriod)
+		label, b32, url.QueryEscape(net), totpDigits, totpPeriod)
 	o := totpOffer{URI: uri, Secret: b32}
 	if c, err := qr.Encode(uri, qr.M); err == nil {
 		o.QR = "data:image/png;base64," + base64.StdEncoding.EncodeToString(c.PNG())

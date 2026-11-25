@@ -1209,7 +1209,9 @@ them (`internal/id`):
   tunnel.
 - **Ways of signing in** (Sign-in policies, above): `passkey` (a passkey with user verification),
   `password+passkey` (the password, then a passkey), `password+totp` (the password, then a code
-  from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once), `provider`
+  from an authenticator app: RFC 6238, SHA-1, 6 digits, 30 seconds, each code once; the app names
+  it by the network's domain and the person's address, `md.example.com` and `ann@example.com` (the
+  title before 0.60.2)), `provider`
   (an outside provider, below). Every
   sign-in asks again: the provider keeps no session. A new passkey must verify the person (a PIN,
 fingerprint or the device's own lock): a security key with no PIN set answers with a touch only and

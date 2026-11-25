@@ -301,3 +301,14 @@ func toStrings(v any) []string {
 	}
 	return out
 }
+
+// The authenticator app names the entry by the network's domain and the person's address, not the
+// network's title, which another network may share.
+func TestTOTPOfferNamesNetwork(t *testing.T) {
+	p := &Provider{cfg: Config{Name: "id.md.example.com", Title: "Marius David"}}
+	o := p.offerTOTP(store.IDPerson{Email: "ann@example.com"}, []byte("0123456789abcdefghij"))
+	want := "otpauth://totp/md.example.com:ann@example.com?secret="
+	if !strings.HasPrefix(o.URI, want) || !strings.Contains(o.URI, "&issuer=md.example.com&") {
+		t.Fatalf("uri %q", o.URI)
+	}
+}
