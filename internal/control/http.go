@@ -525,6 +525,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request, self 
 		writeErr(w, http.StatusForbidden, "only admins create tokens that give a role (admin, operator or their groups) or replace a device")
 		return
 	}
+	if req.Person != "" && !self.Admin {
+		s.audit(r, &self, "token_created", "person "+req.Person, "denied")
+		writeErr(w, http.StatusForbidden, "only admins invite a person with a device's words")
+		return
+	}
 	if req.Words && time.Duration(req.TTLSeconds)*time.Second > maxWordsTTL {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("words are good for at most %s", maxWordsTTL))
 		return
@@ -552,6 +557,13 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request, self 
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if req.Person != "" {
+		if err := InviteWithToken(r.Context(), s.cfg.Store, t, req.Person); err != nil {
+			_ = s.cfg.Store.DeleteToken(r.Context(), t.ID)
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	s.checkVersion(r.Context()) // register the temporary peer right away
 	action := "token_created"
 	switch {
@@ -566,6 +578,9 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request, self 
 	}
 	if req.Words {
 		target += " words=true"
+	}
+	if req.Person != "" {
+		target += " person=" + req.Person
 	}
 	s.audit(r, &self, action, target, "ok")
 	res := api.CreateTokenResponse{Token: tok, ExpiresAt: t.ExpiresAt.UTC().Format(time.RFC3339)}

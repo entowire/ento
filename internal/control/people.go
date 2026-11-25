@@ -261,13 +261,17 @@ func (s *Server) handleAddPerson(w http.ResponseWriter, r *http.Request, self st
 		respondPeopleErr(w, err)
 		return
 	}
-	link, err := s.people.setupLink(r.Context(), p.ID)
-	if err != nil {
-		respondPeopleErr(w, err)
-		return
+	res := api.NewPersonResult{Person: p}
+	if !req.NoLink {
+		link, err := s.people.setupLink(r.Context(), p.ID)
+		if err != nil {
+			respondPeopleErr(w, err)
+			return
+		}
+		res.Setup = &link
 	}
 	s.audit(r, &self, "person_added", fmt.Sprintf("person %s groups %s", p.Email, strings.Join(req.Groups, ",")), "ok")
-	writeJSON(w, http.StatusOK, api.NewPersonResult{Person: p, Setup: link})
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleUpdatePerson(w http.ResponseWriter, r *http.Request, self store.Peer) {

@@ -358,3 +358,43 @@ func TestInvitation(t *testing.T) {
 		t.Fatalf("tablet bound to %q", p.User)
 	}
 }
+
+// The dashboard's Invite a person with words (0.59.5): the person without a setup link, then words
+// that invite their device for the account, as ento control token --person; admins only, and an
+// address with no account refused with nothing left behind.
+func TestInviteWithWordsAPI(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv, st, _ := idNode(t, ctx)
+	admin := adminOf(t, ctx, srv, st, "admin", "admins")
+
+	var added api.NewPersonResult
+	if code := admin.do(t, "POST", api.PathPeople, api.NewPersonRequest{Email: "dan@example.com", Groups: []string{"admins"}, NoLink: true}, &added); code != 200 || added.Setup != nil {
+		t.Fatalf("person without a link: %d %+v", code, added)
+	}
+	var res api.CreateTokenResponse
+	if code := admin.do(t, "POST", api.PathTokens, api.CreateTokenRequest{Approve: true, TTLSeconds: 3600, Person: "dan@example.com"}, &res); code != http.StatusCreated {
+		t.Fatalf("token for a person: %d", code)
+	}
+	srv.checkVersion(ctx)
+	_, red := enroll(t, res.Token, "dans-laptop")
+	p := peerAt(t, st, red.Address)
+	if got := srv.invitedPerson(ctx, p.ID); got != added.Person.ID {
+		t.Fatalf("device invited for %q, want %q", got, added.Person.ID)
+	}
+
+	before, _ := st.ActiveTokens(ctx, time.Now())
+	if code := admin.do(t, "POST", api.PathTokens, api.CreateTokenRequest{Approve: true, TTLSeconds: 3600, Person: "nobody@example.com"}, nil); code != http.StatusBadRequest {
+		t.Fatalf("no such account: %d", code)
+	}
+	if after, _ := st.ActiveTokens(ctx, time.Now()); len(after) != len(before) {
+		t.Fatalf("a refused invitation left a token: %d -> %d", len(before), len(after))
+	}
+
+	tok2, _, _ := IssueToken(ctx, st, TokenOptions{Approve: true})
+	srv.checkVersion(ctx)
+	plain, _ := enroll(t, tok2, "plain")
+	if code := plain.do(t, "POST", api.PathTokens, api.CreateTokenRequest{Approve: true, TTLSeconds: 3600, Person: "dan@example.com"}, nil); code != http.StatusForbidden {
+		t.Fatalf("a non-admin invited a person: %d", code)
+	}
+}

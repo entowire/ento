@@ -1308,6 +1308,11 @@ seemed to do nothing (found with nJoy, 2026-11-25). The passkeys' relying party 
   device code approved). Only that account's sign-in binds the device; anyone else's is refused
   (`login ... denied`). The Android app connects and starts signing in by itself after joining
   with words.
+  The dashboard does the same since 0.59.5: **People → Invite a person**, with "Five words for
+  their device instead of a link", makes the person without a setup link (`no_link` on `POST
+  /v1/admin/people`) and words valid for a day that invite them (`person` on `POST
+  /v1/admin/tokens`, admins only; an address with no account is refused and leaves no token),
+  shown with the steps: join with them, then `sudo ento login` sets the account up.
 - **The first administrator** (Enroll the first administrator):
   `ENTO_ID_KEY=... ento control person --id id.example.com --groups admins admin@example.com` on a
   control node (with `ENTO_DATABASE_URL`) prints their setup link.

@@ -353,6 +353,10 @@ type CreateTokenRequest struct {
 	// domain whose network record names this network (empty: the control nodes' --record-domain,
 	// if they have one).
 	QRDomain string `json:"qr_domain,omitempty"`
+	// Person (0.59.5, admins only) makes the invitation one of that account too, by its address in
+	// the control nodes' own sign-in, not set up yet: the device that redeems it is invited for the
+	// account, and its first sign-in sets the account up (ento control token --person).
+	Person string `json:"person,omitempty"`
 }
 
 // CreateTokenResponse carries the token, or its words. It is shown once and never stored.
@@ -1065,6 +1069,9 @@ type NewPersonRequest struct {
 	GivenName  string   `json:"given_name,omitempty"`
 	FamilyName string   `json:"family_name,omitempty"`
 	Groups     []string `json:"groups"`
+	// NoLink (0.59.5): no setup link; the person is invited with a device's words instead
+	// (CreateTokenRequest.Person).
+	NoLink bool `json:"no_link,omitempty"`
 }
 
 // UpdatePersonRequest changes what is set: Enabled false cuts the person off (their devices lose
@@ -1082,8 +1089,8 @@ type SetupLink struct {
 }
 
 type NewPersonResult struct {
-	Person Person    `json:"person"`
-	Setup  SetupLink `json:"setup"`
+	Person Person     `json:"person"`
+	Setup  *SetupLink `json:"setup,omitempty"` // none with NoLink
 }
 
 // AuditEntry is one entry of the network's audit (0.53): what was done or refused (Action, Target,

@@ -761,19 +761,40 @@ $("person-new").addEventListener("click", async () => {
   const given = el("input", { class: "input", autocomplete: "off", placeholder: "Given name", "aria-label": "Given name" });
   const family = el("input", { class: "input", autocomplete: "off", placeholder: "Family name", "aria-label": "Family name" });
   const pick = picker(idp && idp.groups.includes("users") ? ["users"] : [], peopleGroupList);
+  // Words (0.59.5): one invitation of the person and their device, as `ento control token --person`.
+  const withWords = el("input", { type: "checkbox" });
   const body = el("div", { class: "stack" },
     el("label", { class: "field" }, el("span", {}, "E-mail address"), email),
     el("div", { class: "fields" }, el("label", { class: "field" }, el("span", {}, "Given name"), given), el("label", { class: "field" }, el("span", {}, "Family name"), family)),
-    el("div", { class: "field" }, el("span", {}, "Groups"), pick.el));
-  if (!await ask("Invite a person", "They get a setup link to register a passkey; you hand it over.", { body, ok: "Invite" })) return;
+    el("div", { class: "field" }, el("span", {}, "Groups"), pick.el),
+    el("label", { class: "check" }, withWords, el("span", {}, "Five words for their device instead of a link: it joins with them, and its first sign-in sets up the account")));
+  if (!await ask("Invite a person", "They get a setup link to register a passkey, or five words for their device; you hand it over.", { body, ok: "Invite" })) return;
   try {
+    const words = withWords.checked;
     const r = await call("POST", "/v1/admin/people", { email: email.value.trim(), given_name: given.value.trim() || undefined,
-      family_name: family.value.trim() || undefined, groups: pick.values() });
+      family_name: family.value.trim() || undefined, groups: pick.values(), no_link: words || undefined });
     ui.person = r.person.id;
     load();
-    showSetupLink(displayName(r.person), r.setup);
+    if (!words) { showSetupLink(displayName(r.person), r.setup); return; }
+    const t = await call("POST", "/v1/admin/tokens", { groups: [], approve: true, ttl_seconds: 86400, words: true,
+      qr_domain: pageDomain() || undefined, person: r.person.email });
+    showPersonWords(displayName(r.person), t);
   } catch (e) { notice("Invite: " + e.message); }
 });
+
+// showPersonWords: the words of a person's invitation, with what the device does with them.
+function showPersonWords(name, r) {
+  const box = el("div", { class: "stack" },
+    el("p", { class: "hint" }, "Shown only now. One device can use them until " + when(r.expires_at) + "."),
+    ...wordsSteps(r),
+    el("div", { class: "step" }, el("p", {}, el("b", {}, "4."), " Then ", el("code", {}, "sudo ento login"),
+      ` (Windows: the ento icon's Sign in; a phone signs in by itself): the page it opens sets up ${name}'s account, and the device is signed in as them.`)),
+    el("div", { class: "row-actions" }, button("Copy words", async () => {
+      try { await navigator.clipboard.writeText(r.words || ""); notice("Words copied.", true); }
+      catch { notice("Copy them by hand: the browser did not allow copying."); }
+    }, "btn sm")));
+  ask(`Words for ${name}`, "", { body: box, ok: "Done" });
+}
 
 $("people-search").addEventListener("input", renderPeople);
 
@@ -1139,7 +1160,6 @@ $("token-form").addEventListener("submit", async (ev) => {
 });
 
 function showTokenResult(r, words) {
-  const domain = pageDomain() || "DOMAIN";
   const done = button("Done", () => $("add-dialog").close(), "btn sm primary");
   const copy = (text, what) => button("Copy " + what, async () => {
     try { await navigator.clipboard.writeText(text); notice(`${what[0].toUpperCase() + what.slice(1)} copied.`, true); }
@@ -1149,17 +1169,7 @@ function showTokenResult(r, words) {
     el("small", {}, "Shown only now. One device can use it until " + when(r.expires_at) + ".")));
   let body;
   if (words) {
-    body = [
-      el("div", { class: "step" }, el("p", {}, el("b", {}, "1."), " On the device, run"),
-        command(`curl -fsSL https://entowire.com/install.sh | sudo ENTO_JOIN=${domain} sh`),
-        el("p", { class: "hint" }, "Or, with ento already there: ", el("code", {}, `sudo ento agent install --join ${domain}`), ". Windows: the same in a PowerShell run as administrator, without sudo.")),
-      el("div", { class: "step" }, el("p", {}, el("b", {}, "2."), " It shows the network's fingerprint first: it must be ", el("span", { class: "fingerprint" }, r.fingerprint || "?"), ". If not, stop."),
-        el("p", {}, el("b", {}, "3."), " When it asks, type these five words"),
-        el("div", { class: "words" }, (r.words || "").split(/\s+/).filter(Boolean).map((w) => el("span", {}, w)))),
-      r.qr_svg ? el("div", { class: "step" }, el("p", {}, "A phone in front of you scans this instead (Scan the QR code in the app). It holds the words: never send a picture of it."),
-        el("img", { class: "qr", src: "data:image/svg+xml;base64," + btoa(r.qr_svg), alt: "The domain, the network's fingerprint and the words as a QR code", width: "200", height: "200" })) : null,
-      el("div", { class: "row-actions" }, copy(r.words || "", "words"), done),
-    ];
+    body = [...wordsSteps(r), el("div", { class: "row-actions" }, copy(r.words || "", "words"), done)];
   } else {
     body = [
       el("div", { class: "step" }, el("p", {}, "Save it as a file on the device, then run"),
@@ -1171,6 +1181,21 @@ function showTokenResult(r, words) {
   put($("token-result"), head, ...body);
   $("token-form").hidden = true;
   $("token-result").hidden = false;
+}
+
+// wordsSteps: how a device joins with words r (a words token's answer), step by step.
+function wordsSteps(r) {
+  const domain = pageDomain() || "DOMAIN";
+  return [
+      el("div", { class: "step" }, el("p", {}, el("b", {}, "1."), " On the device, run"),
+        command(`curl -fsSL https://entowire.com/install.sh | sudo ENTO_JOIN=${domain} sh`),
+        el("p", { class: "hint" }, "Or, with ento already there: ", el("code", {}, `sudo ento agent install --join ${domain}`), ". Windows: the same in a PowerShell run as administrator, without sudo.")),
+      el("div", { class: "step" }, el("p", {}, el("b", {}, "2."), " It shows the network's fingerprint first: it must be ", el("span", { class: "fingerprint" }, r.fingerprint || "?"), ". If not, stop."),
+        el("p", {}, el("b", {}, "3."), " When it asks, type these five words"),
+        el("div", { class: "words" }, (r.words || "").split(/\s+/).filter(Boolean).map((w) => el("span", {}, w)))),
+      r.qr_svg ? el("div", { class: "step" }, el("p", {}, "A phone in front of you scans this instead (Scan the QR code in the app). It holds the words: never send a picture of it."),
+        el("img", { class: "qr", src: "data:image/svg+xml;base64," + btoa(r.qr_svg), alt: "The domain, the network's fingerprint and the words as a QR code", width: "200", height: "200" })) : null,
+  ];
 }
 
 // --- groups ---------------------------------------------------------------------------------------
