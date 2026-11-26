@@ -103,7 +103,8 @@ with the device's key; ENTO_STATE_DIR selects the agent state, --link NAME first
 network NAME as this device's membership there, --network DOMAIN first a network joined with ento
 agent join; operators: ordinary devices, tokens and policies only):
   ento admin ui [CODE]  open the admin interface in a browser of this device: the page shows a code,
-                         which this approves (typed in, or given as CODE); --no-browser
+                         which this approves (typed in, or given as CODE) in whichever of the
+                         device's networks shows it (--network: that one only); --no-browser
   ento admin token      create an enrollment token; --name NAME names the device it enrolls (else
                          z-<its host name>), --replace lets it take over from a device with the name;
                          --words: as words to read out (the device runs ento agent install --join DOMAIN);

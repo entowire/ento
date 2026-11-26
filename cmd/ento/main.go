@@ -1597,6 +1597,7 @@ func adminCmd(ctx context.Context, args []string) error {
 	if link != "" && network != "" {
 		return errors.New("--link or --network, not both")
 	}
+	base, explicit := stateDir, link != "" || network != ""
 	if link == "" {
 		network = chosenNetwork(stateDir, network)
 	}
@@ -1657,8 +1658,12 @@ func adminCmd(ctx context.Context, args []string) error {
 			}
 		}
 		var ok api.ApprovedAdminUI
-		if err := c.Do(ctx, "POST", api.PathAdminUI, api.ApproveAdminUIRequest{Code: code}, &ok); err != nil {
+		where, err := approveAdminUI(ctx, c, base, network, explicit, code, &ok)
+		if err != nil {
 			return err
+		}
+		if where != "" {
+			fmt.Fprintf(os.Stderr, "The page is %s's.\n", where)
 		}
 		opened := ok.OpenedAt
 		if t, err := time.Parse(time.RFC3339, ok.OpenedAt); err == nil {

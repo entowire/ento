@@ -5,12 +5,17 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
 	"entowire.com/ento/internal/agent"
+	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/token"
 )
 
@@ -277,4 +282,49 @@ func networkCmd(args []string) error {
 		fmt.Println("sudo ento network DOMAIN makes another the default")
 	}
 	return nil
+}
+
+// approveAdminUI approves the admin page that shows code. With --network or --link it asks that
+// network only; otherwise the network commands act for first, then every other network the device
+// joined, since the code says nothing of whose page it is: found on arrakis (md, mm, njoy, ...),
+// where the code of njoy's page went to md, the default, which refused it. Codes are random and
+// last 5 minutes, so one network's page is never mistaken for another's. It returns the network
+// that approved it when that was not the one asked first ("" otherwise).
+func approveAdminUI(ctx context.Context, c *agent.AdminClient, base, chosen string, explicit bool, code string, ok *api.ApprovedAdminUI) (string, error) {
+	req := api.ApproveAdminUIRequest{Code: code}
+	err := c.Do(ctx, "POST", api.PathAdminUI, req, ok)
+	if err == nil || explicit || agent.HTTPStatus(err) != http.StatusNotFound || len(agent.Networks(base)) == 0 {
+		return "", err
+	}
+	asked := []string{networkName(&agent.Config{StateDir: base}, chosen)}
+	var other []string // why networks that could not look failed, by name
+	for _, d := range append([]string{""}, agent.Networks(base)...) {
+		name := networkName(&agent.Config{StateDir: base}, d)
+		if d == chosen || slices.Contains(asked, name) {
+			continue
+		}
+		asked = append(asked, name)
+		dir, derr := agent.NetworkStateDir(base, d)
+		if derr != nil {
+			continue
+		}
+		st, serr := agent.LoadState(dir)
+		if serr != nil {
+			continue
+		}
+		oc := &agent.AdminClient{Controls: st.Controls, Key: wgtypes.Key(st.PrivateKey)}
+		e := oc.Do(ctx, "POST", api.PathAdminUI, req, ok)
+		if e == nil {
+			return name, nil
+		}
+		if agent.HTTPStatus(e) != http.StatusNotFound {
+			other = append(other, fmt.Sprintf("%s: %v", name, e))
+		}
+	}
+	msg := fmt.Sprintf("no admin page on this device shows %s in any of its networks (%s); each code is valid for 5 minutes",
+		code, strings.Join(asked, ", "))
+	if len(other) > 0 {
+		msg += "; could not ask " + strings.Join(other, "; ")
+	}
+	return "", errors.New(msg)
 }

@@ -11,7 +11,7 @@ Linux and macOS:
 
     curl -fsSL https://entowire.com/install.sh | sudo sh
 
-Windows (PowerShell as Administrator; needs the OpenSSH client 8.1+, which Windows 11 has):
+Windows (PowerShell as Administrator; nothing to install first):
 
     [Net.ServicePointManager]::SecurityProtocol = 'Tls12'; irm https://entowire.com/install.ps1 | iex
 
@@ -69,7 +69,10 @@ The installers verify each release's SSH signature (`ssh-keygen -Y verify`, name
 SHA-256, before installing. Where OpenSSH is older than 8.1 and cannot verify signatures (Debian 10,
 for example), `install.sh` checks a second signature with OpenSSL instead (`<file>.p256.sig`,
 ECDSA P-256 over SHA-256, key `release-signing-p256.pem`, also pinned in the script); with neither
-tool it stops without downloading. Both keys sign every release file. Each release also has a
+tool it stops without downloading. `install.ps1` (Windows) checks the P-256 signature with Windows'
+own .NET (since 0.60.3; before, `ssh-keygen -Y verify`, which needed the OpenSSH client and the file
+on its input, which PowerShell passed as text: every check of a zip failed, or without a console
+never returned). Both keys sign every release file. Each release also has a
 manifest (`releases/manifest.json`, the current one's): its version, release time and every file's
 SHA-256 and size, signed with both keys (namespace `ento-manifest`). `ento update check` (from 0.36)
 checks it with the keys built into the installed binary, never with keys fetched beside it, and
@@ -365,7 +368,9 @@ the last attempt's error (the file `enroll.error` beside `enroll.token`), and wi
 the state is root's. A join that fails still leaves ento installed: on Windows `install.ps1` adds it
 to PATH and starts the tray program before it reports the failure (0.56.3; in 0.56.2 it stopped
 first, so `ento` was not found), and the hints name `ento status` in an administrator's
-PowerShell there, not `sudo`.
+PowerShell there, not `sudo`. Every failure of `install.ps1` ends the script with an error and
+leaves the window open with its message (0.60.3; before, it called `exit`, which, run through
+`irm | iex` closed the Administrator window as soon as anything failed, message and all).
 
 The domain publishes the network's record, the TXT record `_ento.<domain>`, as `ento admin
 record` prints it (on a control node: `ento control record`):
@@ -924,6 +929,13 @@ the session opens when the device approves it with a call signed with its key:
 
     sudo ento admin ui        # opens the page in your browser, then asks for the code it shows
     sudo ento admin ui CODE   # approves a page you opened yourself
+
+On a device in several networks the code is looked for in each (0.60.3): without `--network`,
+first in the network commands act for, then in every other one the device joined, and the page is
+approved in the network that shows it, the command saying which. A code says nothing of whose page
+it is, and before, the code of another network's page went to the default one only, which refused
+it (`no admin page on this device shows this code`). With `--network` or `--link`, only that
+network is asked.
 
 Where the network has an identity provider (`--oidc-issuer`), the page can also be opened by signing
 in (0.49): **Sign in as NAME** on the page goes to the provider's sign-in (authorization code with
