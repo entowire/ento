@@ -162,6 +162,28 @@ func TestPlainPeers(t *testing.T) {
 		t.Errorf("a plain peer added by a non-admin: HTTP %d, want 403", code)
 	}
 
+	// Its last seen comes from its gateway (it has no tunnel with the control nodes): another
+	// device's report is ignored, a time ahead is taken as now.
+	seenAt := time.Now().Add(-10 * time.Second).Truncate(time.Second)
+	report := api.PlainSeen{Handshakes: map[string]int64{printer.PublicKey.String(): seenAt.Unix()}}
+	if code := cl.do(t, "POST", api.PathPlainSeen, report, nil); code != 200 {
+		t.Fatalf("a report from another device: HTTP %d", code)
+	}
+	if p, _ := st.PeerByAddress(ctx, printer.Address); !p.LastSeen.IsZero() {
+		t.Fatalf("another device's report set its last seen: %v", p.LastSeen)
+	}
+	if code := cg.do(t, "POST", api.PathPlainSeen, report, nil); code != 200 {
+		t.Fatalf("the gateway's report: HTTP %d", code)
+	}
+	if p, _ := st.PeerByAddress(ctx, printer.Address); !p.LastSeen.Equal(seenAt) {
+		t.Fatalf("last seen %v, want %v", p.LastSeen, seenAt)
+	}
+	report.Handshakes[printer.PublicKey.String()] = time.Now().Add(time.Hour).Unix()
+	cg.do(t, "POST", api.PathPlainSeen, report, nil)
+	if p, _ := st.PeerByAddress(ctx, printer.Address); p.LastSeen.After(time.Now().Add(time.Second)) {
+		t.Fatalf("a time ahead was taken: %v", p.LastSeen)
+	}
+
 	// The printer deleted: gone from the gateway's map, its address from the gateway's tunnel.
 	if err := st.DeletePeer(ctx, printer.ID); err != nil {
 		t.Fatal(err)

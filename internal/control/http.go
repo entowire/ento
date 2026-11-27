@@ -86,6 +86,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST "+api.PathCredential, s.peerOnly(s.handleRenewCredential))
 	mux.HandleFunc("POST "+api.PathAdminLinks, s.adminOnly(s.handleCreateLink))
 	mux.HandleFunc("POST "+api.PathPlain, s.adminOnly(s.handleAddPlain))
+	mux.HandleFunc("POST "+api.PathPlainSeen, s.keyHolder(false, s.handlePlainSeen))
 	mux.HandleFunc("GET "+api.PathAdminLinks, s.operatorOnly(s.handleListLinks))
 	mux.HandleFunc("PUT "+api.PathAdminLinks+"/{name}/token", s.adminOnly(s.handleSetLinkToken))
 	mux.HandleFunc("DELETE "+api.PathAdminLinks+"/{name}", s.adminOnly(s.handleDeleteLink))

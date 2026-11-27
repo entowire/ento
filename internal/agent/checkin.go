@@ -98,6 +98,7 @@ func checkInInterval() time.Duration {
 // checkIns runs the check-ins of the home network, one at a time (two at once could present the
 // same token), until ctx ends.
 func (a *runner) checkIns(ctx context.Context) {
+	go a.reportPlainSeen(ctx) // a gateway's plain peers (plain.go), with the same lifetime
 	wait, quiet, refused := 3*time.Second, false, false
 	for {
 		select {

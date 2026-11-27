@@ -72,7 +72,11 @@ const (
 	// PathPlain adds a plain WireGuard peer (PlainRequest → PlainResponse; full administration,
 	// Constitution 6).
 	PathPlain = "/v1/admin/plain"
-	PathLinks = "/v1/links"
+	// PathPlainSeen: a gateway says when it last had a handshake with each plain WireGuard peer it
+	// carries (PlainSeen, signed with its key; 0.62.1): their last seen, which the control nodes
+	// cannot see themselves.
+	PathPlainSeen = "/v1/plain/seen"
+	PathLinks     = "/v1/links"
 
 	// PathAdminUI: GET describes the admin interface; POST approves a session of it that a
 	// browser on the calling device shows the code of (signed calls of admin or operator devices).
@@ -184,6 +188,11 @@ type PlainResponse struct {
 	ID      int64  `json:"id"`
 	Address string `json:"address"`
 	Config  string `json:"config"`
+}
+
+// PlainSeen is a gateway's report of its plain peers' latest handshakes (Unix seconds, by public key).
+type PlainSeen struct {
+	Handshakes map[string]int64 `json:"handshakes"`
 }
 
 // PSKRequest starts an exchange of a new preshared key (package psk): an ML-KEM-768 encapsulation

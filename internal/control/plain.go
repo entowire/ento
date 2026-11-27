@@ -158,3 +158,41 @@ func (s *Server) carriesPlain(ctx context.Context, id int64) bool {
 	}
 	return false
 }
+
+// handlePlainSeen records when the plain peers a gateway carries last had a handshake with it: the
+// control nodes have no tunnel of their own with them, so their last seen comes from their gateway.
+// Only its own plain peers, and no time ahead of now.
+func (s *Server) handlePlainSeen(w http.ResponseWriter, r *http.Request, self store.Peer) {
+	var req api.PlainSeen
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	plain, err := s.cfg.Store.PlainPeers(r.Context())
+	if err != nil {
+		s.respondStoreErr(w, err)
+		return
+	}
+	now := time.Now()
+	for key, at := range req.Handshakes {
+		k, err := wgtypes.ParseKey(key)
+		if err != nil || at <= 0 {
+			continue
+		}
+		p, err := s.cfg.Store.PeerByPublicKey(r.Context(), k)
+		if err != nil || plain[p.ID].Gateway != self.ID {
+			continue
+		}
+		seen := time.Unix(at, 0)
+		if seen.After(now) {
+			seen = now
+		}
+		if !seen.After(p.LastSeen) {
+			continue
+		}
+		if _, _, err := s.cfg.Store.ObservePeer(r.Context(), k, "", seen); err != nil {
+			s.cfg.Logf("plain peer %d seen: %v", p.ID, err)
+		}
+	}
+	writeJSON(w, http.StatusOK, struct{}{})
+}

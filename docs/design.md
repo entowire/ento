@@ -541,14 +541,19 @@ not suspended, not in a `--no-gateways` group, no plain peer itself).
   the plain peers' addresses among its allowed IPs (`wgPeer.Carried`), so its calls and forwarded
   services come from its own address, judged as any device's. The relay carries what passes between a
   device and the gateway for it (`plainLinked`), as for routes.
+- **When it was last seen.** The control nodes have no handshake of their own with it: its gateway
+  reports each minute when it last had one with each plain peer it carries (`/v1/plain/seen`,
+  signed; 0.62.1), and the control nodes take it as its last seen (only for the gateway's own plain
+  peers, never ahead of now). With its keepalive every 25 s it is "online" (a handshake within 3
+  minutes) while it is up.
 - **Its keys.** Made on the device (the administrator gives the public key) or by the control node,
   which shows the private half once in the configuration and keeps only the public one (6.3). The
   gateway's key is in the configuration, so a gateway that carries plain peers refuses its daily
   change (`/v1/rotate`: 409).
 
 Not yet: a person signing in on it through the browser (6.1); names (its configuration has no DNS
-server); networks behind other gateways, and plain peers of one gateway reaching another's; when it
-was last seen (the gateway's handshakes); new configurations; the admin page.
+server); networks behind other gateways, and plain peers of one gateway reaching another's; new
+configurations; the admin page.
 
 ## Internal DNS
 

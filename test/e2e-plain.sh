@@ -8,7 +8,8 @@
 #   dev    (ns pl-dev)  printers: no agent, plain WireGuard
 #   control node: host namespace, 10.202.0.1:51951
 #
-# Checks: the configuration (one peer, the gateway, with a preshared key) brings up a tunnel; the
+# Checks: the configuration (one peer, the gateway, with a preshared key) brings up a tunnel, and
+# the gateway's reports make it online in peers; the
 # laptop reaches the plain peer by a rule, the plain peer reaches the laptop and the gateway only by
 # rules of its own (the receiving side filters what it opens, the gateway what others open on it);
 # it reaches its control nodes; deleted, it reaches nothing.
@@ -91,7 +92,7 @@ control_addr="$(ENTO_DATABASE_URL="$dburl" "$bin" control record --network "$net
 step "the gateway and the laptop join"
 for n in gw:pl-gw lap:pl-lap; do
   name="${n%%:*}" ns="${n#*:}"
-  sudo nsenter --net="/run/netns/$ns" "$bin" agent run --state-dir "$work/state-$name" --token-file "$work/$name.token" \
+  sudo ENTO_PLAIN_SEEN_EVERY=5s nsenter --net="/run/netns/$ns" "$bin" agent run --state-dir "$work/state-$name" --token-file "$work/$name.token" \
     > "$work/agent-$name.log" 2>&1 &
   pids+=($!)
   wait_for 30 sudo test -f "$work/state-$name/state.json" || fail "$name did not join"
@@ -118,6 +119,16 @@ inns pl-dev ip addr add "$dev_addr/32" dev wg0
 inns pl-dev ip link set wg0 up
 inns pl-dev ip route add "$net" dev wg0
 wait_for 30 sh -c "sudo nsenter --net=/run/netns/pl-dev wg show wg0 latest-handshakes | awk '{exit !(\$2 > 0)}'" || fail "no handshake with the gateway"
+
+step "its gateway reports it seen: online in peers (it has no tunnel with the control nodes)"
+seen_recently() {
+  admin peers --json | python3 -c '
+import json, sys, datetime
+p = [p for p in json.load(sys.stdin) if p["hostname"] == "printer"][0]
+at = datetime.datetime.fromisoformat(p.get("last_seen", "1970-01-01T00:00:00+00:00").replace("Z", "+00:00"))
+sys.exit(0 if (datetime.datetime.now(datetime.timezone.utc) - at).total_seconds() < 180 else 1)'
+}
+wait_for 60 seen_recently || fail "the plain peer is not seen: $(admin peers | grep printer)"
 
 step "the laptop reaches it by its rule; it reaches nothing of its own yet"
 wait_for 60 reaches pl-lap "$dev_addr" || fail "the laptop does not reach the plain peer"

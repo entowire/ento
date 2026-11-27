@@ -662,7 +662,9 @@ own filter, the control nodes' calls); what others open on it, and what the gate
 it, the gateway judges by its rules, since it cannot. Devices a rule lets reach it have the gateway as
 their peer for it, the relay included, even with no rule between them and the gateway. It reaches its
 control nodes and forwarded services by the same rules, through the gateway. Deleting it (`ento admin
-delete ID`) cuts it off at once.
+delete ID`) cuts it off at once. It is online (a green dot on the admin page) while it has handshakes
+with its gateway, which reports them every minute (0.62.1; with a gateway or control nodes on 0.62.0
+it shows as never seen).
 
 A gateway of plain peers keeps its WireGuard key (their configurations name it): with a hardware key
 bound, its daily change is refused while it carries any. Not yet: a person signing in on a plain peer
