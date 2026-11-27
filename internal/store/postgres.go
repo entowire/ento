@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS ento_posture (
 	results     jsonb
 );
 ALTER TABLE ento_posture ADD COLUMN IF NOT EXISTS results_at timestamptz;
+-- antimalware (0.17 to 0.62): no longer read or written (0.63); dropped once no control node reads it.
 ALTER TABLE ento_posture_checks ADD COLUMN IF NOT EXISTS antimalware boolean NOT NULL DEFAULT false;
 ALTER TABLE ento_posture_checks ADD COLUMN IF NOT EXISTS max_patch_age jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE ento_links ADD COLUMN IF NOT EXISTS posture text[] NOT NULL DEFAULT '{}';
@@ -1105,7 +1106,7 @@ func (p *Postgres) SetPolicyPosture(ctx context.Context, id int64, posture []str
 // through their evaluation: only SetPostureResults goes through write().
 
 func (p *Postgres) PostureChecks(ctx context.Context) ([]PostureCheck, error) {
-	rows, err := p.pool.Query(ctx, `SELECT name, disk_encryption, firewall, secure_boot, antimalware, min_os, max_patch_age, max_age_seconds, created_at
+	rows, err := p.pool.Query(ctx, `SELECT name, disk_encryption, firewall, secure_boot, min_os, max_patch_age, max_age_seconds, created_at
 		FROM ento_posture_checks ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -1117,7 +1118,7 @@ func (p *Postgres) PostureChecks(ctx context.Context) ([]PostureCheck, error) {
 		var minOS map[string]string
 		var patch map[string]int
 		var maxAge int64
-		if err := rows.Scan(&c.Name, &c.DiskEncryption, &c.Firewall, &c.SecureBoot, &c.Antimalware, &minOS, &patch, &maxAge, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.Name, &c.DiskEncryption, &c.Firewall, &c.SecureBoot, &minOS, &patch, &maxAge, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		if len(minOS) > 0 {
@@ -1142,9 +1143,9 @@ func (p *Postgres) AddPostureCheck(ctx context.Context, c PostureCheck) (Posture
 		patch = map[string]int{}
 	}
 	_, err := p.pool.Exec(ctx, `INSERT INTO ento_posture_checks
-		(name, disk_encryption, firewall, secure_boot, antimalware, min_os, max_patch_age, max_age_seconds, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		c.Name, c.DiskEncryption, c.Firewall, c.SecureBoot, c.Antimalware, minOS, patch, int64(c.MaxAge/time.Second), c.CreatedAt)
+		(name, disk_encryption, firewall, secure_boot, min_os, max_patch_age, max_age_seconds, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		c.Name, c.DiskEncryption, c.Firewall, c.SecureBoot, minOS, patch, int64(c.MaxAge/time.Second), c.CreatedAt)
 	if isUniqueViolation(err) {
 		return PostureCheck{}, ErrExists
 	}

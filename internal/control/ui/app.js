@@ -452,7 +452,7 @@ function postureOf(p) {
   const boot = f.os === "android" ? verifiedBoot(f.attested) : fact(f.secure_boot, "Secure Boot", "No Secure Boot", "Secure Boot");
   return [
     el("div", { class: "tags" }, fact(f.disk_encryption, "Encrypted", "Not encrypted", "Encryption"),
-      fact(f.firewall, "Firewall", "No firewall", "Firewall"), boot, fact(f.antimalware, "Anti-malware", "No anti-malware", "Anti-malware")),
+      fact(f.firewall, "Firewall", "No firewall", "Firewall"), boot),
     el("p", { class: "hint" }, systemOf(p) + (f.patch_level ? `, patch ${f.patch_level}` : ""), el("br"), "reported " + ago(p.posture_reported_at) + (f.agent ? " by ento " + f.agent : "")),
     results,
   ];
@@ -603,12 +603,11 @@ function renderPeople() {
   put(body, ...(shown.length ? shown.map((x) => el("tr", { class: "pick" + (ui.person === x.key ? " sel" : ""), tabindex: "0",
     onclick: () => pick(x), onkeydown: (e) => { if (e.key === "Enter") pick(x); } },
     el("td", {}, el("div", { class: "cell" }, el("span", { class: "avatar" + (ui.person === x.key ? " lite" : "") }, initials(x.name)),
-      el("div", {}, el("b", {}, x.name), x.email && x.email !== x.name ? el("small", {}, x.email) : null))),
-    el("td", {}, el("div", { class: "tags" }, x.groups.length ? x.groups.map((g) => groupTag(g)) : el("span", { class: "dim" }, "–"))),
-    el("td", {}, String(x.devices.length)),
-    el("td", { class: "dim nowrap", title: when(x.last) }, x.last ? ago(x.last) : "never"),
+      el("div", {}, el("b", {}, x.name), x.email && x.email !== x.name ? el("small", {}, x.email) : null,
+        el("small", { class: "dim", title: when(x.last) }, (x.devices.length === 1 ? "1 device" : x.devices.length + " devices") + " · " + (x.last ? "active " + ago(x.last) : "never active"))))),
+    el("td", {}, el("div", { class: "tags" }, x.groups.length ? rowTags(x.groups) : el("span", { class: "dim" }, "–"))),
     el("td", {}, el("div", { class: "tags nowrap" }, statusOf(x), x.role ? personRoleBadge(x.role) : null))))
-    : [el("tr", {}, el("td", { colspan: 5 }, empty(people.length ? "Nobody matches." : "Nobody yet.")))]));
+    : [el("tr", {}, el("td", { colspan: 3 }, empty(people.length ? "Nobody matches." : "Nobody yet.")))]));
   renderPerson(people.find((x) => x.key === ui.person));
 }
 
@@ -1093,7 +1092,7 @@ function renderTokens() {
     el("td", { class: "mono" }, "#" + t.id),
     el("td", {}, t.name ? el("b", {}, t.name) : el("span", { class: "dim" }, t.authority ? `${t.authority}-<its name at home>` : "from its host name"),
       t.replace ? el("div", { class: "dim small" }, "replaces the device with this name") : null),
-    el("td", {}, el("div", { class: "tags" }, (t.groups || []).map((g) => groupTag(g)))),
+    el("td", {}, el("div", { class: "tags" }, rowTags(t.groups || []))),
     el("td", {}, el("div", { class: "tags" }, t.approve ? badge("approved", "ok") : badge("waits for approval", "mute"), t.admin ? badge("admin", "warn") : null)),
     el("td", {}, t.authority ? "authority " + t.authority : madeBy(t.created_by)),
     el("td", { title: when(t.expires_at) }, until(t.expires_at)),
@@ -1234,7 +1233,11 @@ const gname = (g) => g.startsWith(DEV) ? g.slice(DEV.length) : g;
 const deviceGroupList = () => knownGroups().filter(isDev);
 const peopleGroupList = () => knownGroups().filter((g) => !isDev(g));
 // groupTag shows a group with the mark of its kind.
-const groupTag = (g, cls = "tag", attrs = {}) => el("span", { class: cls, ...attrs }, isDev(g) ? icon("laptop", 12) : icon("people", 12), gname(g));
+const groupTag = (g, cls = "tag", attrs = {}) => el("span", { class: cls, title: gname(g), ...attrs }, isDev(g) ? icon("laptop", 12) : icon("people", 12), el("span", { class: "tag-name" }, gname(g)));
+// In a table row a long list of groups stays short: the first few, then how many more (the
+// person's or the invitation's panel lists them all).
+const rowTags = (gs, n = 3) => gs.length <= n + 1 ? gs.map((g) => groupTag(g))
+  : [...gs.slice(0, n).map((g) => groupTag(g)), el("span", { class: "tag more", title: gs.slice(n).map(gname).join(", ") }, "+" + (gs.length - n))];
 
 // A rule is who on which devices reaching devices, a route or a forwarded service (ento 0.53). Who
 // is a people group or one of these; devices a device group or any device ("" in on).
@@ -1725,7 +1728,6 @@ function checkRequires(c) {
   if (c.disk_encryption) r.push("disk encrypted");
   if (c.firewall) r.push("firewall on");
   if (c.secure_boot) r.push("Secure Boot on");
-  if (c.antimalware) r.push("anti-malware on");
   return r;
 }
 
@@ -1775,7 +1777,7 @@ $("check-new").addEventListener("click", async () => {
     const max_patch_age_days = f("patch_android").value ? { android: Number(f("patch_android").value) } : undefined;
     const name = f("name").value.trim();
     const added = await call("POST", "/v1/admin/posture", { name, disk_encryption: f("disk_encryption").checked,
-      firewall: f("firewall").checked, secure_boot: f("secure_boot").checked, antimalware: f("antimalware").checked, min_os, max_patch_age_days,
+      firewall: f("firewall").checked, secure_boot: f("secure_boot").checked, min_os, max_patch_age_days,
       max_age_seconds: Number(f("max_age").value) });
     if (max_patch_age_days && !added.max_patch_age_days) {
       notice(`Device check ${added.name} was added WITHOUT its security patch age: a control node is older than ento 0.30. Delete it, upgrade every control node and add it again.`);

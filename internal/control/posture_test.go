@@ -79,16 +79,6 @@ func TestEvaluateCheck(t *testing.T) {
 	if got := evaluateCheck(sb, &api.Posture{OS: "linux", SecureBoot: yes}, now.Add(-31*time.Minute), now); got != "no report in 30m" {
 		t.Errorf("default age: %q", got)
 	}
-	// Anti-malware: off and unknown both fail.
-	av := store.PostureCheck{Name: "av", Antimalware: true}
-	for facts, want := range map[*api.Posture]string{
-		{OS: "windows", Antimalware: yes}: "", {OS: "windows", Antimalware: no}: "anti-malware off",
-		{OS: "linux"}: "anti-malware unknown",
-	} {
-		if got := evaluateCheck(av, facts, now, now); got != want {
-			t.Errorf("anti-malware %v: %q, want %q", facts.Antimalware, got, want)
-		}
-	}
 }
 
 // TestPostureAllowed checks how a policy's checks filter its source devices, both ways.

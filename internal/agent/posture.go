@@ -136,7 +136,7 @@ func withExternal(p api.Posture) api.Posture {
 		p.PatchLevel = e.PatchLevel
 	}
 	for _, f := range []struct{ dst, src **bool }{{&p.DiskEncryption, &e.DiskEncryption}, {&p.Firewall, &e.Firewall},
-		{&p.SecureBoot, &e.SecureBoot}, {&p.ScreenLock, &e.ScreenLock}, {&p.Antimalware, &e.Antimalware}} {
+		{&p.SecureBoot, &e.SecureBoot}, {&p.ScreenLock, &e.ScreenLock}} {
 		if *f.src != nil {
 			*f.dst = *f.src
 		}
@@ -148,7 +148,7 @@ func samePosture(a, b api.Posture) bool {
 	eq := func(x, y *bool) bool { return (x == nil) == (y == nil) && (x == nil || *x == *y) }
 	return a.Format == b.Format && a.OS == b.OS && a.OSVersion == b.OSVersion && a.Distribution == b.Distribution &&
 		a.Agent == b.Agent && a.PatchLevel == b.PatchLevel && eq(a.DiskEncryption, b.DiskEncryption) && eq(a.Firewall, b.Firewall) &&
-		eq(a.SecureBoot, b.SecureBoot) && eq(a.ScreenLock, b.ScreenLock) && eq(a.Antimalware, b.Antimalware)
+		eq(a.SecureBoot, b.SecureBoot) && eq(a.ScreenLock, b.ScreenLock)
 }
 
 // runFixed runs one of the system's tools, by its full path and with fixed arguments (nothing from
@@ -165,7 +165,7 @@ func runFixed(ctx context.Context, path string, args ...string) (string, error) 
 }
 
 // PostureSummary describes facts for people: "disk encrypted, firewall on, secure boot unknown,
-// screen lock unknown, anti-malware unknown; linux 6.8.0 (debian 12)". On Android, secure boot is
+// screen lock unknown; linux 6.8.0 (debian 12)". On Android, secure boot is
 // what the control plane found in the attestation: "verified boot attested (tee)", "verified boot
 // not attested: <why>", ...; and the system's patch level follows its version.
 func PostureSummary(p api.Posture) string {
@@ -187,7 +187,6 @@ func PostureSummary(p api.Posture) string {
 		fact(p.Firewall, "firewall on", "firewall OFF", "firewall"),
 		boot,
 		fact(p.ScreenLock, "screen lock on", "screen lock OFF", "screen lock"),
-		fact(p.Antimalware, "anti-malware on", "anti-malware OFF", "anti-malware"),
 	}, ", ")
 	sys := strings.TrimSpace(p.OS + " " + p.OSVersion)
 	if p.OSVersion == "" {

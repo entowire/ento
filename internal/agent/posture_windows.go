@@ -36,20 +36,7 @@ func collectPlatform(ctx context.Context) api.Posture {
 	p.DiskEncryption = bitLocker(ctx)
 	p.Firewall = windowsFirewall()
 	p.SecureBoot = windowsSecureBoot()
-	p.Antimalware = windowsAntimalware(ctx)
 	return p
-}
-
-func windowsAntimalware(ctx context.Context) *bool {
-	sys, err := windows.GetSystemDirectory()
-	if err != nil {
-		return nil
-	}
-	out, err := runFixed(ctx, filepath.Join(sys, `WindowsPowerShell\v1.0\powershell.exe`), "-NoProfile", "-NonInteractive", "-Command", antimalwareScript)
-	if err != nil {
-		return nil
-	}
-	return parseAntimalware(out)
 }
 
 // regDWORD reads a DWORD under HKLM; nil when it is not set (or not readable).

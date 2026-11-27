@@ -167,7 +167,7 @@ agent join; operators: ordinary devices, tokens and policies only):
 
 Device posture (checks: admins add and delete them, operators list them):
   ento admin posture    list posture checks
-  ento admin posture add NAME [--disk-encryption] [--firewall] [--secure-boot] [--antimalware]
+  ento admin posture add NAME [--disk-encryption] [--firewall] [--secure-boot]
                          [--min-os linux=6.1,windows=10.0.22631,darwin=14.0,android=13] [--max-age 30m]
                          [--max-patch-age android=90d]
                          --secure-boot on Android: verified boot with the bootloader locked, as the

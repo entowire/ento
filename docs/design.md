@@ -555,8 +555,8 @@ not suspended, not in a `--no-gateways` group, no plain peer itself).
   gateway's key is in the configuration, so a gateway that carries plain peers refuses its daily
   change (`/v1/rotate`: 409).
 
-Not yet: a person signing in on it through the browser (6.1); names (its configuration has no DNS
-server); networks behind other gateways, and plain peers of one gateway reaching another's; new
+A plain peer is a device without people (6.1, the user, 2026-11-27): no sign-in is ever made on it,
+so its rights are its device groups' alone. Not yet: names (its configuration has no DNS server); networks behind other gateways, and plain peers of one gateway reaching another's; new
 configurations; the admin page.
 
 ## Internal DNS

@@ -233,20 +233,6 @@ func TestLinuxSecureBoot(t *testing.T) {
 	}
 }
 
-// A known real-time scanner among the running processes means anti-malware on; none, unknown.
-func TestLinuxAntimalwareProcesses(t *testing.T) {
-	f := fakeRoot{t: t, root: t.TempDir()}
-	f.file("proc/1/comm", "systemd\n")
-	f.file("proc/self/comm", "ento\n")
-	if got := tri(linuxFacts(f.root).Antimalware); got != "unknown" {
-		t.Errorf("without a scanner: %s", got)
-	}
-	f.file("proc/4242/comm", "wdavdaemon\n")
-	if got := tri(linuxFacts(f.root).Antimalware); got != "on" {
-		t.Errorf("with Defender for Endpoint: %s", got)
-	}
-}
-
 func TestNftDropsAll(t *testing.T) {
 	drop := &expr.Verdict{Kind: expr.VerdictDrop}
 	cases := []struct {

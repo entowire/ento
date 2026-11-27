@@ -661,15 +661,18 @@ its tunnel with the gateway (Constitution 9.3): it changes only with a new confi
 The gateway forwards its traffic: what it opens is judged where it arrives, as anyone's (a device's
 own filter, the control nodes' calls); what others open on it, and what the gateway itself opens on
 it, the gateway judges by its rules, since it cannot. Devices a rule lets reach it have the gateway as
-their peer for it, the relay included, even with no rule between them and the gateway. It reaches its
+their peer for it, the relay included, even with no rule between them and the gateway. Only agents
+from 0.62 on reach it: an older one (an Android app or a Windows agent not updated yet) takes its
+entry for a peer of its own, which it cannot reach. It reaches its
 control nodes and forwarded services by the same rules, through the gateway. Deleting it (`ento admin
 delete ID`) cuts it off at once. It is online (a green dot on the admin page) while it has handshakes
 with its gateway, which reports them every minute (0.62.1; with a gateway or control nodes on 0.62.0
 it shows as never seen).
 
 A gateway of plain peers keeps its WireGuard key (their configurations name it): with a hardware key
-bound, its daily change is refused while it carries any. Not yet: a person signing in on a plain peer
-through the browser (6.1), names (it has no DNS server in its configuration: devices by address),
+bound, its daily change is refused while it carries any. A plain peer is a device without people
+(6.1): nobody signs in on it, it has only what its device groups give it, and a forwarded service
+that needs a person refuses it. Not yet: names (it has no DNS server in its configuration: devices by address),
 networks behind other gateways, plain peers of one gateway reaching those of another, adding one from
 the admin page, and new configurations for one that exists (delete it and add it again).
 
@@ -720,7 +723,7 @@ lists every name devices resolve (devices' names, read-only, then the added ones
 ### Device posture
 
 A policy can require checks of the devices it comes from: disk encryption, a firewall, Secure Boot
-(on phones: an attested verified boot, 0.30), real-time anti-malware (0.17, `--antimalware`), a
+(on phones: an attested verified boot, 0.30), a
 minimum system version, a recent security patch (phones, 0.30, `--max-patch-age`), and a recent report. A source device that fails one of them is left out
 of that policy until it passes again (fail closed: no report, a report older than the check
 allows, or a fact the device could not find out all count as failing). Devices that no such policy
@@ -746,14 +749,16 @@ with a timeout:
 | secure boot | the `SecureBoot` EFI variable; no EFI: off | unknown | registry `UEFISecureBootEnabled` | Android Verified Boot as the phone's secure hardware attests it (0.30, below): on for a verified boot (the system its maker signed) with the bootloader locked; never what the app says |
 | security patch (0.30, `--max-patch-age`) | not reported | not reported | not reported | the oldest of the system's, vendor image's and boot image's patch levels the hardware attests; without an attestation that counts, the app's `SECURITY_PATCH` |
 | screen lock | unknown | unknown | unknown | a screen lock is set (reported, not checked yet) |
-| anti-malware (0.17) | on when a known real-time scanner runs (process names: ClamAV's on-access `clamonacc`, Microsoft Defender for Endpoint, CrowdStrike Falcon, SentinelOne, Sophos, Trend Micro Deep Security, Bitdefender GravityZone); else unknown (another product may run) | XProtect present (it cannot be turned off without disabling System Integrity Protection) | an antivirus registered with Windows Security has real-time protection on (`root/SecurityCenter2`, client editions); server editions: Microsoft Defender's `AntivirusEnabled` and `RealTimeProtectionEnabled` | unknown |
+
+Anti-malware is neither reported nor checked (0.17 to 0.62 had it; removed 2026-11-27): a device
+check made with it by an older control node no longer requires it.
 
 Versions compare numerically, part by part (`6.10` is newer than `6.9`; `6.8.0-142-generic` is
 6.8.0); systems a check does not name are not limited by its `--min-os`. `--max-age` is 15 minutes
 to 30 days (default 30 minutes). `ento agent posture` prints what this device reports, collected
 now (`--json` as sent); `ento status` shows the last report the network took and the checks
 the device fails; `ento admin peers` has a posture column (`enc+ fw+ sb? linux 6.8.0-142-generic (2m ago)`)
-and one for the checks a device fails (`av` is anti-malware); for a linked network, `ento status` lists the checks
+and one for the checks a device fails; for a linked network, `ento status` lists the checks
 the device fails there under the linked networks. The Android app shows the failing checks ("This device needs
 attention: disk not encrypted"). In the admin interface, devices show their report and each check
 (solid where a policy requires it), the **Access** page's **Device checks** add and delete checks (and shows which
@@ -1970,11 +1975,17 @@ See [docs/linked-networks.md](linked-networks.md).
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-psk.sh dist/ento-linux-amd64        # preshared keys: changes, pairs, a reset, a device without one
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-plain.sh dist/ento-linux-amd64      # a plain WireGuard peer (wg setconf), its rules both ways
     ENTO_TEST_BROWSER=/path/to/chrome-headless-shell go test ./internal/id/ -run TestBrowser  # the sign-in pages in a browser
+    ENTO_TEST_BROWSER=/path/to/chrome-headless-shell ENTO_TEST_SHOTS=dir go test ./internal/control/ -run TestUIAtScale  # the admin page at scale
 
 The first two end-to-end tests accept `E2E_BLOCK_DIRECT=1` to force traffic through the relay. The
 browser test drives the identity provider's pages (setup, an application's sign-in, the account
 page, a device code from a link, a password and an app) in headless Chromium with a virtual passkey
-authenticator, over the DevTools protocol.
+authenticator, over the DevTools protocol. The admin page's test at scale fills a network with 100+
+of everything (people, devices, people and device groups, invitations, rules, device checks, routes,
+names, links, 300 entries of activity) and opens every page, and a person's, a device's and a
+group's panel, at a desktop and a phone width, light and dark, through the admin device's tunnel: a
+page must load within 3 seconds and nothing may stick out sideways; it leaves a screenshot of each
+(whole, and its first screen) and a report with the load times in `ENTO_TEST_SHOTS`.
 
 ## Independence
 

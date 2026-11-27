@@ -2341,7 +2341,7 @@ func postureCell(p api.PeerInfo) string {
 		return what + "-"
 	}
 	s := strings.Join([]string{mark(p.Posture.DiskEncryption, "enc"), mark(p.Posture.Firewall, "fw"),
-		mark(p.Posture.SecureBoot, "sb"), mark(p.Posture.Antimalware, "av"), p.Posture.OS + " " + p.Posture.OSVersion}, " ")
+		mark(p.Posture.SecureBoot, "sb"), p.Posture.OS + " " + p.Posture.OSVersion}, " ")
 	if t, err := time.Parse(time.RFC3339, p.PostureReportedAt); err == nil {
 		s += fmt.Sprintf(" (%s ago)", api.HumanDuration(time.Since(t)))
 	}
@@ -2368,7 +2368,7 @@ func adminPostureCmd(ctx context.Context, c *agent.AdminClient, args []string) e
 			return err
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tDISK ENCRYPTION\tFIREWALL\tSECURE BOOT\tANTI-MALWARE\tMINIMUM SYSTEM\tPATCH AGE\tMAX AGE")
+		fmt.Fprintln(w, "NAME\tDISK ENCRYPTION\tFIREWALL\tSECURE BOOT\tMINIMUM SYSTEM\tPATCH AGE\tMAX AGE")
 		for _, ch := range checks {
 			var minOS, patch []string
 			for _, k := range slices.Sorted(maps.Keys(ch.MinOS)) {
@@ -2377,7 +2377,7 @@ func adminPostureCmd(ctx context.Context, c *agent.AdminClient, args []string) e
 			for _, k := range slices.Sorted(maps.Keys(ch.MaxPatchAgeDays)) {
 				patch = append(patch, fmt.Sprintf("%s=%dd", k, ch.MaxPatchAgeDays[k]))
 			}
-			fmt.Fprintf(w, "%s\t%v\t%v\t%v\t%v\t%s\t%s\t%s\n", cell(ch.Name), ch.DiskEncryption, ch.Firewall, ch.SecureBoot, ch.Antimalware,
+			fmt.Fprintf(w, "%s\t%v\t%v\t%v\t%s\t%s\t%s\n", cell(ch.Name), ch.DiskEncryption, ch.Firewall, ch.SecureBoot,
 				cell(strings.Join(minOS, ",")), cell(strings.Join(patch, ",")), api.HumanDuration(time.Duration(ch.MaxAgeSeconds)*time.Second))
 		}
 		return w.Flush()
@@ -2386,7 +2386,6 @@ func adminPostureCmd(ctx context.Context, c *agent.AdminClient, args []string) e
 		disk := fs.Bool("disk-encryption", false, "the system disk must be encrypted (LUKS, FileVault, BitLocker, Android)")
 		firewall := fs.Bool("firewall", false, "the firewall must filter incoming connections")
 		secureBoot := fs.Bool("secure-boot", false, "the device must boot with UEFI Secure Boot (Android: verified boot with the bootloader locked, as the phone's secure hardware attests it)")
-		antimalware := fs.Bool("antimalware", false, "real-time anti-malware must be on (Windows Security or Defender, macOS XProtect, a known Linux scanner)")
 		minOS := fs.String("min-os", "", "oldest system versions accepted, e.g. linux=6.1,windows=10.0.22631,darwin=14.0,android=13 (Linux: the kernel release; Windows: 10.0.BUILD, also for Windows 11, which is 10.0.22000 and later; systems not named are not limited)")
 		maxAge := fs.Duration("max-age", 30*time.Minute, "how old the device's latest report may be (agents report every 10 minutes)")
 		maxPatch := fs.String("max-patch-age", "", "how old the security patch may be, per system: android=90d (at least 45 days; the oldest of the system's, vendor's and boot image's patch levels the phone attests)")
@@ -2396,7 +2395,7 @@ func adminPostureCmd(ctx context.Context, c *agent.AdminClient, args []string) e
 			return errors.New("usage: ento admin posture add NAME [flags]")
 		}
 		req := api.PostureCheck{Name: name, DiskEncryption: *disk, Firewall: *firewall, SecureBoot: *secureBoot,
-			Antimalware: *antimalware, MaxAgeSeconds: int(maxAge.Seconds())}
+			MaxAgeSeconds: int(maxAge.Seconds())}
 		for _, item := range splitList(*maxPatch) {
 			k, v, ok := strings.Cut(item, "=")
 			days, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(v), "d"))

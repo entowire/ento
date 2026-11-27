@@ -154,7 +154,6 @@ func evaluateCheck(c store.PostureCheck, facts *api.Posture, reportedAt, now tim
 	} else {
 		need(c.SecureBoot, facts.SecureBoot, "secure boot unknown", "secure boot off")
 	}
-	need(c.Antimalware, facts.Antimalware, "anti-malware unknown", "anti-malware off")
 	if len(c.MinOS) > 0 {
 		name, known := postureSystems[facts.OS]
 		if minimum, limited := c.MinOS[facts.OS]; limited {
@@ -446,7 +445,7 @@ func printable(s string, n int) string {
 // itself reaches audit lines, terminals and the admin interface.
 func cleanPosture(in api.Posture, self store.Peer) api.Posture {
 	out := api.Posture{Format: api.PostureFormat, OS: cleanOS(in.OS), DiskEncryption: in.DiskEncryption,
-		Firewall: in.Firewall, SecureBoot: in.SecureBoot, ScreenLock: in.ScreenLock, Antimalware: in.Antimalware}
+		Firewall: in.Firewall, SecureBoot: in.SecureBoot, ScreenLock: in.ScreenLock}
 	if out.OS == "" {
 		out.OS = self.OS
 	}
@@ -542,7 +541,7 @@ func (s *Server) handlePostureReport(w http.ResponseWriter, r *http.Request, sel
 
 func apiPostureCheck(c store.PostureCheck) api.PostureCheck {
 	out := api.PostureCheck{Name: c.Name, DiskEncryption: c.DiskEncryption, Firewall: c.Firewall, SecureBoot: c.SecureBoot,
-		Antimalware: c.Antimalware, MinOS: c.MinOS, MaxPatchAgeDays: c.MaxPatchAge, MaxAgeSeconds: int(maxAgeOf(c) / time.Second)}
+		MinOS: c.MinOS, MaxPatchAgeDays: c.MaxPatchAge, MaxAgeSeconds: int(maxAgeOf(c) / time.Second)}
 	if !c.CreatedAt.IsZero() {
 		out.CreatedAt = c.CreatedAt.UTC().Format(time.RFC3339)
 	}
@@ -559,8 +558,8 @@ func checkLabel(c store.PostureCheck) string {
 	for _, k := range slices.Sorted(maps.Keys(c.MaxPatchAge)) {
 		patch = append(patch, fmt.Sprintf("%s=%dd", k, c.MaxPatchAge[k]))
 	}
-	label := fmt.Sprintf("check %s disk_encryption=%v firewall=%v secure_boot=%v antimalware=%v min_os=%s max_age=%s", c.Name,
-		c.DiskEncryption, c.Firewall, c.SecureBoot, c.Antimalware, strings.Join(min, ","), api.HumanDuration(maxAgeOf(c)))
+	label := fmt.Sprintf("check %s disk_encryption=%v firewall=%v secure_boot=%v min_os=%s max_age=%s", c.Name,
+		c.DiskEncryption, c.Firewall, c.SecureBoot, strings.Join(min, ","), api.HumanDuration(maxAgeOf(c)))
 	if len(patch) > 0 {
 		label += " max_patch_age=" + strings.Join(patch, ",")
 	}
@@ -619,7 +618,7 @@ func (s *Server) handleAddPostureCheck(w http.ResponseWriter, r *http.Request, s
 		}
 	}
 	c := store.PostureCheck{Name: req.Name, DiskEncryption: req.DiskEncryption, Firewall: req.Firewall, SecureBoot: req.SecureBoot,
-		Antimalware: req.Antimalware, MaxAge: time.Duration(req.MaxAgeSeconds) * time.Second}
+		MaxAge: time.Duration(req.MaxAgeSeconds) * time.Second}
 	if len(req.MinOS) > 0 {
 		c.MinOS = req.MinOS
 	}

@@ -19,8 +19,7 @@ import (
 
 // collectPlatform finds out the posture of a Linux system: kernel release and distribution, whether
 // the root file system is on dm-crypt (LUKS), whether the input path is filtered (nftables, or
-// legacy iptables), Secure Boot from its EFI variable, and whether a known real-time anti-malware
-// scanner runs (unknown when none does). Screen lock stays unknown.
+// legacy iptables) and Secure Boot from its EFI variable. Screen lock stays unknown.
 func collectPlatform(ctx context.Context) api.Posture {
 	p := linuxFacts("/")
 	p.Firewall = linuxFirewall(ctx)
@@ -41,26 +40,7 @@ func linuxFacts(root string) api.Posture {
 	}
 	p.DiskEncryption = rootEncrypted(root)
 	p.SecureBoot = linuxSecureBoot(root)
-	p.Antimalware = linuxAntimalware(processNames(root))
 	return p
-}
-
-// processNames lists the names of the running processes (/proc/<pid>/comm).
-func processNames(root string) []string {
-	entries, err := os.ReadDir(filepath.Join(root, "proc"))
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		if e.Name() == "" || e.Name()[0] < '0' || e.Name()[0] > '9' {
-			continue
-		}
-		if b, err := os.ReadFile(filepath.Join(root, "proc", e.Name(), "comm")); err == nil {
-			out = append(out, strings.TrimSpace(string(b)))
-		}
-	}
-	return out
 }
 
 // secureBootVar is the EFI global variable holding the Secure Boot state.

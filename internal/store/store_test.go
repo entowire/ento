@@ -1154,14 +1154,14 @@ func testPosture(t *testing.T, s Store) {
 	if _, err := s.AddPostureCheck(ctx, PostureCheck{Name: "baseline"}); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate check: %v", err)
 	}
-	if _, err := s.AddPostureCheck(ctx, PostureCheck{Name: "boot", SecureBoot: true, Antimalware: true, MaxAge: time.Hour,
+	if _, err := s.AddPostureCheck(ctx, PostureCheck{Name: "boot", SecureBoot: true, MaxAge: time.Hour,
 		MaxPatchAge: map[string]int{"android": 90}}); err != nil {
 		t.Fatal(err)
 	}
 	checks, err := s.PostureChecks(ctx)
 	if err != nil || len(checks) != 2 || checks[0].Name != "baseline" || !checks[0].DiskEncryption || !checks[0].Firewall ||
-		checks[0].SecureBoot || checks[0].Antimalware || checks[0].MinOS["windows"] != "10.0.22631" || checks[0].MaxAge != 30*time.Minute ||
-		checks[0].MaxPatchAge != nil || !checks[1].SecureBoot || !checks[1].Antimalware || checks[1].MinOS != nil ||
+		checks[0].SecureBoot || checks[0].MinOS["windows"] != "10.0.22631" || checks[0].MaxAge != 30*time.Minute ||
+		checks[0].MaxPatchAge != nil || !checks[1].SecureBoot || checks[1].MinOS != nil ||
 		len(checks[1].MaxPatchAge) != 1 || checks[1].MaxPatchAge["android"] != 90 {
 		t.Fatalf("checks: %+v %v", checks, err)
 	}

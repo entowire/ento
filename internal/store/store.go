@@ -422,7 +422,6 @@ type PostureCheck struct {
 	DiskEncryption bool
 	Firewall       bool
 	SecureBoot     bool
-	Antimalware    bool
 	MinOS          map[string]string
 	MaxPatchAge    map[string]int
 	MaxAge         time.Duration

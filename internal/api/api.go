@@ -682,10 +682,6 @@ type Posture struct {
 	Firewall       *bool  `json:"firewall,omitempty"`
 	SecureBoot     *bool  `json:"secure_boot,omitempty"`
 	ScreenLock     *bool  `json:"screen_lock,omitempty"`
-	// Antimalware: real-time anti-malware protection is on (Windows: an antivirus registered with
-	// Windows Security, or Microsoft Defender, with real-time protection; macOS: XProtect present;
-	// Linux: a known real-time scanner running; unknown when none is found there).
-	Antimalware *bool `json:"antimalware,omitempty"`
 	// PatchLevel is the system's security patch level, "2026-09-05" or "2026-09" (Android, 0.30).
 	// On Android it is the attested one when the attestation counts (see Attested).
 	PatchLevel string `json:"patch_level,omitempty"`
@@ -761,7 +757,6 @@ type PostureCheck struct {
 	DiskEncryption  bool              `json:"disk_encryption,omitempty"`
 	Firewall        bool              `json:"firewall,omitempty"`
 	SecureBoot      bool              `json:"secure_boot,omitempty"`
-	Antimalware     bool              `json:"antimalware,omitempty"`
 	MinOS           map[string]string `json:"min_os,omitempty"`
 	MaxPatchAgeDays map[string]int    `json:"max_patch_age_days,omitempty"`
 	MaxAgeSeconds   int               `json:"max_age_seconds,omitempty"`

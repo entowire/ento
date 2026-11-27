@@ -157,7 +157,7 @@ func TestExternalPosture(t *testing.T) {
 		{&api.Attested{SecurityLevel: "strongbox", BootState: "self-signed", Locked: true}, "verified boot SELF-SIGNED (attested)"},
 	} {
 		p.Attested = c.attested
-		want := "disk encrypted, firewall on, " + c.want + ", screen lock unknown, anti-malware unknown; android 14 (SDK 34), patch 2026-09-05"
+		want := "disk encrypted, firewall on, " + c.want + ", screen lock unknown; android 14 (SDK 34), patch 2026-09-05"
 		if s := PostureSummary(p); s != want {
 			t.Errorf("summary: %q, want %q", s, want)
 		}
@@ -277,28 +277,6 @@ func TestLinkFailingFile(t *testing.T) {
 	a.setFailing(nil)
 	if got := LinkPostureFailing(dir, "acme"); len(got) != 0 {
 		t.Fatalf("still failing: %+v", got)
-	}
-}
-
-func TestAntimalwareParser(t *testing.T) {
-	for out, want := range map[string]string{
-		"av=397568\r\n":                    "on",  // Microsoft Defender, real-time protection on
-		"av=393472\r\n":                    "off", // registered, real-time protection off
-		"av=393472\r\nav=266240\r\n":       "on",  // Defender off, another product on
-		"defender=True,True\r\n":           "on",  // a server edition: Defender itself
-		"defender=True,False\r\n":          "off",
-		"":                                 "unknown",
-		"Get-MpComputerStatus : error\r\n": "unknown",
-	} {
-		if got := tri(parseAntimalware(out)); got != want {
-			t.Errorf("%q: %s, want %s", out, got, want)
-		}
-	}
-	if got := tri(linuxAntimalware([]string{"bash", "clamonacc"})); got != "on" {
-		t.Errorf("clamonacc: %s", got)
-	}
-	if got := tri(linuxAntimalware([]string{"clamd"})); got != "unknown" {
-		t.Errorf("clamd alone (no on-access scanning): %s", got)
 	}
 }
 
