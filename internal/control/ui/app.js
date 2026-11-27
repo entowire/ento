@@ -905,7 +905,9 @@ function renderDeviceDetail(p) {
   if (!me && isAdmin()) edits.push(button("Delete", () => remove(p), "link danger"));
 
   const facts = [["Address", p.address], ["Endpoint", p.endpoint || "–"], ["Person", p.user || "–"], ["Host name", p.reported_hostname || "–"],
-    ["Joined", when(p.created_at) || "–"], ["Last seen", ago(p.last_seen)], ["Key", p.hardware_key ? `held by ${p.hardware_key.toUpperCase()}` : "in software"]];
+    ["Joined", when(p.created_at) || "–"], ["Last seen", ago(p.last_seen)], ["Key", p.hardware_key ? `held by ${p.hardware_key.toUpperCase()}` : "in software"],
+    ["Preshared keys", p.via ? "in its configuration" : p.psk_at ? `yes, changed ${ago(p.psk_at)}` : "none: its agent is older than 0.62"]];
+  if (p.via) facts.splice(1, 1, ["Through", `${p.via} (a plain WireGuard peer)`]);
   if (p.authority) facts.splice(3, 0, ["Admitted by", p.authority]);
   const person = (p.person_groups || []).filter((g) => !ownGroups(p).includes(g));
   put($("device-detail"), 

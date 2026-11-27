@@ -139,6 +139,8 @@ func (a *runner) checkIns(ctx context.Context) {
 				a.rotateKey(ctx, "asked by the control plane")
 			case a.keyDue():
 				a.rotateKey(ctx, "daily")
+			default:
+				a.changePSK(ctx)
 			}
 		case errors.As(err, &he) && (he.code == http.StatusNotFound || he.code == http.StatusMethodNotAllowed):
 			if !quiet {

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/ipam"
@@ -18,7 +21,8 @@ import (
 func apiControls(nodes []store.ControlNode) []api.Control {
 	out := make([]api.Control, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, api.Control{Name: n.Name, PublicKey: n.PublicKey.String(), Endpoint: n.Endpoint, Address: n.Address.String()})
+		out = append(out, api.Control{Name: n.Name, PublicKey: n.PublicKey.String(), Endpoint: n.Endpoint, Address: n.Address.String(),
+			PresharedKeys: n.PresharedKeys})
 	}
 	return out
 }
@@ -78,6 +82,11 @@ func buildNetMap(ctx context.Context, st store.Store, space ipam.Space, self sto
 		nm.Peers = append(nm.Peers, api.Peer{PublicKey: p.PublicKey.String(), Address: p.Address.String(),
 			Hostname: p.Hostname, Endpoints: eps, Accept: acceptFrom(self, p, policies, ps), Quiet: quietOS(p.OS)})
 	}
+	plain, err := st.PlainPeers(ctx)
+	if err != nil {
+		return api.NetMap{}, err
+	}
+	addPlain(&nm, self, peers, plain, policies, ps)
 	routes, err := st.Routes(ctx)
 	if err != nil {
 		return api.NetMap{}, err
@@ -90,7 +99,215 @@ func buildNetMap(ctx context.Context, st store.Store, space ipam.Space, self sto
 		addMachineAccess(&nm, self.MachineOnly(), peers, routes, policies, ps)
 	}
 	nm.Filter = true
+	if err := addPairKeys(ctx, st, &nm, self, peers, time.Now()); err != nil {
+		return api.NetMap{}, err
+	}
 	return nm, nil
+}
+
+// carrier is the gateway that carries plain peer p (Constitution 6), if it can: approved, not
+// suspended; ok false for a device with the agent, or a plain peer whose gateway cannot.
+func carrier(p store.Peer, plain map[int64]store.PlainPeer, byID map[int64]store.Peer) (store.Peer, bool) {
+	pp, isPlain := plain[p.ID]
+	if !isPlain {
+		return store.Peer{}, false
+	}
+	gw, ok := byID[pp.Gateway]
+	return gw, ok && gw.Approved && !gw.Suspended && plain[gw.ID] == (store.PlainPeer{})
+}
+
+// addPlain puts the plain WireGuard peers into self's map (Constitution 6). A plain peer self may
+// reach (or be reached by) is listed with its gateway (Peer.Via), whose own entry the map then has
+// too: self reaches it through that gateway. A plain peer whose gateway cannot carry it is left
+// out. The gateway itself gets the plain peers it carries (Self.Plain), with what each device may
+// open on them, and those devices as its peers.
+func addPlain(nm *api.NetMap, self store.Peer, peers []store.Peer, plain map[int64]store.PlainPeer, policies []store.Policy, ps *postureState) {
+	if len(plain) == 0 {
+		return
+	}
+	byID := make(map[int64]store.Peer, len(peers))
+	byKey := make(map[string]store.Peer, len(peers))
+	for _, p := range peers {
+		byID[p.ID], byKey[p.PublicKey.String()] = p, p
+	}
+	idx := map[string]int{}
+	for i, e := range nm.Peers {
+		idx[e.PublicKey] = i
+	}
+	entry := func(p store.Peer) {
+		k := p.PublicKey.String()
+		if _, ok := idx[k]; ok {
+			return
+		}
+		var eps []string
+		if p.Endpoint != "" {
+			eps = append(eps, p.Endpoint)
+		}
+		nm.Peers = append(nm.Peers, api.Peer{PublicKey: k, Address: p.Address.String(), Hostname: p.Hostname, Endpoints: eps,
+			Accept: acceptFrom(self, p, policies, ps), Quiet: quietOS(p.OS)})
+		idx[k] = len(nm.Peers) - 1
+	}
+	// Plain peers among self's peers: through their gateway, or not at all.
+	kept := nm.Peers[:0]
+	var gateways []store.Peer
+	for _, e := range nm.Peers {
+		p, known := byKey[e.PublicKey]
+		if _, isPlain := plain[p.ID]; !known || !isPlain {
+			kept = append(kept, e)
+			continue
+		}
+		gw, ok := carrier(p, plain, byID)
+		if !ok || plain[self.ID] != (store.PlainPeer{}) {
+			continue
+		}
+		e.Via, e.Endpoints = gw.PublicKey.String(), nil
+		kept = append(kept, e)
+		if gw.ID != self.ID {
+			gateways = append(gateways, gw)
+		}
+	}
+	nm.Peers = kept
+	idx = map[string]int{}
+	for i, e := range nm.Peers {
+		idx[e.PublicKey] = i
+	}
+	for _, gw := range gateways {
+		entry(gw)
+	}
+	// Self as a gateway.
+	ids := make([]int64, 0, len(plain))
+	for id, pp := range plain {
+		if pp.Gateway == self.ID {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		p, ok := byID[id]
+		if !ok || !p.Approved || p.Suspended {
+			continue
+		}
+		if _, ok := carrier(p, plain, byID); !ok {
+			continue
+		}
+		pp := plain[id]
+		e := api.PlainPeer{PublicKey: p.PublicKey.String(), Address: p.Address.String(), Hostname: p.Hostname, Accept: map[string][]string{}}
+		if pp.PresharedKey != (wgtypes.Key{}) {
+			e.PresharedKey = pp.PresharedKey.String()
+		}
+		for _, x := range peers {
+			if x.ID == p.ID || !x.Approved || !allowed(p, x, policies, ps) {
+				continue
+			}
+			if x.ID == self.ID { // the gateway's own connections to it (an output chain judges them)
+				if acc := acceptFrom(p, x, policies, ps); len(acc) > 0 {
+					e.Accept[x.Address.String()] = acc
+				}
+				continue
+			}
+			if xp, isPlain := plain[x.ID]; isPlain && xp.Gateway != self.ID {
+				continue // a plain peer of another gateway: not through this one
+			}
+			if acc := acceptFrom(p, x, policies, ps); len(acc) > 0 {
+				e.Accept[x.Address.String()] = acc
+			}
+			if _, isPlain := plain[x.ID]; !isPlain {
+				entry(x) // the gateway carries the traffic between them: x is its peer
+			}
+		}
+		nm.Self.Plain = append(nm.Self.Plain, e)
+	}
+}
+
+// plainLinked reports whether a plain peer links a and b: one carries a plain peer the other may
+// reach (the relay carries their traffic as for routes).
+func plainLinked(a, b store.Peer, plain map[int64]store.PlainPeer, byID map[int64]store.Peer, policies []store.Policy, ps *postureState) bool {
+	for id, pp := range plain {
+		p, ok := byID[id]
+		if !ok || !p.Approved || p.Suspended {
+			continue
+		}
+		if pp.Gateway == b.ID && allowed(a, p, policies, ps) || pp.Gateway == a.ID && allowed(b, p, policies, ps) {
+			return true
+		}
+	}
+	return false
+}
+
+// pairKeyLead is how long before both devices switch to a pair's next key the control nodes make
+// it: enough for their maps to reach both (a long poll answers within seconds, a phone's within
+// 25 s).
+const pairKeyLead = 2 * time.Minute
+
+// addPairKeys puts the preshared key of each of self's tunnels with a peer into its map
+// (Constitution 9.1). Only devices that set preshared keys get them: those that have one with
+// their control nodes (an agent of 0.62 or later, not a linked network's membership). A pair
+// without a key gets one, as its next with a time two minutes on, so both ends switch together;
+// adding it changes the maps, so the peer's comes too.
+func addPairKeys(ctx context.Context, st store.Store, nm *api.NetMap, self store.Peer, peers []store.Peer, now time.Time) error {
+	nm.Time = now.UnixMilli()
+	psks, err := st.PresharedKeys(ctx)
+	if err != nil {
+		return err
+	}
+	capable := func(id int64) bool { return psks[id].Current != (wgtypes.Key{}) }
+	if !capable(self.ID) || len(nm.Peers) == 0 {
+		return nil
+	}
+	byKey := make(map[string]int64, len(peers))
+	for _, p := range peers {
+		byKey[p.PublicKey.String()] = p.ID
+	}
+	keys, err := st.PairKeys(ctx, self.ID)
+	if err != nil {
+		return err
+	}
+	pair := func(id int64) [2]int64 { return [2]int64{min(self.ID, id), max(self.ID, id)} }
+	have := make(map[[2]int64]store.PairKey, len(keys))
+	for _, k := range keys {
+		have[[2]int64{k.Low, k.High}] = k
+	}
+	var missing []store.PairKey
+	for _, e := range nm.Peers {
+		id, ok := byKey[e.PublicKey]
+		if _, found := have[pair(id)]; !ok || found || !capable(id) {
+			continue
+		}
+		next, err := wgtypes.GenerateKey()
+		if err != nil {
+			return err
+		}
+		p := pair(id)
+		missing = append(missing, store.PairKey{Low: p[0], High: p[1], Next: next, NextAt: now.Add(pairKeyLead).Truncate(time.Second)})
+	}
+	if len(missing) > 0 {
+		if _, err := st.AddPairKeys(ctx, missing); err != nil {
+			return err
+		}
+		// Read back: another control node may have made one of them first.
+		if keys, err = st.PairKeys(ctx, self.ID); err != nil {
+			return err
+		}
+		for _, k := range keys {
+			have[[2]int64{k.Low, k.High}] = k
+		}
+	}
+	for i := range nm.Peers {
+		e := &nm.Peers[i]
+		id, ok := byKey[e.PublicKey]
+		k, found := have[pair(id)]
+		if !ok || !found || !capable(id) {
+			continue
+		}
+		cur, next, at := k.Effective(now)
+		if cur != (wgtypes.Key{}) {
+			e.PresharedKey = cur.String()
+		}
+		if next != (wgtypes.Key{}) {
+			e.PresharedKeyNext, e.PresharedKeyAt = next.String(), at.Unix()
+		}
+	}
+	return nil
 }
 
 // loginRequired reports whether the person's rights return on a device bound to them only with a

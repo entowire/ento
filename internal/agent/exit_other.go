@@ -34,3 +34,6 @@ func ownsSystemDNS(t tunnel) bool { return false }
 // "" on Windows, where it is only known to the second through the uptime, which would make a boot
 // out of a rounding.
 func sysBootID() string { return sysBootTime() }
+
+// plainSupported: only Linux carries plain WireGuard peers (exit_linux.go).
+func plainSupported(tunnel) bool { return false }

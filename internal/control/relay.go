@@ -20,21 +20,26 @@ type relayTable struct {
 	posture  *postureState // nil when no policy requires posture checks
 	routes   []store.Route
 	gateways map[string]store.Peer
+	plain    map[int64]store.PlainPeer
+	byID     map[int64]store.Peer
 }
 
 // permits reports whether src may send relayed packets to dst: both approved and allowed to talk, by
-// a policy between them or a route one reaches through the other.
+// a policy between them, a route one reaches through the other, or a plain peer one carries for the
+// other.
 func (t *relayTable) permits(src, dst store.Peer) bool {
 	return src.Approved && dst.Approved && src.ID != dst.ID &&
-		(allowed(src, dst, t.policies, t.posture) || routeLinked(src, dst, t.routes, t.gateways, t.policies, t.posture))
+		(allowed(src, dst, t.policies, t.posture) || routeLinked(src, dst, t.routes, t.gateways, t.policies, t.posture) ||
+			plainLinked(src, dst, t.plain, t.byID, t.policies, t.posture))
 }
 
-func newRelayTable(peers []store.Peer, policies []store.Policy, posture *postureState, routes []store.Route) *relayTable {
+func newRelayTable(peers []store.Peer, policies []store.Policy, posture *postureState, routes []store.Route, plain map[int64]store.PlainPeer) *relayTable {
 	t := &relayTable{byAddr: map[netip.Addr]store.Peer{}, byKey: map[wgtypes.Key]store.Peer{}, policies: policies,
-		posture: posture, routes: routes, gateways: routeGateways(routes, peers)}
+		posture: posture, routes: routes, gateways: routeGateways(routes, peers), plain: plain, byID: map[int64]store.Peer{}}
 	for _, p := range peers {
 		t.byAddr[p.Address] = p
 		t.byKey[p.PublicKey] = p
+		t.byID[p.ID] = p
 	}
 	return t
 }
@@ -54,7 +59,7 @@ func (s *Server) startRelay(ctx context.Context) error {
 		return err
 	}
 	s.relay = &relay{conn: conn, logf: s.cfg.Logf}
-	s.relay.table.Store(newRelayTable(nil, nil, nil, nil))
+	s.relay.table.Store(newRelayTable(nil, nil, nil, nil, nil))
 	go func() {
 		<-ctx.Done()
 		conn.Close()

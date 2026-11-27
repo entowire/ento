@@ -42,7 +42,7 @@ func backends(t *testing.T) map[string]func(t *testing.T) Store {
 			}
 			_, err = conn.Exec(ctx, `DROP TABLE IF EXISTS ento_settings, ento_state, ento_control_nodes,
 				ento_peers, ento_tokens, ento_policies, ento_authorities, ento_links, ento_link_keys, ento_ui_sessions, ento_admin_sessions, ento_sso_tokens,
-				ento_posture, ento_posture_checks, ento_link_posture, ento_approvals, ento_checkins, ento_hwkeys, ento_routes, ento_dns_records, ento_dns_forwards, ento_signin_codes, ento_signin_use, ento_update_policy, ento_release_offers, ento_audit,
+				ento_posture, ento_posture_checks, ento_link_posture, ento_approvals, ento_checkins, ento_hwkeys, ento_psks, ento_key_state, ento_pair_psks, ento_plain_peers, ento_routes, ento_dns_records, ento_dns_forwards, ento_signin_codes, ento_signin_use, ento_update_policy, ento_release_offers, ento_audit,
 				ento_id_passkeys, ento_id_people, ento_id_groups, ento_id_state`)
 			conn.Close(ctx)
 			if err != nil {
@@ -1771,6 +1771,251 @@ func TestSetting(t *testing.T) {
 			after, _ := s.Version(ctx)
 			if v, _, _ := s.Setting(ctx, "k"); v != "v2" || after <= before {
 				t.Fatalf("replaced: %q, version %d -> %d", v, before, after)
+			}
+		})
+	}
+}
+
+func TestPresharedKeys(t *testing.T) {
+	for name, open := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			s := open(t)
+			p := enrolled(t, s, "laptop")
+			v0, _ := s.Version(ctx)
+			k0, _ := s.KeyVersion(ctx)
+			if ks, _ := s.PresharedKeys(ctx); len(ks) != 0 {
+				t.Fatalf("keys before any: %+v", ks)
+			}
+			a, b := key(t), key(t)
+			// A key agreed but not confirmed changes nothing the control nodes set.
+			if _, err := s.UpdatePresharedKey(ctx, p.ID, func(k PresharedKey, found bool) (PresharedKey, error) {
+				if found {
+					t.Error("found before any")
+				}
+				k.Next, k.NextTag = a, "tag-a"
+				return k, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if kv, _ := s.KeyVersion(ctx); kv != k0 {
+				t.Fatalf("key version moved for a key not confirmed: %d -> %d", k0, kv)
+			}
+			// Confirmed: current, and the key version moves; the network map's does not.
+			now := time.Now().Truncate(time.Second)
+			if _, err := s.UpdatePresharedKey(ctx, p.ID, func(k PresharedKey, found bool) (PresharedKey, error) {
+				if !found || k.Next != a || k.NextTag != "tag-a" {
+					t.Errorf("read back %+v (found %v)", k, found)
+				}
+				k.Current, k.Next, k.NextTag, k.ChangedAt = k.Next, wgtypes.Key{}, "", now
+				return k, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ks, _ := s.PresharedKeys(ctx)
+			if got := ks[p.ID]; got.Current != a || got.Next != (wgtypes.Key{}) || !got.ChangedAt.Equal(now) {
+				t.Fatalf("stored %+v", got)
+			}
+			if kv, _ := s.KeyVersion(ctx); kv <= k0 {
+				t.Fatalf("key version did not move: %d", kv)
+			}
+			if v, _ := s.Version(ctx); v != v0 {
+				t.Fatalf("the network map's version moved: %d -> %d", v0, v)
+			}
+			// fn's error leaves it as it was.
+			if _, err := s.UpdatePresharedKey(ctx, p.ID, func(k PresharedKey, _ bool) (PresharedKey, error) {
+				k.Current = b
+				return k, ErrNotFound
+			}); err == nil {
+				t.Fatal("the error was lost")
+			}
+			if ks, _ := s.PresharedKeys(ctx); ks[p.ID].Current != a {
+				t.Fatal("a failed update changed the key")
+			}
+			if _, err := s.UpdatePresharedKey(ctx, 99999, func(k PresharedKey, _ bool) (PresharedKey, error) { return k, nil }); err != ErrNotFound {
+				t.Fatalf("a device that does not exist: %v", err)
+			}
+			// Reset forgets every key, and the control nodes hear of it.
+			k1, _ := s.KeyVersion(ctx)
+			if n, err := s.ResetPresharedKeys(ctx); err != nil || n != 1 {
+				t.Fatalf("reset: %d, %v", n, err)
+			}
+			if ks, _ := s.PresharedKeys(ctx); len(ks) != 0 {
+				t.Fatalf("keys after the reset: %+v", ks)
+			}
+			if kv, _ := s.KeyVersion(ctx); kv <= k1 {
+				t.Fatal("the reset did not move the key version")
+			}
+			// A deleted device's key goes with it.
+			if _, err := s.UpdatePresharedKey(ctx, p.ID, func(k PresharedKey, _ bool) (PresharedKey, error) {
+				k.Current = b
+				return k, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.DeletePeer(ctx, p.ID); err != nil {
+				t.Fatal(err)
+			}
+			if ks, _ := s.PresharedKeys(ctx); len(ks) != 0 {
+				t.Fatalf("a deleted device's key stayed: %+v", ks)
+			}
+			// Control nodes say whether they set preshared keys.
+			n, err := s.RegisterControlNode(ctx, ControlNode{Name: "ctl-psk", PublicKey: key(t), Endpoint: "192.0.2.9:51820", LastSeen: now, PresharedKeys: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v1, _ := s.Version(ctx)
+			nodes, _ := s.ControlNodes(ctx)
+			for _, c := range nodes {
+				if c.Name == "ctl-psk" && !c.PresharedKeys {
+					t.Fatal("the node's preshared keys were not stored")
+				}
+			}
+			n.PresharedKeys = false
+			if _, err := s.RegisterControlNode(ctx, n); err != nil {
+				t.Fatal(err)
+			}
+			if v, _ := s.Version(ctx); v == v1 {
+				t.Fatal("a node that stopped setting preshared keys did not change the maps")
+			}
+		})
+	}
+}
+
+func TestPairKeys(t *testing.T) {
+	for name, open := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			s := open(t)
+			a, b, c := enrolled(t, s, "a"), enrolled(t, s, "b"), enrolled(t, s, "c")
+			gen := func() wgtypes.Key { return key(t) }
+			now := time.Now().Truncate(time.Second)
+			k1 := key(t)
+			v0, _ := s.Version(ctx)
+			// Given as high, low: stored as low, high; a pair that has a key keeps it.
+			n, err := s.AddPairKeys(ctx, []PairKey{{Low: b.ID, High: a.ID, Next: k1, NextAt: now.Add(time.Minute)}})
+			if err != nil || n != 1 {
+				t.Fatalf("add: %d, %v", n, err)
+			}
+			if n, _ := s.AddPairKeys(ctx, []PairKey{{Low: a.ID, High: b.ID, Next: key(t), NextAt: now}}); n != 0 {
+				t.Fatal("a pair's key was replaced by adding")
+			}
+			if n, _ := s.AddPairKeys(ctx, []PairKey{{Low: a.ID, High: 99999, Next: key(t), NextAt: now}}); n != 0 {
+				t.Fatal("a key for a device that does not exist")
+			}
+			if v, _ := s.Version(ctx); v == v0 {
+				t.Fatal("adding a pair key did not change the maps")
+			}
+			ks, _ := s.PairKeys(ctx, b.ID)
+			if len(ks) != 1 || ks[0].Low != min(a.ID, b.ID) || ks[0].Next != k1 || !ks[0].NextAt.Equal(now.Add(time.Minute)) {
+				t.Fatalf("pair keys of b: %+v", ks)
+			}
+			if cur, next, _ := ks[0].Effective(now); cur != (wgtypes.Key{}) || next != k1 {
+				t.Fatal("effective before its time")
+			}
+			if cur, next, _ := ks[0].Effective(now.Add(time.Minute)); cur != k1 || next != (wgtypes.Key{}) {
+				t.Fatal("not effective at its time")
+			}
+			// The first batch: due at once; the key not yet switched keeps its change.
+			if n, err := s.RotatePairKeys(ctx, now, time.Hour, time.Minute, gen); err != nil || n != 0 {
+				t.Fatalf("first batch: %d, %v (the only pair has a change under way)", n, err)
+			}
+			// Its time passed: current, then the next batch is an hour later.
+			later := now.Add(2 * time.Minute)
+			v1, _ := s.Version(ctx)
+			if n, _ := s.RotatePairKeys(ctx, later, time.Hour, time.Minute, gen); n != 0 {
+				t.Fatal("a batch before its hour")
+			}
+			if v, _ := s.Version(ctx); v != v1 {
+				t.Fatal("a switch by time changed the maps")
+			}
+			ks, _ = s.PairKeys(ctx, a.ID)
+			if ks[0].Current != k1 || ks[0].Next != (wgtypes.Key{}) {
+				t.Fatalf("after its time: %+v", ks[0])
+			}
+			batch := now.Add(time.Hour)
+			if n, _ := s.RotatePairKeys(ctx, batch, time.Hour, time.Minute, gen); n != 1 {
+				t.Fatalf("the batch changed %d pairs, want 1", n)
+			}
+			if v, _ := s.Version(ctx); v == v1 {
+				t.Fatal("a batch did not change the maps")
+			}
+			ks, _ = s.PairKeys(ctx, a.ID)
+			if ks[0].Current != k1 || ks[0].Next == (wgtypes.Key{}) || !ks[0].NextAt.Equal(batch.Add(time.Minute)) {
+				t.Fatalf("after the batch: %+v", ks[0])
+			}
+			// A device's WireGuard key changed: its pairs get new keys at once.
+			if _, err := s.AddPairKeys(ctx, []PairKey{{Low: a.ID, High: c.ID, Current: key(t)}}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := s.PairKeys(ctx, a.ID)
+			if err := s.ReplacePairKeys(ctx, a.ID, gen); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := s.PairKeys(ctx, a.ID)
+			if len(after) != 2 {
+				t.Fatalf("pairs of a: %+v", after)
+			}
+			for i := range after {
+				if after[i].Current == before[i].Current || after[i].Next != (wgtypes.Key{}) {
+					t.Fatalf("not replaced: %+v", after[i])
+				}
+			}
+			// A deleted device's pairs go with it.
+			if err := s.DeletePeer(ctx, c.ID); err != nil {
+				t.Fatal(err)
+			}
+			if ks, _ := s.PairKeys(ctx, a.ID); len(ks) != 1 {
+				t.Fatalf("a deleted device's pair stayed: %+v", ks)
+			}
+		})
+	}
+}
+
+func TestPlainPeerStore(t *testing.T) {
+	for name, open := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			s := open(t)
+			gw := enrolled(t, s, "gw")
+			psk, k := key(t), key(t)
+			now := time.Now()
+			p, err := s.CreatePlainPeer(ctx, k, "printer", []string{"device:printers"}, PlainPeer{Gateway: gw.ID, PresharedKey: psk, Endpoint: "gw.example.com:51830"}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.OS != PlainOS || !p.Approved || p.Address == gw.Address || !slices.Contains(p.Groups, "device:printers") {
+				t.Fatalf("made %+v", p)
+			}
+			if got, _ := s.PeerByAddress(ctx, p.Address); got.ID != p.ID || got.PublicKey != k {
+				t.Fatalf("read back %+v", got)
+			}
+			pl, _ := s.PlainPeers(ctx)
+			if got := pl[p.ID]; got.Gateway != gw.ID || got.PresharedKey != psk || got.Endpoint != "gw.example.com:51830" {
+				t.Fatalf("plain record %+v", got)
+			}
+			if _, err := s.CreatePlainPeer(ctx, k, "other", nil, PlainPeer{Gateway: gw.ID}, now); err != ErrKeyInUse {
+				t.Fatalf("a key in use: %v", err)
+			}
+			var taken *NameTakenError
+			if _, err := s.CreatePlainPeer(ctx, key(t), "printer", nil, PlainPeer{Gateway: gw.ID}, now); !errors.As(err, &taken) {
+				t.Fatalf("a name taken: %v", err)
+			}
+			if _, err := s.CreatePlainPeer(ctx, key(t), "x", nil, PlainPeer{Gateway: 99999}, now); err != ErrNotFound {
+				t.Fatalf("a gateway that does not exist: %v", err)
+			}
+			// The gateway deleted: the plain peer stays, carried by none.
+			if err := s.DeletePeer(ctx, gw.ID); err != nil {
+				t.Fatal(err)
+			}
+			if pl, _ := s.PlainPeers(ctx); pl[p.ID].Gateway != 0 {
+				t.Fatalf("after its gateway was deleted: %+v", pl[p.ID])
+			}
+			if err := s.DeletePeer(ctx, p.ID); err != nil {
+				t.Fatal(err)
+			}
+			if pl, _ := s.PlainPeers(ctx); len(pl) != 0 {
+				t.Fatalf("a deleted plain peer's record stayed: %+v", pl)
 			}
 		})
 	}

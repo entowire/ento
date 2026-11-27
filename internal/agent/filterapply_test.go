@@ -22,6 +22,7 @@ type fakeTunnel struct {
 	peers      []PeerConfig
 	name       string         // the interface's name ("" for ento-test)
 	filter     *inboundFilter // the filter last applied
+	status     map[wgtypes.Key]PeerStatus
 }
 
 func (f *fakeTunnel) SetAddress(netip.Prefix) error            { return nil }
@@ -29,7 +30,13 @@ func (f *fakeTunnel) AddRoute(netip.Prefix) error              { return nil }
 func (f *fakeTunnel) RemoveRoute(netip.Prefix) error           { return nil }
 func (f *fakeTunnel) RepairAddress(netip.Prefix) (bool, error) { return false, nil }
 func (f *fakeTunnel) Status() (map[wgtypes.Key]PeerStatus, error) {
-	return map[wgtypes.Key]PeerStatus{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[wgtypes.Key]PeerStatus{}
+	for k, v := range f.status {
+		out[k] = v
+	}
+	return out, nil
 }
 func (f *fakeTunnel) Close() error  { return nil }
 func (f *fakeTunnel) Delete() error { return nil }

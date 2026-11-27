@@ -99,6 +99,57 @@ type ControlNode struct {
 	Endpoint  string // public host:port of its WireGuard socket
 	Address   netip.Addr
 	LastSeen  time.Time
+	// PresharedKeys: the node sets devices' preshared keys on its tunnels (Constitution 9); a
+	// device sets none on its tunnel with a node that does not.
+	PresharedKeys bool
+}
+
+// PresharedKey is a device's WireGuard preshared key with its control nodes (Constitution 9.1),
+// the same on all of them, agreed by an ML-KEM exchange inside the tunnel (package psk).
+type PresharedKey struct {
+	PeerID int64
+	// Current is the key the control nodes set on the device's tunnels (zero: none).
+	Current wgtypes.Key
+	// Next is a key agreed and not yet confirmed by the device (zero: none). NextTag is the tag that
+	// confirms it, and stays once the confirmation made it Current (and forgot the key it
+	// replaced), so that a confirmation repeated after a lost answer is recognised.
+	Next    wgtypes.Key
+	NextTag string
+	// ChangedAt is when Current was set.
+	ChangedAt time.Time
+}
+
+// PairKey is the preshared key of the tunnel between two devices (Constitution 9.1), made by the
+// control nodes and sent to each in its map. A key always comes as Next with the time both devices
+// switch to it (NextAt), the pair's first included, so that both change together.
+type PairKey struct {
+	Low, High int64       // the devices' IDs, Low < High
+	Current   wgtypes.Key // zero: none yet
+	Next      wgtypes.Key // zero: no change under way
+	NextAt    time.Time
+	ChangedAt time.Time // when Current was last replaced
+}
+
+// Effective is the key at now: Next once its time has come.
+func (k PairKey) Effective(now time.Time) (current, next wgtypes.Key, at time.Time) {
+	if k.Next != (wgtypes.Key{}) && !now.Before(k.NextAt) {
+		return k.Next, wgtypes.Key{}, time.Time{}
+	}
+	return k.Current, k.Next, k.NextAt
+}
+
+// PlainOS is the system a device without the agent reports (Constitution 6).
+const PlainOS = "wireguard"
+
+// PlainPeer is what a device without the agent has besides its device row (Constitution 6): the
+// gateway that carries it (its only WireGuard peer), the preshared key of their tunnel (9.3, in its
+// configuration: it changes only with it), and the endpoint its configuration names for the
+// gateway ("": the gateway's as a control node last saw it).
+type PlainPeer struct {
+	PeerID       int64
+	Gateway      int64 // 0: its gateway was deleted, and it reaches nothing
+	PresharedKey wgtypes.Key
+	Endpoint     string
 }
 
 // Rights are what a layer of a device's access gives it.
@@ -717,6 +768,38 @@ type Store interface {
 	DeleteHWKey(ctx context.Context, peerID int64) error
 	// HWKeys returns every bound hardware key.
 	HWKeys(ctx context.Context) ([]HWKey, error)
+	// UpdatePresharedKey reads a device's preshared key (found false: none) and stores what fn
+	// returns, atomically with respect to other control nodes; fn's error leaves it unchanged. A
+	// change of Current moves the key version (Versions), not the network map's: the control nodes
+	// set it on their tunnels, and no device's map changes.
+	UpdatePresharedKey(ctx context.Context, peerID int64, fn func(k PresharedKey, found bool) (PresharedKey, error)) (PresharedKey, error)
+	// PresharedKeys returns every device's preshared key, by device.
+	PresharedKeys(ctx context.Context) (map[int64]PresharedKey, error)
+	// ResetPresharedKeys forgets every device's preshared key (after the database was restored
+	// from a backup, whose keys the devices no longer have) and returns how many it forgot; the
+	// devices then reach their control nodes without one and agree on new ones.
+	ResetPresharedKeys(ctx context.Context) (int, error)
+	// KeyVersion increases whenever a device's current preshared key changes.
+	KeyVersion(ctx context.Context) (int64, error)
+	// CreatePlainPeer adds a device without the agent (Constitution 6), approved, in groups, named
+	// name (a *NameTakenError if taken), with its key (ErrKeyInUse) and its plain record; it bumps
+	// the version.
+	CreatePlainPeer(ctx context.Context, key wgtypes.Key, name string, groups []string, pp PlainPeer, now time.Time) (Peer, error)
+	// PlainPeers returns every device without the agent, by device.
+	PlainPeers(ctx context.Context) (map[int64]PlainPeer, error)
+	// PairKeys returns the pair keys of a device's tunnels with other devices.
+	PairKeys(ctx context.Context, peerID int64) ([]PairKey, error)
+	// AddPairKeys stores keys of pairs that have none (a pair that has one keeps it) and bumps the
+	// version if it stored any, so that both devices' maps carry them.
+	AddPairKeys(ctx context.Context, keys []PairKey) (int, error)
+	// RotatePairKeys makes each pair's Next its Current once its time has passed (no map changes:
+	// devices switch by the time), and, when the last batch was at least every ago, gives every pair
+	// without a change under way a Next from gen switching at now+lead, in one batch that bumps the
+	// version once. It returns how many pairs the batch changed (0: no batch).
+	RotatePairKeys(ctx context.Context, now time.Time, every, lead time.Duration, gen func() wgtypes.Key) (int, error)
+	// ReplacePairKeys gives every pair of a device a new current key from gen at once (its
+	// WireGuard key changed, which starts new sessions anyway), and bumps the version.
+	ReplacePairKeys(ctx context.Context, peerID int64, gen func() wgtypes.Key) error
 	// RotatePeerKey changes a device's WireGuard key from oldKey to newKey (ErrNotFound: its key is
 	// not oldKey; ErrExists: newKey belongs to another device, a control node or a token), and in the
 	// same transaction clears its hardware key's Rotate and sets RotatedAt. It changes network maps:

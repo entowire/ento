@@ -19,6 +19,7 @@ import (
 	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/credential"
 	"entowire.com/ento/internal/names"
+	"entowire.com/ento/internal/psk"
 	"entowire.com/ento/internal/reqsig"
 	"entowire.com/ento/internal/store"
 	"entowire.com/ento/internal/token"
@@ -38,6 +39,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST "+api.PathCredentialEnd, s.keyHolder(false, s.handleEndCredential))
 	mux.HandleFunc("POST "+api.PathHWKey, s.keyHolder(false, s.handleHWKey))
 	mux.HandleFunc("POST "+api.PathRotate, s.keyHolder(false, s.handleRotate))
+	mux.HandleFunc("POST "+api.PathPSK, s.keyHolder(false, s.handlePSK))
+	mux.HandleFunc("POST "+api.PathPSKConfirm, s.keyHolder(false, s.handlePSKConfirm))
 	mux.HandleFunc("GET "+api.PathRoutes, s.operatorOnly(s.handleListRoutes))
 	mux.HandleFunc("POST "+api.PathRoutes, s.adminOnly(s.handleAddRoute))
 	mux.HandleFunc("DELETE "+api.PathRoutes+"/{name}", s.adminOnly(s.handleDeleteRoute))
@@ -82,6 +85,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT "+api.PathAuthorities+"/{name}/limit", s.adminOnly(s.handleAuthorityLimit))
 	mux.HandleFunc("POST "+api.PathCredential, s.peerOnly(s.handleRenewCredential))
 	mux.HandleFunc("POST "+api.PathAdminLinks, s.adminOnly(s.handleCreateLink))
+	mux.HandleFunc("POST "+api.PathPlain, s.adminOnly(s.handleAddPlain))
 	mux.HandleFunc("GET "+api.PathAdminLinks, s.operatorOnly(s.handleListLinks))
 	mux.HandleFunc("PUT "+api.PathAdminLinks+"/{name}/token", s.adminOnly(s.handleSetLinkToken))
 	mux.HandleFunc("DELETE "+api.PathAdminLinks+"/{name}", s.adminOnly(s.handleDeleteLink))
@@ -332,6 +336,16 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid public key")
 		return
 	}
+	// The permanent key's preshared key, agreed before anything is redeemed so that a malformed
+	// exchange uses up no invitation.
+	var pskCT string
+	var agreed psk.Agreed
+	if req.PSKEncapsulationKey != "" {
+		if pskCT, agreed, err = psk.Answer(req.PSKEncapsulationKey, key); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	var grant *store.Grant
 	var claims credential.Claims
 	var replaces *store.Peer // the device a named token (or a new membership) takes over from, for the record
@@ -411,6 +425,16 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	} else {
 		peer = placed
 	}
+	if pskCT != "" {
+		// Current from the start: the device's first handshake with its permanent key uses it.
+		if _, err := s.cfg.Store.UpdatePresharedKey(r.Context(), peer.ID, func(k store.PresharedKey, _ bool) (store.PresharedKey, error) {
+			return store.PresharedKey{Current: agreed.Key, NextTag: agreed.Tag, ChangedAt: time.Now()}, nil
+		}); err != nil {
+			// The device joins without one, and agrees on one over its tunnel later.
+			s.cfg.Logf("preshared key of new peer %d: %v", peer.ID, err)
+			pskCT = ""
+		}
+	}
 	// Add the permanent key before answering, so the agent can switch keys immediately. The other
 	// control nodes pick it up on their next reconciliation.
 	if err := s.reconcile(r.Context()); err != nil {
@@ -433,7 +457,7 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.RedeemResponse{
 		Address: peer.Address.String(), Network: s.cfg.Space.Prefix.String(),
-		Approved: peer.Approved, Controls: apiControls(nodes),
+		Approved: peer.Approved, Controls: apiControls(nodes), PSKCiphertext: pskCT,
 	})
 }
 
@@ -727,6 +751,31 @@ func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request, _ store
 	if keys, err := s.cfg.Store.HWKeys(r.Context()); err == nil {
 		hwKeyInfo(out, keys)
 	}
+	if plain, err := s.cfg.Store.PlainPeers(r.Context()); err == nil && len(plain) > 0 {
+		names := map[int64]string{}
+		for _, p := range peers {
+			names[p.ID] = p.Hostname
+		}
+		for i := range out {
+			if pp, ok := plain[out[i].ID]; ok {
+				out[i].Via = names[pp.Gateway]
+				if out[i].Via == "" {
+					out[i].Via = "(none: its gateway was deleted)"
+				}
+			}
+		}
+	}
+	if psks, err := s.cfg.Store.PresharedKeys(r.Context()); err == nil {
+		for i := range out {
+			if k := psks[out[i].ID]; k.Current != (wgtypes.Key{}) {
+				at := k.ChangedAt
+				if at.IsZero() {
+					at = time.Now()
+				}
+				out[i].PSKAt = at.UTC().Format(time.RFC3339)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -889,6 +938,10 @@ func (s *Server) handleUpdatePeer(w http.ResponseWriter, r *http.Request, self s
 	if req.Groups != nil {
 		if err := checkGroups(*req.Groups, false); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(s.roleSet(*req.Groups)) > 0 && s.isPlain(r.Context(), current.ID) {
+			writeErr(w, http.StatusBadRequest, "a plain WireGuard peer is never in admin or operator (Constitution 6.1)")
 			return
 		}
 		if current.Authority == "" {

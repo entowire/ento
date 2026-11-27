@@ -42,9 +42,24 @@ import (
 //	                ip saddr <overlay> ip daddr <network served> oifname != "ento0" masquerade
 //	                ip saddr <overlay> oifname != "ento0" masquerade }   (an exit)
 //	  chain forward { type filter hook forward priority filter; policy accept;
+//	                iifname "ento0" oifname "ento0" accept        (plain WireGuard peers' traffic)
 //	                oifname "ento0" ct state established,related accept
 //	                oifname "ento0" drop }                           (the LAN only answers)
 //	}
+//
+// A gateway of plain WireGuard peers (Constitution 6.2) has, in prerouting before the drop:
+//
+//	ip saddr <device> ip daddr <plain peer> tcp dport 22 accept   (what each device may open on it)
+//	ip daddr <plain peer> drop                                   (nothing else)
+//	ip saddr <plain peer> ip daddr <self> drop                   (after its own rules for this device)
+//	ip saddr <plain peer> ip daddr <overlay> accept              (on into the network)
+//
+// and an output chain for what the gateway itself opens on them:
+//
+//	chain output { type filter hook output priority filter; policy accept;
+//	              oifname "ento0" ct state established,related accept
+//	              oifname "ento0" ip daddr <plain peer> tcp dport 22 accept   (its rules)
+//	              oifname "ento0" ip daddr <plain peer> drop }
 //
 // The chain runs in prerouting after conntrack (priority -200) and before the system's DNAT
 // (-100), so ports are the ones the peer connected to even where the system redirects them (a
@@ -91,7 +106,7 @@ func (i *Iface) SetFilter(f *inboundFilter) error {
 	if err := applyInboundFilter(i.ns, i.Name, f); err != nil {
 		return err
 	}
-	if f != nil && (len(f.serves) > 0 || len(f.exits) > 0) && !i.ns.IsOpen() {
+	if f != nil && (len(f.serves) > 0 || len(f.exits) > 0 || len(f.plain) > 0) && !i.ns.IsOpen() {
 		// A gateway forwards (in the device's own namespace; gateways of linked networks are none).
 		if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1\n"), 0o644); err != nil {
 			return fmt.Errorf("enable forwarding for the routes this device serves: %w", err)
@@ -222,6 +237,35 @@ func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) erro
 		}
 	}
 	drop := &expr.Verdict{Kind: expr.VerdictDrop}
+	// The plain WireGuard peers this device carries (Constitution 6.2): what each device may open on
+	// them, and nothing else; what they send into the network, anywhere but this device itself
+	// (what they may open here is their own rules', above) and each other.
+	carried := make([]netip.Addr, 0, len(f.plain))
+	for a := range f.plain {
+		carried = append(carried, a)
+	}
+	slices.SortFunc(carried, func(a, b netip.Addr) int { return a.Compare(b) })
+	for _, p := range carried {
+		srcs := make([]netip.Addr, 0, len(f.plain[p]))
+		for a := range f.plain[p] {
+			srcs = append(srcs, a)
+		}
+		slices.SortFunc(srcs, func(a, b netip.Addr) int { return a.Compare(b) })
+		for _, src := range srcs {
+			allow(append(from(src), to(netip.PrefixFrom(p, 32))...), f.plain[p][src])
+		}
+	}
+	for _, p := range carried {
+		rule(append(to(netip.PrefixFrom(p, 32)), drop)...)
+	}
+	if f.overlay.IsValid() {
+		for _, p := range carried {
+			if self := toSelf(); self != nil {
+				rule(slices.Concat(from(p), self, []expr.Any{drop})...)
+			}
+			rule(slices.Concat(from(p), to(f.overlay), []expr.Any{ok})...)
+		}
+	}
 	if len(exiting) > 0 {
 		// An exit forwards to public addresses only: not into private ranges (routes of their own),
 		// nor to the gateway itself (its public address, its services).
@@ -285,6 +329,42 @@ func applyInboundFilter(ns netns.NsHandle, ifName string, f *inboundFilter) erro
 			[]expr.Any{&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
 				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryutil.BigEndian.PutUint16(api.SignInPort)},
 				&expr.Counter{}, &expr.Verdict{Kind: expr.VerdictDrop}})})
+	}
+	if len(carried) > 0 && f.self.IsValid() {
+		// What the gateway itself opens on the plain peers it carries: by their rules too (they
+		// cannot judge it themselves).
+		out := c.AddChain(&nftables.Chain{Name: "output", Table: t, Type: nftables.ChainTypeFilter,
+			Hooknum: nftables.ChainHookOutput, Priority: nftables.ChainPriorityFilter, Policy: &accept})
+		orule := func(exprs ...expr.Any) { c.AddRule(&nftables.Rule{Table: t, Chain: out, Exprs: exprs}) }
+		oif := []expr.Any{&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(ifName)},
+			&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.NFPROTO_IPV4}}}
+		orule(append(slices.Clone(oif), &expr.Ct{Register: 1, Key: expr.CtKeySTATE},
+			&expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4,
+				Mask: binaryutil.NativeEndian.PutUint32(expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED),
+				Xor:  binaryutil.NativeEndian.PutUint32(0)},
+			&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: binaryutil.NativeEndian.PutUint32(0)}, ok)...)
+		for _, p := range carried {
+			dst := slices.Concat(oif, to(netip.PrefixFrom(p, 32)))
+			if set, ok := f.plain[p][f.self]; ok {
+				if set.All() {
+					orule(append(slices.Clone(dst), &expr.Verdict{Kind: expr.VerdictAccept})...)
+				} else {
+					for _, r := range set {
+						if m, known := portMatch(r); known {
+							orule(append(slices.Clone(dst), m...)...)
+						}
+					}
+				}
+			}
+			orule(append(slices.Clone(dst), drop)...)
+		}
+	}
+	if len(carried) > 0 {
+		// Between the plain peers and the network: in and out of the tunnel, judged above.
+		c.AddRule(&nftables.Rule{Table: t, Chain: forward(), Exprs: []expr.Any{
+			&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(ifName)},
+			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(ifName)},
+			&expr.Verdict{Kind: expr.VerdictAccept}}})
 	}
 	if (len(f.serves) > 0 || len(exiting) > 0) && f.overlay.IsValid() {
 		// Forwarded traffic leaves with the gateway's own LAN address, so the LAN needs no route back;

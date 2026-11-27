@@ -230,6 +230,37 @@ CREATE TABLE IF NOT EXISTS ento_dns_forwards (
 	created_at timestamptz NOT NULL,
 	created_by text NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ento_psks (
+	peer_id    bigint PRIMARY KEY REFERENCES ento_peers (id) ON DELETE CASCADE,
+	current    text NOT NULL,
+	next       text NOT NULL,
+	next_tag   text NOT NULL,
+	changed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS ento_key_state (
+	id      int PRIMARY KEY CHECK (id = 1),
+	version bigint NOT NULL
+);
+INSERT INTO ento_key_state (id, version) VALUES (1, 0) ON CONFLICT DO NOTHING;
+ALTER TABLE ento_control_nodes ADD COLUMN IF NOT EXISTS psk boolean NOT NULL DEFAULT false;
+ALTER TABLE ento_key_state ADD COLUMN IF NOT EXISTS pairs_at timestamptz;
+CREATE TABLE IF NOT EXISTS ento_pair_psks (
+	low        bigint NOT NULL REFERENCES ento_peers (id) ON DELETE CASCADE,
+	high       bigint NOT NULL REFERENCES ento_peers (id) ON DELETE CASCADE,
+	current    text NOT NULL,
+	next       text NOT NULL,
+	next_at    timestamptz,
+	changed_at timestamptz,
+	PRIMARY KEY (low, high),
+	CHECK (low < high)
+);
+CREATE INDEX IF NOT EXISTS ento_pair_psks_high ON ento_pair_psks (high);
+CREATE TABLE IF NOT EXISTS ento_plain_peers (
+	peer_id  bigint PRIMARY KEY REFERENCES ento_peers (id) ON DELETE CASCADE,
+	gateway  bigint REFERENCES ento_peers (id) ON DELETE SET NULL,
+	psk      text NOT NULL,
+	endpoint text NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ento_hwkeys (
 	peer_id        bigint PRIMARY KEY REFERENCES ento_peers (id) ON DELETE CASCADE,
 	kind           text NOT NULL,
@@ -477,8 +508,9 @@ func (p *Postgres) RegisterControlNode(ctx context.Context, n ControlNode) (Cont
 			return false, ErrKeyInUse
 		}
 		var oldKey, oldEndpoint, oldAddress string
-		err := tx.QueryRow(ctx, `SELECT public_key, endpoint, address FROM ento_control_nodes WHERE name = $1`,
-			n.Name).Scan(&oldKey, &oldEndpoint, &oldAddress)
+		var oldPSK bool
+		err := tx.QueryRow(ctx, `SELECT public_key, endpoint, address, psk FROM ento_control_nodes WHERE name = $1`,
+			n.Name).Scan(&oldKey, &oldEndpoint, &oldAddress, &oldPSK)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			used, err := usedAddresses(ctx, tx, `SELECT address FROM ento_control_nodes`)
@@ -488,8 +520,8 @@ func (p *Postgres) RegisterControlNode(ctx context.Context, n ControlNode) (Cont
 			if n.Address, err = ipam.FirstFree(p.space.ControlAddresses(), used); err != nil {
 				return false, err
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO ento_control_nodes (name, public_key, endpoint, address, last_seen)
-				VALUES ($1, $2, $3, $4, $5)`, n.Name, n.PublicKey.String(), n.Endpoint, n.Address.String(), n.LastSeen)
+			_, err = tx.Exec(ctx, `INSERT INTO ento_control_nodes (name, public_key, endpoint, address, last_seen, psk)
+				VALUES ($1, $2, $3, $4, $5, $6)`, n.Name, n.PublicKey.String(), n.Endpoint, n.Address.String(), n.LastSeen, n.PresharedKeys)
 			if isUniqueViolation(err) {
 				return false, ErrKeyInUse
 			}
@@ -498,18 +530,18 @@ func (p *Postgres) RegisterControlNode(ctx context.Context, n ControlNode) (Cont
 			return false, err
 		}
 		n.Address = netip.MustParseAddr(oldAddress)
-		_, err = tx.Exec(ctx, `UPDATE ento_control_nodes SET public_key = $2, endpoint = $3, last_seen = $4 WHERE name = $1`,
-			n.Name, n.PublicKey.String(), n.Endpoint, n.LastSeen)
+		_, err = tx.Exec(ctx, `UPDATE ento_control_nodes SET public_key = $2, endpoint = $3, last_seen = $4, psk = $5 WHERE name = $1`,
+			n.Name, n.PublicKey.String(), n.Endpoint, n.LastSeen, n.PresharedKeys)
 		if isUniqueViolation(err) {
 			return false, ErrKeyInUse
 		}
-		return err == nil && (oldKey != n.PublicKey.String() || oldEndpoint != n.Endpoint), err
+		return err == nil && (oldKey != n.PublicKey.String() || oldEndpoint != n.Endpoint || oldPSK != n.PresharedKeys), err
 	})
 	return n, err
 }
 
 func (p *Postgres) ControlNodes(ctx context.Context) ([]ControlNode, error) {
-	rows, err := p.pool.Query(ctx, `SELECT name, public_key, endpoint, address, last_seen FROM ento_control_nodes`)
+	rows, err := p.pool.Query(ctx, `SELECT name, public_key, endpoint, address, last_seen, psk FROM ento_control_nodes`)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +550,7 @@ func (p *Postgres) ControlNodes(ctx context.Context) ([]ControlNode, error) {
 	for rows.Next() {
 		var n ControlNode
 		var key, addr string
-		if err := rows.Scan(&n.Name, &key, &n.Endpoint, &addr, &n.LastSeen); err != nil {
+		if err := rows.Scan(&n.Name, &key, &n.Endpoint, &addr, &n.LastSeen, &n.PresharedKeys); err != nil {
 			return nil, err
 		}
 		if n.PublicKey, err = wgtypes.ParseKey(key); err != nil {
@@ -2009,6 +2041,358 @@ func nullTime(t time.Time) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// Preshared keys (Constitution 9) change no network map: a change of a current key moves the key
+// version, which only the control nodes follow.
+
+// optKey is a key stored as text, "" for none.
+func optKey(k wgtypes.Key) string {
+	if k == (wgtypes.Key{}) {
+		return ""
+	}
+	return k.String()
+}
+
+func parseOptKey(s string) (wgtypes.Key, error) {
+	if s == "" {
+		return wgtypes.Key{}, nil
+	}
+	return wgtypes.ParseKey(s)
+}
+
+func bumpKeyVersion(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `UPDATE ento_key_state SET version = version + 1 WHERE id = 1`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT pg_notify($1, '')`, NotifyChannel)
+	return err
+}
+
+func scanPSK(row pgx.Row) (PresharedKey, error) {
+	var k PresharedKey
+	var cur, next string
+	var at *time.Time
+	if err := row.Scan(&k.PeerID, &cur, &next, &k.NextTag, &at); err != nil {
+		return k, err
+	}
+	var err error
+	if k.Current, err = parseOptKey(cur); err != nil {
+		return k, err
+	}
+	if k.Next, err = parseOptKey(next); err != nil {
+		return k, err
+	}
+	if at != nil {
+		k.ChangedAt = *at
+	}
+	return k, nil
+}
+
+const pskColumns = `peer_id, current, next, next_tag, changed_at`
+
+func (p *Postgres) UpdatePresharedKey(ctx context.Context, peerID int64, fn func(k PresharedKey, found bool) (PresharedKey, error)) (PresharedKey, error) {
+	var out PresharedKey
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		// The device's row is the lock, as for check-ins and hardware keys.
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1 FROM ento_peers WHERE id = $1 FOR UPDATE`, peerID).Scan(&one); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		cur, err := scanPSK(tx.QueryRow(ctx, `SELECT `+pskColumns+` FROM ento_psks WHERE peer_id = $1`, peerID))
+		found := err == nil
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if !found {
+			cur = PresharedKey{PeerID: peerID}
+		}
+		next, err := fn(cur, found)
+		if err != nil {
+			return err
+		}
+		next.PeerID = peerID
+		_, err = tx.Exec(ctx, `INSERT INTO ento_psks (`+pskColumns+`) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (peer_id) DO UPDATE SET current = $2, next = $3, next_tag = $4, changed_at = $5`,
+			peerID, optKey(next.Current), optKey(next.Next), next.NextTag, nullTime(next.ChangedAt))
+		if err != nil {
+			return err
+		}
+		out = next
+		if next.Current != cur.Current {
+			return bumpKeyVersion(ctx, tx)
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (p *Postgres) PresharedKeys(ctx context.Context) (map[int64]PresharedKey, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+pskColumns+` FROM ento_psks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]PresharedKey{}
+	for rows.Next() {
+		k, err := scanPSK(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[k.PeerID] = k
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) ResetPresharedKeys(ctx context.Context) (int, error) {
+	var n int
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM ento_psks`)
+		if err != nil {
+			return err
+		}
+		n = int(tag.RowsAffected())
+		return bumpKeyVersion(ctx, tx)
+	})
+	return n, err
+}
+
+func (p *Postgres) KeyVersion(ctx context.Context) (int64, error) {
+	var v int64
+	err := p.pool.QueryRow(ctx, `SELECT version FROM ento_key_state WHERE id = 1`).Scan(&v)
+	return v, err
+}
+
+func (p *Postgres) CreatePlainPeer(ctx context.Context, key wgtypes.Key, name string, groups []string, pp PlainPeer, now time.Time) (Peer, error) {
+	if err := names.Check(name); err != nil {
+		return Peer{}, err
+	}
+	var peer Peer
+	err := p.write(ctx, func(tx pgx.Tx) (bool, error) {
+		var inUse, gateway bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ento_peers WHERE public_key = $1)
+			OR EXISTS (SELECT 1 FROM ento_tokens WHERE public_key = $1)
+			OR EXISTS (SELECT 1 FROM ento_control_nodes WHERE public_key = $1),
+			EXISTS (SELECT 1 FROM ento_peers WHERE id = $2)`, key.String(), pp.Gateway).Scan(&inUse, &gateway); err != nil {
+			return false, err
+		}
+		if inUse {
+			return false, ErrKeyInUse
+		}
+		if !gateway {
+			return false, ErrNotFound
+		}
+		h, err := nameHolder(ctx, tx, name, now, 0)
+		if err != nil {
+			return false, err
+		}
+		if h != nil {
+			return false, h
+		}
+		used, err := usedAddresses(ctx, tx, `SELECT address FROM ento_peers`)
+		if err != nil {
+			return false, err
+		}
+		addr, err := p.space.FirstFreePeer(used)
+		if err != nil {
+			return false, err
+		}
+		peer = Peer{PublicKey: key, Address: addr, Hostname: name, OS: PlainOS, CreatedAt: now,
+			Machine: Rights{Approved: true, Groups: nonNil(groups)}}
+		peer.apply(PeerUpdate{})
+		if err := tx.QueryRow(ctx, `INSERT INTO ento_peers (public_key, address, hostname, reported_hostname, os, approved, admin, groups, created_at)
+			VALUES ($1, $2, $3, '', $4, true, false, $5, $6) RETURNING id`,
+			key.String(), addr.String(), name, PlainOS, peer.Machine.Groups, now).Scan(&peer.ID); err != nil {
+			if isUniqueViolation(err) {
+				return false, ErrKeyInUse
+			}
+			return false, err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO ento_plain_peers (peer_id, gateway, psk, endpoint) VALUES ($1, $2, $3, $4)`,
+			peer.ID, pp.Gateway, optKey(pp.PresharedKey), pp.Endpoint)
+		return true, err
+	})
+	return peer, err
+}
+
+func (p *Postgres) PlainPeers(ctx context.Context) (map[int64]PlainPeer, error) {
+	rows, err := p.pool.Query(ctx, `SELECT peer_id, COALESCE(gateway, 0), psk, endpoint FROM ento_plain_peers`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]PlainPeer{}
+	for rows.Next() {
+		var pp PlainPeer
+		var key string
+		if err := rows.Scan(&pp.PeerID, &pp.Gateway, &key, &pp.Endpoint); err != nil {
+			return nil, err
+		}
+		if pp.PresharedKey, err = parseOptKey(key); err != nil {
+			return nil, err
+		}
+		out[pp.PeerID] = pp
+	}
+	return out, rows.Err()
+}
+
+// Pair keys (Constitution 9.1) are in the devices' maps: adding them and a daily batch bump the
+// version; a key's switch by its time does not.
+
+const pairColumns = `low, high, current, next, next_at, changed_at`
+
+func scanPair(row pgx.Row) (PairKey, error) {
+	var k PairKey
+	var cur, next string
+	var at, changed *time.Time
+	if err := row.Scan(&k.Low, &k.High, &cur, &next, &at, &changed); err != nil {
+		return k, err
+	}
+	var err error
+	if k.Current, err = parseOptKey(cur); err != nil {
+		return k, err
+	}
+	if k.Next, err = parseOptKey(next); err != nil {
+		return k, err
+	}
+	if at != nil {
+		k.NextAt = *at
+	}
+	if changed != nil {
+		k.ChangedAt = *changed
+	}
+	return k, nil
+}
+
+func (p *Postgres) PairKeys(ctx context.Context, peerID int64) ([]PairKey, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+pairColumns+` FROM ento_pair_psks WHERE low = $1 OR high = $1 ORDER BY low, high`, peerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PairKey
+	for rows.Next() {
+		k, err := scanPair(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) AddPairKeys(ctx context.Context, keys []PairKey) (int, error) {
+	n := 0
+	err := p.write(ctx, func(tx pgx.Tx) (bool, error) {
+		n = 0
+		for _, k := range keys {
+			lo, hi := k.Low, k.High
+			if lo > hi {
+				lo, hi = hi, lo
+			}
+			if lo == hi {
+				continue
+			}
+			tag, err := tx.Exec(ctx, `INSERT INTO ento_pair_psks (`+pairColumns+`)
+				SELECT $1, $2, $3, $4, $5, $6
+				WHERE EXISTS (SELECT 1 FROM ento_peers WHERE id = $1) AND EXISTS (SELECT 1 FROM ento_peers WHERE id = $2)
+				ON CONFLICT (low, high) DO NOTHING`,
+				lo, hi, optKey(k.Current), optKey(k.Next), nullTime(k.NextAt), nullTime(k.ChangedAt))
+			if err != nil {
+				return false, err
+			}
+			n += int(tag.RowsAffected())
+		}
+		return n > 0, nil
+	})
+	return n, err
+}
+
+func (p *Postgres) RotatePairKeys(ctx context.Context, now time.Time, every, lead time.Duration, gen func() wgtypes.Key) (int, error) {
+	n := 0
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		n = 0
+		// One control node at a time, and the version lock first, as every write that changes maps
+		// takes it (in another order two writes could wait on each other).
+		if _, err := tx.Exec(ctx, `SELECT version FROM ento_state WHERE id = 1 FOR UPDATE`); err != nil {
+			return err
+		}
+		var last *time.Time
+		if err := tx.QueryRow(ctx, `SELECT pairs_at FROM ento_key_state WHERE id = 1 FOR UPDATE`).Scan(&last); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE ento_pair_psks SET current = next, next = '', changed_at = next_at, next_at = NULL
+			WHERE next <> '' AND next_at <= $1`, now); err != nil {
+			return err
+		}
+		if last != nil && now.Sub(*last) < every {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE ento_key_state SET pairs_at = $1 WHERE id = 1`, now); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT low, high FROM ento_pair_psks WHERE next = ''`)
+		if err != nil {
+			return err
+		}
+		var ids [][2]int64
+		for rows.Next() {
+			var id [2]int64
+			if err := rows.Scan(&id[0], &id[1]); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if _, err := tx.Exec(ctx, `UPDATE ento_pair_psks SET next = $3, next_at = $4 WHERE low = $1 AND high = $2`,
+				id[0], id[1], gen().String(), now.Add(lead)); err != nil {
+				return err
+			}
+		}
+		n = len(ids)
+		if n == 0 {
+			return nil
+		}
+		return bumpVersion(ctx, tx)
+	})
+	return n, err
+}
+
+func (p *Postgres) ReplacePairKeys(ctx context.Context, peerID int64, gen func() wgtypes.Key) error {
+	return p.write(ctx, func(tx pgx.Tx) (bool, error) {
+		rows, err := tx.Query(ctx, `SELECT low, high FROM ento_pair_psks WHERE low = $1 OR high = $1`, peerID)
+		if err != nil {
+			return false, err
+		}
+		var ids [][2]int64
+		for rows.Next() {
+			var id [2]int64
+			if err := rows.Scan(&id[0], &id[1]); err != nil {
+				rows.Close()
+				return false, err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		for _, id := range ids {
+			if _, err := tx.Exec(ctx, `UPDATE ento_pair_psks SET current = $3, next = '', next_at = NULL, changed_at = now()
+				WHERE low = $1 AND high = $2`, id[0], id[1], gen().String()); err != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	})
 }
 
 func (p *Postgres) UpdateHWKey(ctx context.Context, peerID int64, fn func(k HWKey, found bool) (HWKey, error)) (HWKey, error) {

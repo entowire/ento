@@ -33,6 +33,10 @@ type inboundFilter struct {
 	// exits: what each peer that uses this device as an exit may open on the internet (public
 	// addresses only, exitBlocked); they may also ask its DNS forwarder, on its own address.
 	exits map[netip.Addr]ports.Set
+	// plain: the plain WireGuard peers this device carries as their gateway (Constitution 6), each
+	// with what every other device may open on it, by address. What they send into the network
+	// passes on (where it arrives, it is filtered as anyone's).
+	plain map[netip.Addr]map[netip.Addr]ports.Set
 	// person tells the person's traffic among what the device sends (person.go; nil: not counted).
 	person *personRules
 	// logDrops, when set, logs the new connections the filter refuses (Config.LogDrops).
@@ -83,7 +87,7 @@ func filterFromMap(nm api.NetMap) *inboundFilter {
 		return nil
 	}
 	f := &inboundFilter{controls: map[netip.Addr]bool{}, accept: map[netip.Addr]ports.Set{}, routes: map[netip.Addr][]routeRule{},
-		exits: map[netip.Addr]ports.Set{}}
+		exits: map[netip.Addr]ports.Set{}, plain: map[netip.Addr]map[netip.Addr]ports.Set{}}
 	var key []string
 	if a, err := netip.ParseAddr(nm.Self.Address); err == nil && a.Is4() {
 		f.self = a
@@ -135,6 +139,23 @@ func filterFromMap(nm api.NetMap) *inboundFilter {
 			}
 			f.routes[a] = append(f.routes[a], routeRule{network: n.Masked(), set: rs})
 			key = append(key, "r "+a.String()+" "+n.Masked().String()+" "+setKey(rs))
+		}
+	}
+	for _, pp := range nm.Self.Plain {
+		a, err := netip.ParseAddr(pp.Address)
+		if err != nil || !a.Is4() || f.controls[a] || a == f.self || !f.overlay.Contains(a) {
+			continue
+		}
+		f.plain[a] = map[netip.Addr]ports.Set{}
+		key = append(key, "w "+a.String())
+		for from, list := range pp.Accept {
+			src, err := netip.ParseAddr(from)
+			if err != nil || !src.Is4() {
+				continue
+			}
+			set := ports.ParseSet(list)
+			f.plain[a][src] = set
+			key = append(key, "w "+a.String()+" "+src.String()+" "+setKey(set))
 		}
 	}
 	for a, lists := range exitPorts {

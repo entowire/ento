@@ -638,6 +638,38 @@ while the agent is stopped or restarting, traffic takes its normal path; a capti
 sign-in page) needs the exit off. `ento status` shows the exits offered (`exit:`, which one is
 in use) and, on a gateway, `exit for:`.
 
+### Plain WireGuard peers (0.62)
+
+A device that only speaks WireGuard (a router's own client, MikroTik, OPNsense, the official
+WireGuard apps) joins with a standard configuration whose one peer is a gateway: a Linux device with
+the agent and the kernel's WireGuard (Constitution 6). It is a device like any other: its own address
+and name, device groups that rules name (never `admin` or `operator`), in `ento admin peers` with
+`via GATEWAY` and `PSK plain`. Full administration adds one:
+
+    sudo ento admin plain add printer --via office-gw --groups printers --out printer.conf   # --qr: for the apps
+    sudo ento admin allow laptops printers               # who reaches it
+    sudo ento admin allow printers servers --ports tcp/631   # what it reaches, as for any device
+
+Without `--public-key`, the key pair is made there and its private half is in that configuration
+only, nowhere else; with `--public-key KEY` (made on the device: `wg genkey | wg pubkey`), the
+configuration leaves its private key to the device. The configuration's `Endpoint` is the gateway as
+the control nodes last saw it (`--endpoint HOST:PORT` for another: the gateway's WireGuard port must
+be reachable from the device), its `AllowedIPs` the network's range, its `PresharedKey` the key of
+its tunnel with the gateway (Constitution 9.3): it changes only with a new configuration.
+
+The gateway forwards its traffic: what it opens is judged where it arrives, as anyone's (a device's
+own filter, the control nodes' calls); what others open on it, and what the gateway itself opens on
+it, the gateway judges by its rules, since it cannot. Devices a rule lets reach it have the gateway as
+their peer for it, the relay included, even with no rule between them and the gateway. It reaches its
+control nodes and forwarded services by the same rules, through the gateway. Deleting it (`ento admin
+delete ID`) cuts it off at once.
+
+A gateway of plain peers keeps its WireGuard key (their configurations name it): with a hardware key
+bound, its daily change is refused while it carries any. Not yet: a person signing in on a plain peer
+through the browser (6.1), names (it has no DNS server in its configuration: devices by address),
+networks behind other gateways, plain peers of one gateway reaching those of another, adding one from
+the admin page, and new configurations for one that exists (delete it and add it again).
+
 ### Internal DNS (names for devices and office machines)
 
 With a domain (0.26), devices resolve each other by name, `NAME.example.internal` (their device
@@ -1573,6 +1605,51 @@ Enclave), Windows (TPM) and phones (the Android Keystore key signs posture repor
 linked networks' memberships; and root on the device itself, which can use the TPM key as the
 agent does while it has the machine.
 
+### Preshared keys (0.62)
+
+Every tunnel has a WireGuard preshared key besides the WireGuard keys (Constitution 9), so that
+traffic recorded now stays secret even if the curve of the WireGuard keys is broken later: a
+device's with its control nodes, and a device's with each of its peers. The device and the control nodes agree on it with ML-KEM-768 inside the tunnel and
+never send it: a device that joins does it in the redeem call, so its first handshake already uses
+one, and a device that joined before gets one at its first check-in, without joining again. The
+key is the same on all of the device's control nodes, kept in the database (`ento_psks`).
+
+It changes every day and when the device's WireGuard key changes: the agent agrees on the next key
+(`POST /v1/psk`), saves it, sets it on its tunnels and confirms it (`POST /v1/psk/confirm`,
+audited `psk_changed`), and the control nodes set it on theirs. WireGuard keeps a running session
+when its preshared key changes, so nothing is interrupted. A change moves no network map: only the
+control nodes' own tunnels change, so no device fetches a map for it. `ento status` shows `psk:
+from TIME, changed every 24h0m0s` (`none yet`, `changing`, or `none (the control nodes set none)`
+with control nodes older than 0.62).
+
+A lost answer, a crash during a change, or a database restored from a backup leave the device with
+a key the control nodes may not have. While no control node answers for a minute, the agent tries
+its other keys and no key, each for 20 seconds, and the one a handshake then succeeds with is the
+one the control nodes have: it settles on it (and agrees on a new one if that was none). An
+ordinary outage costs at most those 20 seconds more.
+
+**After restoring the database from a backup**, its keys are older than the devices' (which
+forget a key once it is replaced): run `ento control psk-reset` once, on any control node's
+database. The control nodes then set no key, every device finds its way in without one within
+about five minutes, and agrees on a new one.
+
+**Between two devices** the control nodes make the key (`ento_pair_psks`) and send it to both in
+their maps (`psk`), first as the next key with the time both switch to it, two minutes on, by the
+control nodes' clock (the map says what it is, so a device whose clock is wrong still switches with
+its peer). All pairs of a network change once a day in one batch, and a device's pairs at once when
+its WireGuard key changes. A device that was offline when its peer switched has the key in use in
+its next map. `wg show` lists each peer's key under `preshared key`.
+
+Control nodes and agents older than 0.62 set no key, and the newer ones set none with them (a pair
+gets a key only when both devices have one with their control nodes), so control nodes and devices
+can be updated one at a time. A device that updates itself (Linux, macOS) has its keys at its first
+check-in on 0.62; Windows and Android agents do not update themselves yet, so those stay without
+until someone updates them: `ento admin peers` has a `PSK` column (`yes`, or `none`; `--json`:
+`psk_at`, when its key with the control nodes last changed) and the admin page a line "Preshared
+keys" per device, to find them. Not covered yet: linked networks' memberships. A plain WireGuard
+peer's key with its gateway is in its configuration (Plain WireGuard peers). `ENTO_PSK_EVERY` (a duration) changes the keys more often, for tests: on agents their key
+with the control nodes, on control nodes the pair keys.
+
 ### Operators
 
 An operator device administers the network within limits that keep every change reversible:
@@ -1887,6 +1964,8 @@ See [docs/linked-networks.md](linked-networks.md).
     ENTO_DATABASE_URL=postgres://... test/e2e-netns.sh dist/ento-linux-amd64   # root, kernel WireGuard
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-linked.sh dist/ento-linux-amd64
     ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-networks.sh dist/ento-linux-amd64   # several networks on one device
+    ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-psk.sh dist/ento-linux-amd64        # preshared keys: changes, pairs, a reset, a device without one
+    ENTO_TEST_POSTGRES=postgres://.../postgres test/e2e-plain.sh dist/ento-linux-amd64      # a plain WireGuard peer (wg setconf), its rules both ways
     ENTO_TEST_BROWSER=/path/to/chrome-headless-shell go test ./internal/id/ -run TestBrowser  # the sign-in pages in a browser
 
 The first two end-to-end tests accept `E2E_BLOCK_DIRECT=1` to force traffic through the relay. The

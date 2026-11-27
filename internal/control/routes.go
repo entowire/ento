@@ -370,6 +370,10 @@ func (s *Server) handleAddRoute(w http.ResponseWriter, r *http.Request, self sto
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if gw, err := s.peerNamed(r.Context(), req.Via); err == nil && s.isPlain(r.Context(), gw.ID) {
+		writeErr(w, http.StatusBadRequest, req.Via+" is a plain WireGuard peer: it forwards nothing")
+		return
+	}
 	rt := store.Route{Name: req.Name, Networks: nets, Via: req.Via, Exit: req.Exit, Default: req.Default, CreatedAt: time.Now(), CreatedBy: peerLabel(self)}
 	if err := s.cfg.Store.AddRoute(r.Context(), rt); err != nil {
 		if errors.Is(err, store.ErrExists) {

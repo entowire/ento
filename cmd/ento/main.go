@@ -162,7 +162,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 	// What changes the network's database without a control node in between leaves an audit line in
 	// the system log (cliaudit), like the control nodes' own.
 	switch cmd {
-	case "token", "authority", "allow", "admin", "groups", "id-groups", "person", "sso-forget":
+	case "token", "authority", "allow", "admin", "groups", "id-groups", "person", "sso-forget", "psk-reset":
 		all := append([]string{cmd}, args...)
 		defer func() { cliAudit(all, err) }()
 	}
@@ -580,6 +580,28 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		}
 		fmt.Printf("refresh tokens forgotten: %d (those people are signed out); the token key's check starts again with the next control node\n", len(ids))
 		return nil
+	case "psk-reset":
+		// After the database was restored from a backup: its preshared keys are older than those
+		// the devices have, which forgot them (Constitution 9.2), so no device would reach a control
+		// node. Forgotten, the control nodes set none, the devices find their way in without one
+		// (internal/agent/psk.go) and agree on new ones.
+		fs := flag.NewFlagSet("control psk-reset", flag.ExitOnError)
+		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16)")
+		_ = fs.Parse(args)
+		if fs.NArg() != 0 {
+			return errors.New("usage: ento control psk-reset [--network N] (after the database was restored from a backup)")
+		}
+		st, _, err := openStore(ctx, *network)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		n, err := st.ResetPresharedKeys(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("preshared keys forgotten: %d (those devices reach the control nodes without one, then agree on new ones)\n", n)
+		return nil
 	case "person":
 		fs := flag.NewFlagSet("control person", flag.ExitOnError)
 		network := fs.String("network", "100.64.0.0/16", "overlay network (IPv4 /16), with --id")
@@ -623,7 +645,7 @@ func controlCmd(ctx context.Context, args []string) (err error) {
 		fmt.Printf("person %s (%s), groups %s\nsetup link (once, until %s): %s\n", p.Email, how, strings.Join(p.Groups, ","), link.ExpiresAt, link.Link)
 		return nil
 	}
-	return errors.New("usage: ento control run|token|authority|allow|admin|groups|id-groups|person [flags]")
+	return errors.New("usage: ento control run|token|authority|allow|admin|groups|id-groups|person|sso-forget|psk-reset [flags]")
 }
 
 // idConfig reads the settings of the control nodes' own identity provider (ento control run --id).
@@ -1350,6 +1372,9 @@ func agentCmd(ctx context.Context, args []string) error {
 			}
 			fmt.Println(line)
 		}
+		if running && r.PresharedKey != "" {
+			fmt.Printf("psk:        %s\n", r.PresharedKey)
+		}
 		if running && r.ExitFor {
 			fmt.Println("exit for:   other devices (their internet traffic leaves through this one)")
 		}
@@ -1731,7 +1756,7 @@ func adminCmd(ctx context.Context, args []string) error {
 			return json.NewEncoder(os.Stdout).Encode(peers)
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tNAME\tADDRESS\tUSER\tAPPROVED\tROLE\tGROUPS\tENDPOINT\tLAST SEEN\tREPORTED HOST NAME\tHW KEY\tPOSTURE\tFAILS")
+		fmt.Fprintln(w, "ID\tNAME\tADDRESS\tUSER\tAPPROVED\tROLE\tGROUPS\tENDPOINT\tLAST SEEN\tREPORTED HOST NAME\tHW KEY\tPSK\tPOSTURE\tFAILS")
 		for _, p := range peers {
 			approved := fmt.Sprint(p.Approved)
 			if p.Suspended {
@@ -1747,9 +1772,17 @@ func adminCmd(ctx context.Context, args []string) error {
 			case p.Operator:
 				role = "operator"
 			}
-			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, cell(p.Hostname), p.Address, cell(p.User),
+			psk := "none" // its agent is older than 0.62 (or a linked network's membership): no preshared keys
+			if p.PSKAt != "" {
+				psk = "yes"
+			}
+			if p.Via != "" { // a plain WireGuard peer: its key with the gateway is in its configuration
+				psk = "plain"
+				p.Endpoint = "via " + p.Via
+			}
+			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, cell(p.Hostname), p.Address, cell(p.User),
 				approved, role, cell(strings.Join(p.Groups, ",")), cell(p.Endpoint), cell(p.LastSeen), cell(p.ReportedHostname),
-				cell(p.HardwareKey), cell(postureCell(p)), cell(failsCell(p)))
+				cell(p.HardwareKey), psk, cell(postureCell(p)), cell(failsCell(p)))
 		}
 		return w.Flush()
 
@@ -2057,6 +2090,47 @@ func adminCmd(ctx context.Context, args []string) error {
 	case "updates":
 		return adminUpdatesCmd(ctx, c, rest)
 
+	case "plain":
+		// A plain WireGuard peer (Constitution 6): a device without the agent, through a gateway.
+		op, args := sub(rest)
+		const usage = "usage: ento admin plain add NAME --via GATEWAY [--groups G,...] [--public-key KEY] [--endpoint HOST:PORT] [--out FILE] [--qr]"
+		if op != "add" || len(args) < 1 || strings.HasPrefix(args[0], "-") {
+			return errors.New(usage)
+		}
+		fs := flag.NewFlagSet("admin plain add", flag.ExitOnError)
+		via := fs.String("via", "", "the gateway that carries it: a Linux device with the agent (its name, as peers shows it)")
+		groups := fs.String("groups", "", "comma-separated device groups (never admin or operator)")
+		pub := fs.String("public-key", "", "its public key, from a key pair made on the device (wg genkey | wg pubkey); without it, a key pair is made here and its private half shown once, in the configuration")
+		endpoint := fs.String("endpoint", "", "the gateway's endpoint in the configuration, HOST:PORT, its WireGuard port reachable by the device (default: where the control nodes last saw it)")
+		out := fs.String("out", "", "write the configuration to this file (mode 0600) instead of stdout")
+		qrFlag := fs.Bool("qr", false, "also draw the configuration as a QR code, for the WireGuard apps (a terminal only)")
+		_ = fs.Parse(args[1:])
+		if *via == "" || fs.NArg() > 0 {
+			return errors.New(usage)
+		}
+		var res api.PlainResponse
+		if err := c.Do(ctx, "POST", api.PathPlain, api.PlainRequest{Name: args[0], Via: *via, Groups: splitList(*groups),
+			PublicKey: *pub, Endpoint: *endpoint}, &res); err != nil {
+			if st := agent.HTTPStatus(err); st == 404 || st == 405 {
+				return errors.New("the control plane has no plain WireGuard peers (older than ento 0.62)")
+			}
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "plain WireGuard peer %s at %s through %s (device %d); rules name it by its groups\n", args[0], res.Address, *via, res.ID)
+		if *pub == "" {
+			fmt.Fprintln(os.Stderr, "its private key is in this configuration only: it is kept nowhere else")
+		}
+		if *out != "" {
+			if err := os.WriteFile(*out, []byte(res.Config), 0o600); err != nil {
+				return err
+			}
+		} else {
+			fmt.Print(res.Config)
+		}
+		if *qrFlag {
+			return printQR(os.Stdout, res.Config)
+		}
+		return nil
 	case "route":
 		op, args := sub(rest)
 		switch op {
@@ -2120,7 +2194,7 @@ func adminCmd(ctx context.Context, args []string) error {
 	case "authority", "authorities":
 		return adminAuthorityCmd(ctx, c, cmd, rest)
 	}
-	return errors.New("usage: ento admin [--link NAME] ui|token|tokens|revoke|peers|rename|confirm-name|approve|unapprove|signout|suspend|resume|groups|role|delete|policies|allow|policy|disallow|posture|route|routes|dns|link|links|authority|authorities|audit")
+	return errors.New("usage: ento admin [--link NAME] ui|token|tokens|revoke|peers|rename|confirm-name|approve|unapprove|signout|suspend|resume|groups|role|delete|policies|allow|policy|disallow|posture|route|routes|plain|dns|link|links|authority|authorities|audit")
 }
 
 // knowsChecks makes sure the control plane knows posture checks (ento 0.13 and later) and has these;

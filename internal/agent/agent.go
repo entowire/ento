@@ -22,6 +22,7 @@ import (
 
 	"entowire.com/ento/internal/api"
 	"entowire.com/ento/internal/hwsig"
+	"entowire.com/ento/internal/psk"
 	"entowire.com/ento/internal/token"
 )
 
@@ -173,6 +174,15 @@ func enroll(ctx context.Context, cfg Config, env netEnv, tokenText string, perm 
 		hostname, _ = os.Hostname()
 	}
 	req := api.RedeemRequest{PublicKey: perm.PublicKey().String(), Hostname: hostname, OS: runtime.GOOS, Credential: credential}
+	// The permanent tunnel's preshared key, from its first handshake (psk.go); not for a linked
+	// network's membership (a credential), which keeps none.
+	var exchange *psk.Request
+	if credential == "" {
+		if exchange, err = psk.NewRequest(); err != nil {
+			return State{}, err
+		}
+		req.PSKEncapsulationKey = exchange.EncapsulationKey()
+	}
 	var res api.RedeemResponse
 	var lastErr error
 	for attempt := 0; attempt < 5 && ctx.Err() == nil; attempt++ {
@@ -197,6 +207,15 @@ func enroll(ctx context.Context, cfg Config, env netEnv, tokenText string, perm 
 	}
 
 	st := State{PrivateKey: Key(perm), Controls: res.Controls}
+	if exchange != nil && res.PSKCiphertext != "" {
+		agreed, err := exchange.Finish(res.PSKCiphertext, perm.PublicKey())
+		if err != nil {
+			// The control nodes set a key this device cannot know: it finds that they do when
+			// none answers, and joins again.
+			return State{}, fmt.Errorf("preshared key: %w", err)
+		}
+		st.PresharedKey, st.PSKAt, st.PSKFor = optionalKey(agreed.Key), time.Now(), perm.PublicKey().String()
+	}
 	if st.Address, err = netip.ParseAddr(res.Address); err != nil {
 		return State{}, err
 	}
@@ -318,6 +337,9 @@ func (a *runner) save() error {
 func (a *runner) close() {
 	a.mu.Lock()
 	a.announces = false
+	if a.pairTimer != nil {
+		a.pairTimer.Stop()
+	}
 	if a.exit != nil { // the system's own routing and names again
 		a.syncExit(nil)
 	}
@@ -399,6 +421,20 @@ type runner struct {
 	rotating      bool
 	swappedKey    bool
 	pendingSwapAt time.Time
+
+	// psk.go: a change of the preshared key under way; the turns taken trying other keys while no
+	// control node answers, and when the last began; the key last set on the tunnels, and when.
+	pskBusy    bool
+	pskTry     int
+	pskTryAt   time.Time
+	pskApplied wgtypes.Key
+	pskSetAt   time.Time
+	// clockOffset: the control nodes' clock less the device's, from the last map (pair keys switch
+	// by theirs); pairTimer re-applies the map when a pair's next key is due.
+	plainNoted  bool // plain.go: said once that this device cannot carry its plain peers
+	clockOffset time.Duration
+	pairTimer   *time.Timer
+	pairDueAt   time.Time
 
 	loginRequired bool // last reported by the home network (home runner only)
 	// personActive: whether the person's layer is open, as the home network last said (home
@@ -486,6 +522,7 @@ func (a *runner) announce() {
 	}
 	r.PersonActive, r.PersonSince = a.last.Self.PersonActive, a.last.Self.PersonSince
 	r.HardwareKey = a.hwNote
+	r.PresharedKey = a.pskNote()
 	if !a.st.KeyCreatedAt.IsZero() {
 		r.KeyCreatedAt = a.st.KeyCreatedAt.UTC().Format(time.RFC3339)
 	}
@@ -559,14 +596,21 @@ func (a *runner) loop(ctx context.Context) error {
 			a.cfg.Logf("network map from %q (%s): %v", ctl.Name, ctl.Address, err)
 			a.noteMapResult(ctx, false)
 			a.resolvePendingKey(false)
+			a.resolvePSK(false, ctl)
 			a.current++ // fail over to the next control node
 			time.Sleep(backoff)
 			backoff = min(backoff*2, 30*time.Second)
 			continue
 		}
 		backoff = time.Second
+		if nm.Time > 0 {
+			a.mu.Lock()
+			a.clockOffset = time.Until(time.UnixMilli(nm.Time)) // theirs less ours
+			a.mu.Unlock()
+		}
 		a.noteMapResult(ctx, true)
 		a.resolvePendingKey(true)
+		a.resolvePSK(true, ctl)
 		if nm.Version != a.version {
 			a.cfg.Logf("network map v%d from %q: %d peers (approved: %v)", nm.Version, ctl.Name, len(nm.Peers), nm.Self.Approved)
 		}
@@ -663,10 +707,18 @@ func (a *runner) apply(nm api.NetMap) error {
 	}
 	var desired []PeerConfig
 	controls := map[wgtypes.Key]bool{}
+	var pskKey wgtypes.Key // the preshared key with the control nodes that set them (psk.go)
+	if !a.linked() {
+		pskKey = a.pskInUse()
+		a.notePSKApplied(pskKey)
+	}
 	for _, c := range a.st.Controls {
 		pc, err := peerConfig(c.PublicKey, c.Address, []string{c.Endpoint}, status, true)
 		if err != nil {
 			return err
+		}
+		if c.PresharedKeys {
+			pc.PresharedKey = pskKey
 		}
 		if !a.cfg.Quiet {
 			pc.Keepalive = keepalive
@@ -712,14 +764,30 @@ func (a *runner) apply(nm api.NetMap) error {
 	if a.cut {
 		peers = nil
 	}
+	// Plain WireGuard peers (Constitution 6) are no peers of their own: their addresses go to the
+	// gateway that carries them (Peer.Via), unless this device is that gateway (nm.Self.Plain).
+	viaAddrs := map[string][]netip.Prefix{}
 	for _, p := range peers {
+		if p.Via == "" {
+			continue
+		}
+		if ip, err := netip.ParseAddr(p.Address); err == nil && ip.Is4() {
+			viaAddrs[p.Via] = append(viaAddrs[p.Via], netip.PrefixFrom(ip, 32))
+		}
+	}
+	for _, p := range peers {
+		if p.Via != "" {
+			continue
+		}
 		pc, err := peerConfig(p.PublicKey, p.Address, p.Endpoints, status, false)
 		if err != nil {
 			return err
 		}
+		pc.AllowedIPs = append(pc.AllowedIPs, viaAddrs[p.PublicKey]...)
 		if !a.cfg.Quiet && !p.Quiet { // a quiet peer (a phone) is sent nothing it did not ask for
 			pc.Keepalive = keepalive
 		}
+		pc.PresharedKey = a.pairKey(p)
 		pc.AllowedIPs = append(pc.AllowedIPs, a.routeNetworks(p, local, granted, wantRoutes)...)
 		if exit != nil && p.PublicKey == exit.Key && !controls[pc.PublicKey] && !seen[pc.PublicKey] {
 			pc.AllowedIPs = append(pc.AllowedIPs, exitNetwork)
@@ -736,6 +804,9 @@ func (a *runner) apply(nm api.NetMap) error {
 			return err
 		}
 		desired = append(desired, pc)
+	}
+	if !a.cut {
+		desired = append(desired, a.plainPeers(nm, controls, seen)...)
 	}
 	for k := range a.paths {
 		if !seen[k] {

@@ -223,3 +223,10 @@ func ownsSystemDNS(t tunnel) bool {
 
 // sysBootID: Linux has its boot ID in /proc (bootID).
 func sysBootID() string { return "" }
+
+// plainSupported reports whether the device can carry plain WireGuard peers: the kernel's
+// WireGuard, whose traffic the kernel forwards and nftables filters (plain.go).
+func plainSupported(t tunnel) bool {
+	_, ok := t.(*Iface)
+	return ok
+}

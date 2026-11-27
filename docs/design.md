@@ -338,7 +338,8 @@ ento1:<base64url( version | secret[32] | n × (control public key[32] | endpoint
 ```
 
 - The token secret derives, with HKDF-SHA256 and versioned labels, a temporary WireGuard private key
-  and a preshared key. Control nodes pre-register the derived public key with a temporary overlay
+  and a preshared key (the temporary tunnel's only; the permanent tunnel's: Preshared keys).
+  Control nodes pre-register the derived public key with a temporary overlay
   address that can only reach the redeem endpoint, until the token expires.
 - The agent configures the control peers from the token, handshakes with the temporary key, generates
   a fresh random permanent key and redeems it over the tunnel. The control node identifies the token
@@ -516,6 +517,39 @@ anything to a public address (private, shared and special ranges and `fib daddr 
 dropped first), masqueraded on the way out. A device that is an exit uses none. macOS and Windows:
 later.
 
+## Plain WireGuard peers
+
+Constitution 6, since 0.62 (`internal/control/plain.go`, `internal/agent/plain.go`). A plain peer is a
+device row like any other (`OS` `wireguard`, approved, its device groups), with a row of its own in
+`ento_plain_peers`: its gateway, the preshared key of their tunnel (9.3) and the endpoint its
+configuration names. Its gateway is a Linux device with the agent and the kernel's WireGuard (approved,
+not suspended, not in a `--no-gateways` group, no plain peer itself).
+
+- **Its peers.** In the map of a device that a rule links with it, its entry has `via` (its
+  gateway's key) and no endpoints: the agent adds its address to the gateway's allowed IPs instead of
+  making a peer of it, and the gateway's entry is in that map too (with what the gateway may open on
+  the device by its own rules, nothing if none). The device's filter judges what the plain peer opens
+  on it, by its entry's `accept`, as any peer's.
+- **Its gateway.** Its map has the plain peers it carries (`Self.plain`): key, address, preshared key,
+  and, by address, what each device (the gateway included) may open on it; those devices are its peers.
+  The agent makes them WireGuard peers (no endpoint, no keepalive: they come to it), and its filter
+  (filter_linux.go) passes in prerouting what each device may open on them and drops the rest, drops
+  what they open on the gateway beyond their rules, passes what they send into the network (judged
+  where it arrives), forwards in and out of the tunnel, and judges in an output chain what the
+  gateway itself opens on them. Elsewhere (no kernel WireGuard) it carries none and says so.
+- **The control nodes.** No tunnel of their own with it: the gateway's peer on each control node has
+  the plain peers' addresses among its allowed IPs (`wgPeer.Carried`), so its calls and forwarded
+  services come from its own address, judged as any device's. The relay carries what passes between a
+  device and the gateway for it (`plainLinked`), as for routes.
+- **Its keys.** Made on the device (the administrator gives the public key) or by the control node,
+  which shows the private half once in the configuration and keeps only the public one (6.3). The
+  gateway's key is in the configuration, so a gateway that carries plain peers refuses its daily
+  change (`/v1/rotate`: 409).
+
+Not yet: a person signing in on it through the browser (6.1); names (its configuration has no DNS
+server); networks behind other gateways, and plain peers of one gateway reaching another's; when it
+was last seen (the gateway's handshakes); new configurations; the admin page.
+
 ## Internal DNS
 
 With a domain (0.26: the setting `dns_domain` administrators set, 0.55, which every control node
@@ -660,6 +694,123 @@ done inside the tunnel):
   alone, which control nodes ignore) every 20 s from its relay port (0.59), so that a stateful host
   firewall on the device (ufw drops incoming connections by default) takes relayed frames as
   answers instead of dropping them: 20 s stays below Linux's 30 s for an unanswered UDP flow.
+
+## Preshared keys
+
+Constitution 9, decided on 2026-11-27; built in 0.62 (package `psk`, `internal/control/psk.go`,
+`internal/agent/psk.go`), between a device and its control nodes and between two devices.
+
+**Why.** WireGuard mixes a peer's preshared key into every handshake on top of the Curve25519 keys
+(Noise IKpsk2). Someone who records traffic now and breaks Curve25519 later reads nothing without the
+preshared key, and the key adds nothing to know without the private keys, so classically it costs
+nothing. It protects against recording now and decrypting later, not against an attacker who is
+active and can break the curve while the key is being agreed.
+
+**A device and its control nodes.** One preshared key per device (per network joined with its own
+invitation: 2.8; linked networks' memberships have none yet), the same on all its control nodes,
+agreed with ML-KEM-768 (Go's `crypto/mlkem`) inside the tunnel and never sent:
+
+1. The agent makes an ML-KEM decapsulation key and sends the encapsulation key (1184 bytes) in a
+   signed call; on joining, in the redeem call itself, so the permanent tunnel has a key from its
+   first handshake.
+2. The control node encapsulates and answers with the ciphertext (1088 bytes). Both derive the key
+   and a confirmation tag with HKDF-SHA256 from the shared secret, a versioned label and the
+   device's WireGuard public key. The control node stores the key as the device's next one
+   (`ento_psks`), not yet in use; at the redeem call it is current at once.
+3. The agent saves it (`next_preshared_key`), sets it in place on its control peers
+   (`preshared_key=`, not a peer removed and added again) and confirms it by its tag over the
+   running session (`POST /v1/psk/confirm`, audited `psk_changed`). The confirmation makes it
+   current and forgets the previous key; the control node that took it sets it at once, the others
+   when the key version moves (below). A confirmation repeated after a lost answer is answered alike
+   (the tag stays), one for a key that is not the next one is refused (409) and the agent keeps
+   its key.
+
+The key version: a change of a current key moves a counter of its own (`ento_key_state`, notified
+like the map version), which only the control nodes follow, to set their tunnels. The network map's
+version stays: it would wake every device's long poll at once, a full map each, at every device's
+daily change (devices fetch their map every 25 s anyway, so a bump adds no maps, but makes them all
+come at the same moment).
+
+**Finding the key the control nodes have.** An answer over the tunnel proves nothing about the
+key, since a session outlives a change of key by up to three minutes; a handshake after the key in
+use was set does. So while a change's outcome is open (the confirmation's answer lost, a crash),
+the agent confirms again at each check-in, and settles on the key it uses once a handshake with it
+succeeds. When no control node answers for a minute (keys differ, or an ordinary outage), it tries
+its other keys and no key, each for 20 seconds, between minutes of the key it believes in; the one
+that gets a handshake is the control nodes', and if that is none it agrees on a new one. An outage
+costs at most 20 seconds more. A database restored from a backup has keys older than the devices'
+(which forget a key once it is replaced): `ento control psk-reset` forgets them all, the control
+nodes set none, and every device comes back by trying none.
+
+Recording the exchange gives nothing: the ciphertext opens only with the decapsulation key, which
+never leaves the agent's memory. A device that joined before this does the same exchange over its
+existing tunnel at its first check-in once both ends support it, so it never joins again. The words' own preshared key
+(Enrollment) then protects only the redeem call, whose ML-KEM exchange no longer depends on it.
+
+**Two devices.** For each pair that a rule or a route lets talk (not every pair: those whose maps
+name each other), the control nodes make a random 32-byte key (`ento_pair_psks`) and put it in each
+device's map (`Peer.psk`), which reaches each over its own tunnel with them, so it is as safe as
+that tunnel. A pair's first key is made where a map is built that names a peer without one (one
+control node wins; the others read it back), and moves the map version, so that the peer's map
+carries it too. Only devices that have a key with their control nodes get pair keys: that says
+their agent sets them (0.62 or later, and not a linked network's membership); a pair with one
+older device has none. The control nodes already decide who
+talks to whom and with which keys, so holding these keys trusts them with nothing new; a stolen
+database or backup together with a broken curve would expose the recorded traffic of its keys' days
+only, since replaced keys are deleted. Relayed traffic needs nothing of its own: the relay carries
+the peers' own WireGuard packets.
+
+**Changing a key without a gap.** WireGuard keeps one preshared key per peer, and both ends must have
+the same one at the next handshake. Tried in the lab on 2026-11-27 (two Ubuntu 24.04 machines; kernel
+with kernel, kernel with wireguard-go, wireguard-go with wireguard-go, wireguard-go at the version
+ento pins):
+
+- setting a key in place keeps the running session, on both implementations; so do adding the first
+  key and removing one (an all-zero key);
+- a session is rekeyed 120 s after its handshake; if the ends' keys differ then, the rekey fails but
+  the old session carries traffic until 180 s after the handshake, then nothing passes; a handshake
+  follows within about 2 s once the keys match again (retries every 5 s);
+- so an active peer's ends have at least 60 s after the first one changes, and an idle peer (no
+  session) none: its first packet's handshake fails until both match.
+
+For a pair, every key comes first as the next one, with the time both switch to it
+(`Peer.psk_next`, `Peer.psk_at`), two minutes after it was made: long enough for both maps to
+arrive (a long poll answers within seconds once the version moves, a phone's within 25 s). The time
+is the control nodes' clock: the map says what theirs is (`NetMap.time`), and each device switches
+by it, so a device whose own clock is wrong still switches with its peer; it re-applies its map at
+that moment. A device that missed the next key (asleep, offline) has the current one in its next
+map, within 25 s of being back: until then its tunnel with that peer has no handshake. No fallback
+to the previous key is kept for pairs: the map always says which key is in use.
+
+**When keys change.** A device's key with its control nodes changes daily (agreed at a check-in
+once due) and when its WireGuard key changes (daily for devices with a hardware key: Copied
+identities). Pair keys change in one batch a day for the whole network, so that the map version
+moves once for all of them (`RotatePairKeys`: every control node tries every minute, one batch a
+day goes through, under the version lock), and a device's at once when its WireGuard key changes
+(its new sessions start then anyway). A device that is removed takes
+its keys with it. The cost is small: an exchange is about 2.3 kB and microseconds of computing, and
+a pair's key 32 bytes in the database and in two maps; 1,000 devices with 50 peers each are 25,000
+pairs, under a megabyte. What limits how often keys change is the chance of a mismatch at each
+change, not resources; daily stays until changes have proven reliable.
+
+**Versions.** Control nodes say that they set preshared keys (`ento_control_nodes.psk`, in the
+map's control nodes: `Control.psk`), not with a version number; an agent offers an exchange only to
+control nodes that do (an older one answers 404) and sets no key on its tunnel with one that does
+not, so control nodes can be updated one at a time. A pair will get a key only when both devices
+support it; until then it has none, as today.
+
+**Plain WireGuard peers** (Constitution 6, 0.62): their key with their gateway is made with the
+configuration, kept for their gateway's map (`ento_plain_peers`), and changes only when the
+configuration does: they cannot take a new one by themselves.
+
+**Built:** the control node's WireGuard sync (`userspaceWG.Sync`) changes a peer in place (its
+preshared key, an all-zero one removing it, its address and its keepalive) instead of removing it
+and adding it again, which dropped the session (`TestPresharedKeyInPlace`); the agent changes keys
+in place on both of its backends. The exchange between a device and its control nodes
+(`TestPresharedKeyExchange`, `TestPresharedKeySettles`), pair keys (`TestPairKeys`,
+`TestPairKeySwitch`), and `test/e2e-psk.sh` (kernel WireGuard: changes of both kinds under a
+running ping, a restore with a reset, a device that joined before). Not yet: linked networks'
+memberships, and runs on macOS, Windows and Android.
 
 ## Control plane high availability
 
@@ -827,9 +978,12 @@ the authority public key.
 
 | Table | Contents |
 |---|---|
-| `control_nodes` | name, public key, public endpoint, overlay address, last seen |
+| `control_nodes` | name, public key, public endpoint, overlay address, last seen, whether it sets preshared keys (0.62) |
 | `peers` | public key, overlay address, hostname, OS, approved, admin, groups, observed endpoint, last seen |
 | `enrollment_tokens` | temporary public key and preshared key, temporary address, expiry, redemption, pre-authorised groups/approval/admin |
+| `psks` | per device: the preshared key with the control nodes, the next one agreed and its tag, when the current one was set (0.62); `key_state`: the key version and the last batch of pair keys |
+| `plain_peers` | per plain WireGuard peer: its gateway, the preshared key of their tunnel, the endpoint its configuration names (0.62) |
+| `pair_psks` | per pair of devices (lower ID, higher ID): the key in use, the next one and when both switch to it, when it last changed (0.62) |
 | `policies` | allow rules between groups, one way (`one_way` false: an old rule both ways with posture checks), port rules, and the posture checks their source devices must pass |
 | `posture_checks` | named posture requirements: disk encryption, firewall, Secure Boot, oldest system versions, oldest security patch per system (days), oldest report |
 | `posture` | each device's latest report (facts, received at) and the stored results of the checks it must pass (and when they last changed) |
@@ -879,6 +1033,10 @@ the authority public key.
    never to an older version, the previous binary kept with a rollback when the new agent does not
    check in, members left to deployments, phones (an APK is replaced only with the person's consent
    unless the phone is managed), and that a signed-update channel is code reaching every device.
+9. Preshared keys on every tunnel (Constitution 9, decided 2026-11-27; see Preshared keys): in-place
+   changes on control nodes (done), ML-KEM between a device and its control nodes with daily
+   changes, also for devices that joined before, and keys per pair in the map (done, 0.62); then
+   lab runs on every platform, with mixed versions.
 
 ## Platforms
 

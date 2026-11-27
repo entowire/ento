@@ -99,7 +99,7 @@ func TestRoutes(t *testing.T) {
 	peers, _ := st.Peers(ctx)
 	policies, _ := st.Policies(ctx)
 	routes, _ := st.Routes(ctx)
-	table := newRelayTable(peers, policies, nil, routes)
+	table := newRelayTable(peers, policies, nil, routes, nil)
 	if !table.permits(sp, gp) || !table.permits(gp, sp) {
 		t.Fatal("the relay refuses a route's traffic")
 	}

@@ -134,6 +134,11 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request, self store
 		writeErr(w, http.StatusForbidden, "the new key is not certified by the device's hardware key: "+err.Error())
 		return
 	}
+	if s.carriesPlain(r.Context(), self.ID) {
+		// Their configurations name its key: it changes when an administrator gives them new ones.
+		writeErr(w, http.StatusConflict, "this device carries plain WireGuard peers, whose configurations name its key")
+		return
+	}
 	if other, err := s.cfg.Store.PeerByPublicKey(r.Context(), next); err == nil && other.ID != self.ID {
 		writeErr(w, http.StatusConflict, "that key is in use")
 		return
@@ -162,6 +167,10 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request, self store
 			return c, nil
 		}); err != nil {
 			s.cfg.Logf("check-ins of peer %d: %v", self.ID, err)
+		}
+		// New sessions with every peer start anyway: their preshared keys change with them (9.2).
+		if err := s.cfg.Store.ReplacePairKeys(ctx, self.ID, newKey); err != nil {
+			s.cfg.Logf("pair keys of peer %d: %v", self.ID, err)
 		}
 		s.audit(nil, &self, "key_rotated", fmt.Sprintf("%s from %s to %s", label, keyLabel(old.String()), keyLabel(req.PublicKey)), "ok")
 		s.checkVersion(ctx)

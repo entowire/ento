@@ -38,6 +38,11 @@ type Memory struct {
 	approval map[string]Approval
 	checkIns map[int64]CheckIn
 	hwKeys   map[int64]HWKey
+	psks     map[int64]PresharedKey
+	keyVer   int64 // KeyVersion
+	pairs    map[[2]int64]PairKey
+	plain    map[int64]PlainPeer
+	pairsAt  time.Time // the last batch of RotatePairKeys
 	routes   map[string]Route
 	dnsNames map[string]DNSRecord
 	dnsZones map[string]DNSForward
@@ -114,7 +119,7 @@ func (m *Memory) RegisterControlNode(_ context.Context, n ControlNode) (ControlN
 		}
 		n.Address = a
 	}
-	if old, ok := m.controls[n.Name]; !ok || old.PublicKey != n.PublicKey || old.Endpoint != n.Endpoint {
+	if old, ok := m.controls[n.Name]; !ok || old.PublicKey != n.PublicKey || old.Endpoint != n.Endpoint || old.PresharedKeys != n.PresharedKeys {
 		m.version++
 	}
 	m.controls[n.Name] = n
@@ -421,6 +426,22 @@ func (m *Memory) forgetPeer(id int64) {
 	}
 	delete(m.posture, id)
 	delete(m.checkIns, id)
+	if _, ok := m.psks[id]; ok {
+		delete(m.psks, id)
+		m.keyVer++
+	}
+	for k := range m.pairs {
+		if k[0] == id || k[1] == id {
+			delete(m.pairs, k)
+		}
+	}
+	delete(m.plain, id)
+	for k, pp := range m.plain { // its gateway gone: carried by none
+		if pp.Gateway == id {
+			pp.Gateway = 0
+			m.plain[k] = pp
+		}
+	}
 	for k := range m.linkKeys {
 		if strings.HasSuffix(k, "/"+strconv.FormatInt(id, 10)) {
 			delete(m.linkKeys, k)
@@ -1343,6 +1364,202 @@ func (m *Memory) HWKeys(_ context.Context) ([]HWKey, error) {
 	}
 	slices.SortFunc(out, func(a, b HWKey) int { return cmp.Compare(a.PeerID, b.PeerID) })
 	return out, nil
+}
+
+func (m *Memory) UpdatePresharedKey(_ context.Context, peerID int64, fn func(k PresharedKey, found bool) (PresharedKey, error)) (PresharedKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.peers[peerID]; !ok {
+		return PresharedKey{}, ErrNotFound
+	}
+	if m.psks == nil {
+		m.psks = map[int64]PresharedKey{}
+	}
+	cur, found := m.psks[peerID]
+	if !found {
+		cur = PresharedKey{PeerID: peerID}
+	}
+	next, err := fn(cur, found)
+	if err != nil {
+		return PresharedKey{}, err
+	}
+	next.PeerID = peerID
+	if next.Current != cur.Current {
+		m.keyVer++
+	}
+	m.psks[peerID] = next
+	return next, nil
+}
+
+func (m *Memory) PresharedKeys(context.Context) (map[int64]PresharedKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]PresharedKey, len(m.psks))
+	for id, k := range m.psks {
+		out[id] = k
+	}
+	return out, nil
+}
+
+func (m *Memory) ResetPresharedKeys(context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.psks)
+	m.psks = nil
+	m.keyVer++
+	return n, nil
+}
+
+func (m *Memory) KeyVersion(context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.keyVer, nil
+}
+
+func (m *Memory) CreatePlainPeer(_ context.Context, key wgtypes.Key, name string, groups []string, pp PlainPeer, now time.Time) (Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := names.Check(name); err != nil {
+		return Peer{}, err
+	}
+	for _, p := range m.peers {
+		if p.PublicKey == key {
+			return Peer{}, ErrKeyInUse
+		}
+	}
+	for _, c := range m.controls {
+		if c.PublicKey == key {
+			return Peer{}, ErrKeyInUse
+		}
+	}
+	for _, t := range m.tokens {
+		if t.PublicKey == key {
+			return Peer{}, ErrKeyInUse
+		}
+	}
+	if _, ok := m.peers[pp.Gateway]; !ok {
+		return Peer{}, ErrNotFound
+	}
+	if h := m.nameHolder(name, now, 0); h != nil {
+		return Peer{}, h
+	}
+	used := map[netip.Addr]bool{}
+	for _, o := range m.peers {
+		used[o.Address] = true
+	}
+	a, err := m.space.FirstFreePeer(used)
+	if err != nil {
+		return Peer{}, err
+	}
+	p := Peer{ID: m.id(), PublicKey: key, Address: a, Hostname: name, OS: PlainOS, CreatedAt: now,
+		Machine: Rights{Approved: true, Groups: slices.Clone(groups)}}
+	p.apply(PeerUpdate{})
+	m.peers[p.ID] = p
+	if m.plain == nil {
+		m.plain = map[int64]PlainPeer{}
+	}
+	pp.PeerID = p.ID
+	m.plain[p.ID] = pp
+	m.version++
+	return p, nil
+}
+
+func (m *Memory) PlainPeers(context.Context) (map[int64]PlainPeer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]PlainPeer, len(m.plain))
+	for k, v := range m.plain {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func pairOf(a, b int64) [2]int64 {
+	if a > b {
+		a, b = b, a
+	}
+	return [2]int64{a, b}
+}
+
+func (m *Memory) PairKeys(_ context.Context, peerID int64) ([]PairKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []PairKey
+	for k, v := range m.pairs {
+		if k[0] == peerID || k[1] == peerID {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b PairKey) int { return cmp.Or(cmp.Compare(a.Low, b.Low), cmp.Compare(a.High, b.High)) })
+	return out, nil
+}
+
+func (m *Memory) AddPairKeys(_ context.Context, keys []PairKey) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pairs == nil {
+		m.pairs = map[[2]int64]PairKey{}
+	}
+	n := 0
+	for _, k := range keys {
+		id := pairOf(k.Low, k.High)
+		if id[0] == id[1] {
+			continue
+		}
+		_, ok1 := m.peers[id[0]]
+		_, ok2 := m.peers[id[1]]
+		if _, ok := m.pairs[id]; ok || !ok1 || !ok2 {
+			continue
+		}
+		k.Low, k.High = id[0], id[1]
+		m.pairs[id] = k
+		n++
+	}
+	if n > 0 {
+		m.version++
+	}
+	return n, nil
+}
+
+func (m *Memory) RotatePairKeys(_ context.Context, now time.Time, every, lead time.Duration, gen func() wgtypes.Key) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, k := range m.pairs {
+		if k.Next != (wgtypes.Key{}) && !now.Before(k.NextAt) {
+			k.Current, k.Next, k.NextAt, k.ChangedAt = k.Next, wgtypes.Key{}, time.Time{}, k.NextAt
+			m.pairs[id] = k
+		}
+	}
+	if !m.pairsAt.IsZero() && now.Sub(m.pairsAt) < every {
+		return 0, nil
+	}
+	m.pairsAt = now
+	n := 0
+	for id, k := range m.pairs {
+		if k.Next == (wgtypes.Key{}) {
+			k.Next, k.NextAt = gen(), now.Add(lead)
+			m.pairs[id] = k
+			n++
+		}
+	}
+	if n > 0 {
+		m.version++
+	}
+	return n, nil
+}
+
+func (m *Memory) ReplacePairKeys(_ context.Context, peerID int64, gen func() wgtypes.Key) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for id, k := range m.pairs {
+		if id[0] == peerID || id[1] == peerID {
+			k.Current, k.Next, k.NextAt, k.ChangedAt = gen(), wgtypes.Key{}, time.Time{}, now
+			m.pairs[id] = k
+		}
+	}
+	m.version++
+	return nil
 }
 
 func (m *Memory) RotatePeerKey(_ context.Context, peerID int64, oldKey, newKey wgtypes.Key) error {

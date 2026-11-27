@@ -32,6 +32,14 @@ type State struct {
 	// control plane's answer is known (hwkey.go).
 	KeyCreatedAt   time.Time `json:"key_created_at,omitzero"`
 	NextPrivateKey *Key      `json:"next_private_key,omitempty"`
+	// The preshared key with the control nodes (psk.go; nil: none): the one they have, when it was
+	// agreed and for which of the device's WireGuard keys (public); NextPresharedKey and NextPSKTag
+	// a change whose outcome is open, kept until it is known.
+	PresharedKey     *Key      `json:"preshared_key,omitempty"`
+	PSKAt            time.Time `json:"psk_at,omitzero"`
+	PSKFor           string    `json:"psk_for,omitempty"`
+	NextPresharedKey *Key      `json:"next_preshared_key,omitempty"`
+	NextPSKTag       string    `json:"next_psk_tag,omitempty"`
 }
 
 const stateFile = "state.json"
@@ -132,6 +140,9 @@ type Running struct {
 	// KeyCreatedAt when its WireGuard key was made (RFC 3339).
 	HardwareKey  string `json:"hardware_key,omitempty"`
 	KeyCreatedAt string `json:"key_created_at,omitempty"`
+	// PresharedKey: the preshared key with the control nodes (Constitution 9): "none yet", since
+	// when (RFC 3339), "changing", ...
+	PresharedKey string `json:"preshared_key,omitempty"`
 	// User and UserName: the person the home network has the device bound to by single sign-on
 	// (api.Self), as the control plane says; `ento whoami`.
 	User     string `json:"user,omitempty"`

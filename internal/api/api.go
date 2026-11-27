@@ -36,6 +36,11 @@ const (
 	// (0.31); PathRotate changes its WireGuard key (RotateRequest), certified by that hardware key.
 	PathHWKey  = "/v1/hwkey"
 	PathRotate = "/v1/rotate"
+	// PathPSK agrees on a new preshared key between the device and its control nodes
+	// (PSKRequest → PSKResponse, Constitution 9.1), and PathPSKConfirm makes it the one in use
+	// (PSKConfirm); both signed with the device's key.
+	PathPSK        = "/v1/psk"
+	PathPSKConfirm = "/v1/psk/confirm"
 	// PathRecord returns the network record to publish at _ento.<domain> (NetworkRecordResponse).
 	PathRecord = "/v1/admin/record"
 	PathInfo   = "/v1/admin/info"
@@ -64,7 +69,10 @@ const (
 	PathAuthorities = "/v1/admin/authorities"
 	PathCredential  = "/v1/credential"
 	PathAdminLinks  = "/v1/admin/links"
-	PathLinks       = "/v1/links"
+	// PathPlain adds a plain WireGuard peer (PlainRequest → PlainResponse; full administration,
+	// Constitution 6).
+	PathPlain = "/v1/admin/plain"
+	PathLinks = "/v1/links"
 
 	// PathAdminUI: GET describes the admin interface; POST approves a session of it that a
 	// browser on the calling device shows the code of (signed calls of admin or operator devices).
@@ -118,6 +126,9 @@ type Control struct {
 	PublicKey string `json:"public_key"`
 	Endpoint  string `json:"endpoint"`
 	Address   string `json:"address"`
+	// PresharedKeys: the node sets the device's preshared key on its tunnel (Constitution 9); a
+	// device sets none on its tunnel with a node that does not (an older one).
+	PresharedKeys bool `json:"psk,omitempty"`
 }
 
 // RedeemRequest is sent by an agent, from its temporary address, to exchange a token for a peer.
@@ -128,6 +139,9 @@ type RedeemRequest struct {
 	// Credential is required with an authority's token: it is signed by the authority for
 	// PublicKey (see package credential).
 	Credential string `json:"credential,omitempty"`
+	// PSKEncapsulationKey starts the device's preshared key with its control nodes from its first
+	// handshake (package psk; RedeemResponse.PSKCiphertext completes it).
+	PSKEncapsulationKey string `json:"psk_encapsulation_key,omitempty"`
 }
 
 // RedeemResponse describes the new peer.
@@ -136,11 +150,67 @@ type RedeemResponse struct {
 	Network  string    `json:"network"`
 	Approved bool      `json:"approved"`
 	Controls []Control `json:"controls"`
+	// PSKCiphertext answers RedeemRequest.PSKEncapsulationKey: the preshared key the control nodes
+	// set on the new key's tunnels from the start (absent: none, a control node older than this).
+	PSKCiphertext string `json:"psk_ciphertext,omitempty"`
+}
+
+// PlainPeer is a plain WireGuard peer as its gateway sees it: its key, address and name, the
+// preshared key of their tunnel, and what each device may open on it (Accept: by overlay address,
+// port rules as Peer.Accept).
+type PlainPeer struct {
+	PublicKey    string              `json:"public_key"`
+	Address      string              `json:"address"`
+	Hostname     string              `json:"hostname"`
+	PresharedKey string              `json:"psk,omitempty"`
+	Accept       map[string][]string `json:"accept,omitempty"`
+}
+
+// PlainRequest adds a device without the agent (Constitution 6): its name, the gateway that carries
+// it (a device's name), its device groups (never a role's), its public key (made on the device; none:
+// the control node makes a key pair and shows the private half once, in the configuration), and the
+// endpoint its configuration names for the gateway (none: the gateway's as last seen).
+type PlainRequest struct {
+	Name      string   `json:"name"`
+	Via       string   `json:"via"`
+	Groups    []string `json:"groups,omitempty"`
+	PublicKey string   `json:"public_key,omitempty"`
+	Endpoint  string   `json:"endpoint,omitempty"`
+}
+
+// PlainResponse is the device made and its WireGuard configuration (wg-quick's format): with its
+// private key only when the control node made it, which is then shown this once and not kept.
+type PlainResponse struct {
+	ID      int64  `json:"id"`
+	Address string `json:"address"`
+	Config  string `json:"config"`
+}
+
+// PSKRequest starts an exchange of a new preshared key (package psk): an ML-KEM-768 encapsulation
+// key (base64url) the agent keeps the decapsulation key of.
+type PSKRequest struct {
+	EncapsulationKey string `json:"encapsulation_key"`
+}
+
+// PSKResponse is the ciphertext the agent derives the new key and its tag from. The control nodes
+// keep it as the device's next key until it is confirmed.
+type PSKResponse struct {
+	Ciphertext string `json:"ciphertext"`
+}
+
+// PSKConfirm says the agent now uses the new key on its tunnels with the control nodes, by its tag:
+// the control nodes then set it on theirs and forget the one it replaces. Confirming the key in use
+// again is answered as success, so a lost answer can be asked again.
+type PSKConfirm struct {
+	Tag string `json:"tag"`
 }
 
 // NetMap is everything an agent needs to configure its interface.
 type NetMap struct {
-	Version  int64     `json:"version"`
+	Version int64 `json:"version"`
+	// Time is the control node's clock when it answered (Unix milliseconds): devices switch pair
+	// keys (Peer.PresharedKeyAt) by it, whatever their own clock says.
+	Time     int64     `json:"time,omitempty"`
 	Network  string    `json:"network"`
 	Self     Self      `json:"self"`
 	Controls []Control `json:"controls"`
@@ -280,6 +350,10 @@ type Self struct {
 	Routes []string `json:"routes,omitempty"`
 	// Exit: this device is an exit (it forwards its peers' internet traffic, and answers their DNS).
 	Exit bool `json:"exit,omitempty"`
+	// Plain are the plain WireGuard peers this device carries as their gateway (Constitution 6):
+	// its own WireGuard peers, whose traffic it forwards, filtering for them what others may open
+	// on them (they cannot themselves).
+	Plain []PlainPeer `json:"plain,omitempty"`
 	// RotateKey asks a device with a bound hardware key to change its WireGuard key now (0.31), as
 	// CheckInResponse.RotateKey does: the map reaches the device sooner when a copy of it competes
 	// for its WireGuard session.
@@ -315,6 +389,15 @@ type Peer struct {
 	Address   string   `json:"address"`
 	Hostname  string   `json:"hostname"`
 	Endpoints []string `json:"endpoints"`
+	// The preshared key of the tunnel with this peer (Constitution 9.1; absent: none): the one in
+	// use, and the next one with the time both ends switch to it (Unix seconds, by the control
+	// nodes' clock: NetMap.Time).
+	PresharedKey     string `json:"psk,omitempty"`
+	PresharedKeyNext string `json:"psk_next,omitempty"`
+	PresharedKeyAt   int64  `json:"psk_at,omitempty"`
+	// Via: the peer is a plain WireGuard peer (Constitution 6) that this gateway carries (its
+	// public key): it is no WireGuard peer of the device, its address goes to that gateway.
+	Via string `json:"via,omitempty"`
 	// Accept is what this peer may open on the device, as port rules (package ports: "all",
 	// "tcp/22", "udp/53", "icmp", ...); with NetMap.Filter, empty means nothing (the peer only
 	// answers the device's connections).
@@ -461,8 +544,14 @@ type PeerInfo struct {
 	HardwareKey   string `json:"hardware_key,omitempty"`
 	HardwareKeyAt string `json:"hardware_key_at,omitempty"`
 	KeyRotatedAt  string `json:"key_rotated_at,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	LoginAt       string `json:"login_at,omitempty"`
+	// PSKAt is when the device's preshared key with the control nodes was last set (Constitution 9;
+	// none: it has none, an agent older than 0.62 or a linked network's membership, and then none
+	// with its peers either).
+	PSKAt string `json:"psk_at,omitempty"`
+	// Via: a plain WireGuard peer's gateway (its name; Constitution 6).
+	Via       string `json:"via,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	LoginAt   string `json:"login_at,omitempty"`
 	// The layers (0.27): the machine's (given by its token or an administrator) and the person's
 	// (from their sign-in), and whether the person's is open, since when, their last traffic.
 	MachineApproved  bool     `json:"machine_approved,omitempty"`

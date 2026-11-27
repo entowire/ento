@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,7 +139,10 @@ type Server struct {
 
 	verMu   sync.Mutex
 	version int64
-	changed chan struct{} // closed and replaced whenever the version changes
+	// keyVersion: the store's KeyVersion last reconciled (devices' preshared keys, which change no
+	// network map).
+	keyVersion int64
+	changed    chan struct{} // closed and replaced whenever the version changes
 
 	seenMu   sync.Mutex
 	lastSeen map[wgtypes.Key]time.Time
@@ -226,6 +230,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	cfg.NoGateways = deviceGroups(cfg.NoGateways)
 	self, err := cfg.Store.RegisterControlNode(ctx, store.ControlNode{
 		Name: cfg.Name, PublicKey: cfg.PrivateKey.PublicKey(), Endpoint: cfg.Endpoint, LastSeen: time.Now(),
+		PresharedKeys: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("register control node: %w", err)
@@ -300,6 +305,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		}
 	}()
 	if s.version, err = cfg.Store.Version(ctx); err != nil {
+		wg.Close()
+		return nil, err
+	}
+	if s.keyVersion, err = cfg.Store.KeyVersion(ctx); err != nil {
 		wg.Close()
 		return nil, err
 	}
@@ -401,13 +410,17 @@ func (s *Server) loop(ctx context.Context) {
 	recon := time.NewTicker(reconcileInterval)
 	poll := time.NewTicker(versionPoll)
 	posture := time.NewTicker(postureEvery)
+	pairs := time.NewTicker(time.Minute)
 	defer recon.Stop()
 	defer poll.Stop()
 	defer posture.Stop()
+	defer pairs.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-pairs.C:
+			s.rotatePairKeys(ctx)
 		case <-s.cfg.Changes:
 			s.checkVersion(ctx)
 		case <-poll.C:
@@ -434,6 +447,11 @@ func (s *Server) checkVersion(ctx context.Context) {
 		s.cfg.Logf("version: %v", err)
 		return
 	}
+	kv, err := s.cfg.Store.KeyVersion(ctx)
+	if err != nil {
+		s.cfg.Logf("key version: %v", err)
+		return
+	}
 	s.verMu.Lock()
 	moved := v != s.version
 	if moved {
@@ -441,8 +459,12 @@ func (s *Server) checkVersion(ctx context.Context) {
 		close(s.changed)
 		s.changed = make(chan struct{})
 	}
+	// A device's preshared key changed: this node's tunnels change, no device's map does, so no
+	// long poll is woken.
+	keys := kv != s.keyVersion
+	s.keyVersion = kv
 	s.verMu.Unlock()
-	if moved {
+	if moved || keys {
 		if err := s.reconcile(ctx); err != nil {
 			s.cfg.Logf("reconcile: %v", err)
 		}
@@ -531,7 +553,22 @@ func (s *Server) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.relay.table.Store(newRelayTable(peers, policies, ps, routes))
+	psks, err := s.cfg.Store.PresharedKeys(ctx)
+	if err != nil {
+		return err
+	}
+	plain, err := s.cfg.Store.PlainPeers(ctx)
+	if err != nil {
+		return err
+	}
+	s.relay.table.Store(newRelayTable(peers, policies, ps, routes, plain))
+	// A gateway's tunnel carries its plain peers' addresses too (Constitution 6.2).
+	carried := map[int64][]netip.Addr{}
+	for _, p := range peers {
+		if pp, ok := plain[p.ID]; ok && pp.Gateway != 0 && p.Approved && !p.Suspended {
+			carried[pp.Gateway] = append(carried[pp.Gateway], p.Address)
+		}
+	}
 	desired := make(map[wgtypes.Key]wgPeer, len(peers)+len(tokens))
 	for _, p := range peers {
 		// A suspended device is no WireGuard peer of the control nodes at all: it reaches nothing,
@@ -539,7 +576,12 @@ func (s *Server) reconcile(ctx context.Context) error {
 		if p.Suspended {
 			continue
 		}
-		desired[p.PublicKey] = wgPeer{AllowedIP: p.Address, Endpoint: p.Endpoint, Quiet: quietOS(p.OS)}
+		if _, isPlain := plain[p.ID]; isPlain {
+			continue // no tunnel of its own with the control nodes: through its gateway's
+		}
+		slices.SortFunc(carried[p.ID], func(a, b netip.Addr) int { return a.Compare(b) })
+		desired[p.PublicKey] = wgPeer{AllowedIP: p.Address, Endpoint: p.Endpoint, Quiet: quietOS(p.OS),
+			PresharedKey: psks[p.ID].Current, Carried: carried[p.ID]}
 	}
 	for _, t := range tokens {
 		desired[t.PublicKey] = wgPeer{AllowedIP: t.TempAddress, PresharedKey: t.PresharedKey}

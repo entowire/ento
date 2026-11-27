@@ -20,7 +20,7 @@ func TestRelayPermits(t *testing.T) {
 	pending := peer(3, false, "servers")
 	laptop := peer(4, true, "laptops")
 	table := newRelayTable([]store.Peer{admin, server, pending, laptop},
-		[]store.Policy{{Source: "admins", Destination: "servers"}}, nil, nil)
+		[]store.Policy{{Source: "admins", Destination: "servers"}}, nil, nil, nil)
 
 	cases := []struct {
 		name     string
