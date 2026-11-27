@@ -148,6 +148,9 @@ func (a *runner) syncExit(exit *exitPick) {
 		}
 	}
 	a.exit, a.exitSet, a.exitAt = exit, true, time.Now()
+	if exit == nil {
+		appExit.CompareAndSwap(a, nil)
+	}
 	if !same && a.announces {
 		go a.announce() // it takes a.mu, which the caller holds
 	}

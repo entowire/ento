@@ -18,9 +18,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * The details the main screen leaves out, for whoever helps (or is curious): the device's address
- * and network, who is signed in, its groups and role, peers, routes, DNS, the exit, its posture,
- * the last error and the versions; and Send logs.
+ * The details the main screen leaves out, for whoever helps (or is curious): the phone's (the
+ * agent, its routes, DNS server and exit in use, versions), then each network's alike (its address
+ * and range, who is signed in, its groups and role, peers, exits offered, posture, attestation);
+ * Join another network, and Send logs.
  */
 public class AdvancedActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -39,10 +40,17 @@ public class AdvancedActivity extends Activity {
         rows.setPadding(0, Ui.dp(this, 12), 0, 0);
         root.addView(rows);
 
+        // One more network, with its QR code or words, on the main screen (0.61: from here).
+        Button joinAnother = Ui.button(this, "Join another network", v -> startActivity(
+                new Intent(this, MainActivity.class).setAction(MainActivity.JOIN_ANOTHER)));
+        Ui.setPrimary(joinAnother, false);
+        ((LinearLayout.LayoutParams) joinAnother.getLayoutParams()).topMargin = Ui.dp(this, 28);
+        root.addView(joinAnother);
+
         // What the app logged, its crash reports and why Android ended it, for whoever helps.
         Button sendLogs = Ui.button(this, "Send logs", v -> sendLogs());
         Ui.setPrimary(sendLogs, false);
-        ((LinearLayout.LayoutParams) sendLogs.getLayoutParams()).topMargin = Ui.dp(this, 28);
+        ((LinearLayout.LayoutParams) sendLogs.getLayoutParams()).topMargin = Ui.dp(this, 12);
         root.addView(sendLogs);
         TextView about = Ui.text(this, "Shares the app's logs and crash reports as one file, through the apps you pick. Nothing leaves the phone otherwise.", 14, R.color.muted);
         about.setPadding(0, Ui.dp(this, 8), 0, 0);
@@ -77,82 +85,91 @@ public class AdvancedActivity extends Activity {
 
     private void show() {
         rows.removeAllViews();
-        try {
-            JSONObject s = new JSONObject(Mobile.status(Agent.stateDir(this), ""));
-            if (s.getBoolean("enrolled")) {
-                row("Address", s.optString("address"));
-                String net = Mobile.network(Agent.stateDir(this));
-                if (!net.isEmpty()) row("Network", new JSONObject(net).optString("network"));
-            } else {
-                row("Address", "not joined");
-            }
-            row("Agent", s.getBoolean("running") ? "running" : "stopped");
-            if (!s.optString("user").isEmpty()) row("Signed in as", s.getString("user"));
-            else if (!s.optString("bound_user").isEmpty()) row("Belongs to", s.getString("bound_user") + " (signed out)");
-            if (s.has("approved")) row("Approved", s.getBoolean("approved") ? "yes" : "no");
-            row("Groups", join(s.optJSONArray("groups")));
-            if (s.optBoolean("administers")) row("Role", "administers the network");
-            JSONArray peers = s.optJSONArray("peers");
-            if (peers != null) {
-                int reachable = 0;
-                StringBuilder list = new StringBuilder();
-                for (int i = 0; i < peers.length(); i++) {
-                    JSONObject p = peers.getJSONObject(i);
-                    int ago = p.getInt("handshake_seconds_ago");
-                    if (ago >= 0 && ago < 180) reachable++;
-                    if (list.length() > 0) list.append('\n');
-                    list.append(p.optString("endpoint", "?")).append(ago < 0 ? ", no handshake" : ", handshake " + ago + " s ago");
-                }
-                row("Peers", reachable + " of " + peers.length() + " connected" + (list.length() > 0 ? "\n" + list : ""));
-            }
-            row("Routes", join(s.optJSONArray("routes")));
-            row("DNS server", s.optString("dns"));
-            JSONArray exits = s.optJSONArray("exits");
-            if (exits != null && exits.length() > 0) {
-                StringBuilder e = new StringBuilder();
-                for (int i = 0; i < exits.length(); i++) {
-                    JSONObject x = exits.getJSONObject(i);
-                    if (e.length() > 0) e.append('\n');
-                    e.append(x.optString("route")).append(" via ").append(x.optString("via")).append(x.optBoolean("in_use") ? " (in use)" : "");
-                }
-                row("Exits", e.toString());
-            }
-            row("Posture", s.optString("posture"));
-            JSONArray failing = s.optJSONArray("posture_failing");
-            if (failing != null && failing.length() > 0) {
-                StringBuilder f = new StringBuilder();
-                for (int i = 0; i < failing.length(); i++) {
-                    JSONObject x = failing.getJSONObject(i);
-                    if (f.length() > 0) f.append('\n');
-                    f.append(x.optString("check")).append(": ").append(x.optString("reason"));
-                }
-                row("Failing checks", f.toString());
-            }
-            if (s.has("attested")) row("Attestation", s.get("attested").toString());
-            row("Last error", s.optString("error"));
-            row("Agent version", s.optString("version"));
-            // The networks joined besides the first (0.60), each on its own lines.
-            JSONArray nets = new JSONArray(Mobile.networks(Agent.stateDir(this)));
-            for (int i = 0; i < nets.length(); i++) {
-                JSONObject n = nets.getJSONObject(i);
-                if (n.optBoolean("first")) continue;
-                JSONObject o = new JSONObject(Mobile.status(Agent.stateDir(this), n.getString("domain")));
-                StringBuilder v = new StringBuilder(o.optString("address"));
-                v.append(o.optBoolean("running") ? ", running" : ", not running");
-                if (o.has("approved")) v.append(o.optBoolean("approved") ? ", approved" : ", not approved");
-                if (!o.optString("user").isEmpty()) v.append("\nsigned in as ").append(o.optString("user"));
-                if (!o.optString("error").isEmpty()) v.append("\n").append(o.optString("error"));
-                row("Network " + n.getString("domain"), v.toString());
-            }
-        } catch (Exception e) {
-            row("Error", String.valueOf(e.getMessage()));
-        }
         String version = "?";
         try {
             version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Exception ignored) {
         }
-        row("App version", version);
+        try {
+            String dir = Agent.stateDir(this);
+            JSONObject s = new JSONObject(Mobile.status(dir, ""));
+            JSONArray nets = new JSONArray(Mobile.networks(dir));
+            if (nets.length() == 0) row("Network", "not joined");
+            row("Agent", s.getBoolean("running") ? "running" : "stopped");
+            row("Routes", join(s.optJSONArray("routes")));
+            row("DNS server", s.optString("dns"));
+            if (!s.optString("exit").isEmpty()) row("Exit in use", s.optString("exit") + ", " + s.optString("exit_network"));
+            row("Last error", s.optString("error"));
+            row("Agent version", s.optString("version"));
+            row("App version", version);
+            // Each network's range, from what the VPN is created with.
+            java.util.Map<String, String> ranges = new java.util.HashMap<>();
+            String vpn = Mobile.network(dir);
+            JSONArray list = vpn.isEmpty() ? null : new JSONObject(vpn).optJSONArray("networks");
+            for (int i = 0; list != null && i < list.length(); i++) {
+                ranges.put(list.getJSONObject(i).optString("domain"), list.getJSONObject(i).optString("network"));
+            }
+            for (int i = 0; i < nets.length(); i++) {
+                JSONObject n = nets.getJSONObject(i);
+                String id = n.optBoolean("first") ? "" : n.getString("domain");
+                network(n.getString("domain").isEmpty() ? "Your network" : n.getString("domain"),
+                        new JSONObject(Mobile.status(dir, id)), ranges.get(n.getString("domain")));
+            }
+        } catch (Exception e) {
+            row("Error", String.valueOf(e.getMessage()));
+            row("App version", version);
+        }
+    }
+
+    /** A network's details, under its domain. */
+    private void network(String title, JSONObject s, String range) throws org.json.JSONException {
+        TextView t = Ui.text(this, title, 18, R.color.fg);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setPadding(0, Ui.dp(this, 28), 0, 0);
+        rows.addView(t);
+        row("Address", s.optString("address"));
+        row("Range", range);
+        row("Running", s.optBoolean("running") ? "yes" : "no");
+        if (!s.optString("user").isEmpty()) row("Signed in as", s.getString("user"));
+        else if (!s.optString("bound_user").isEmpty()) row("Belongs to", s.getString("bound_user") + " (signed out)");
+        if (s.has("approved")) row("Approved", s.getBoolean("approved") ? "yes" : "no");
+        row("Groups", join(s.optJSONArray("groups")));
+        if (s.optBoolean("administers")) row("Role", "administers the network");
+        JSONArray peers = s.optJSONArray("peers");
+        if (peers != null) {
+            int reachable = 0;
+            StringBuilder list = new StringBuilder();
+            for (int i = 0; i < peers.length(); i++) {
+                JSONObject p = peers.getJSONObject(i);
+                int ago = p.getInt("handshake_seconds_ago");
+                if (ago >= 0 && ago < 180) reachable++;
+                if (list.length() > 0) list.append('\n');
+                list.append(p.optString("endpoint", "?")).append(ago < 0 ? ", no handshake" : ", handshake " + ago + " s ago");
+            }
+            row("Peers", reachable + " of " + peers.length() + " connected" + (list.length() > 0 ? "\n" + list : ""));
+        }
+        JSONArray exits = s.optJSONArray("exits");
+        if (exits != null && exits.length() > 0) {
+            StringBuilder e = new StringBuilder();
+            for (int i = 0; i < exits.length(); i++) {
+                JSONObject x = exits.getJSONObject(i);
+                if (e.length() > 0) e.append('\n');
+                e.append(x.optString("route")).append(" via ").append(x.optString("via")).append(x.optBoolean("in_use") ? " (in use)" : "");
+            }
+            row("Exits", e.toString());
+        }
+        row("Posture", s.optString("posture"));
+        JSONArray failing = s.optJSONArray("posture_failing");
+        if (failing != null && failing.length() > 0) {
+            StringBuilder f = new StringBuilder();
+            for (int i = 0; i < failing.length(); i++) {
+                JSONObject x = failing.getJSONObject(i);
+                if (f.length() > 0) f.append('\n');
+                f.append(x.optString("check")).append(": ").append(x.optString("reason"));
+            }
+            row("Failing checks", f.toString());
+        }
+        if (s.has("attested")) row("Attestation", s.get("attested").toString());
     }
 
     /** A label over its value; an empty value is left out. */

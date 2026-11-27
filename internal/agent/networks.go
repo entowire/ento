@@ -27,6 +27,7 @@ import (
 // Each network runs in the device's own namespace on an interface of its own, as an equal of the
 // first: its own key and hardware key, rights, filter, posture reports, sign-in and DNS. The
 // device forwards nothing between them, and no network's routes or names take another's
+// except on a phone, where any network's exit can be used, one at a time (0.61, inprocess.go).
 
 // Membership is a network the device joined besides the first.
 type Membership struct {

@@ -10,7 +10,8 @@
 //	mobilehost run STATE                          the VPN, until killed
 //	mobilehost status STATE [DOMAIN]              mobile.Status, as the running app last wrote it
 //	mobilehost networks STATE                     mobile.Networks
-//	mobilehost leave STATE DOMAIN
+//	mobilehost leave STATE DOMAIN                 any network ("" for the first, with run stopped)
+//	mobilehost exit STATE DOMAIN CHOICE           mobile.SetExit ("" for the first network)
 //	mobilehost resolve SERVER NAME                an A query to SERVER (port 53), as an app would
 package main
 
@@ -34,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: mobilehost enroll|join|run|status|networks|leave|resolve ...")
+		fmt.Fprintln(os.Stderr, "usage: mobilehost enroll|join|run|status|networks|leave|exit|resolve ...")
 		os.Exit(2)
 	}
 	var err error
@@ -61,6 +62,8 @@ func main() {
 		fmt.Println(mobile.Networks(dir))
 	case "leave":
 		err = mobile.Leave(dir, os.Args[3])
+	case "exit":
+		err = mobile.SetExit(dir, os.Args[3], os.Args[4])
 	case "resolve":
 		err = resolve(os.Args[2], os.Args[3])
 	case "run":

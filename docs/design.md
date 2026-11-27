@@ -702,7 +702,10 @@ Every program on the device reaches every network, so what keeps them apart is t
    prerouting filter); a network it serves that another network routes is dropped there.
 4. **What only one network decides.** Exits (the system's default route and `~.` DNS) and releases
    come from the first network alone; a joined network's exits are not used. Its WireGuard packets
-   carry the exit's mark, as the first network's do, so they never go through the exit.
+   carry the exit's mark, as the first network's do, so they never go through the exit. On a phone
+   (0.61, one VPN interface for every network) releases are the app's, and any network's exit may
+   be used, one at a time: the network holding it (`appExit`) takes on the interface what no other
+   claims (`0.0.0.0/0` among its port's claims), and its resolver becomes the VPN's DNS server.
 5. **Saying which network asks.** Sign-ins, sign-in approvals and `ento agent approvals` name the
    network on a device in several.
 

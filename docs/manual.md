@@ -135,8 +135,9 @@ once someone is; 0.56.1: someone is signed in while their layer is open, so Sign
 after Sign out, and Advanced shows whose phone it stays). Since 0.56 the sign-in page opens in the browser and, once the person has signed
 in, returns to the app by itself: no code to type (see Single sign-on, apps). Only the network's own range goes through
 the VPN; the phone's other traffic is untouched. Always-on VPN (Android settings) works too.
-Since 0.60 the phone can be in several networks at once: **Join another network**, then the QR
-code or the domain and words of that network (see Several networks on one device).
+Since 0.60 the phone can be in several networks at once: **Join another network** (under
+**Advanced** since 0.61), then the QR code or the domain and words of that network (see Several
+networks on one device).
 
 ## Android app
 
@@ -146,14 +147,19 @@ with the QR code of the domain and the words an administrator's admin page shows
 or with both typed (**Type the domain and the words instead**), connects, and signs in or out.
 After joining with words it connects and starts signing in by itself (0.57: for an invited
 account, the sign-in is its setup).
-Since 0.55.1 the main screen holds only what a person needs: the state (connected, signed in as
-whom, an exit in use, a check the device fails and why, an error; a sign-in's outcome below the
-buttons only when it adds to that: a failure, or groups that give the device no access), Connect or
-Disconnect, Sign in or Sign out, the exit an administrator offers, and the admin page on admin and operator devices.
-The technical details (address and network, approval, groups, role, peers with their last
-handshakes, routes, DNS server, exits, posture, failing checks, attestation, last error, the agent's
-and the app's versions) and **Send logs** are on `AdvancedActivity`, behind **Advanced**, a small
-link at the bottom of the main screen. The screens use the website's colours, light or dark as the
+Since 0.55.1 the main screen holds only what a person needs; since 0.61 every network the phone
+is in alike: a card per network, with its domain and, while connected, only what it needs of the
+person (**Sign in to continue**, waiting for approval, a check the device fails and why; no
+"Connected": **Disconnect** says it). The card tapped is outlined in the accent, and the buttons
+below it are that network's: **Sign in** or **Sign out**, the exit its administrator offers, the
+admin page on admin and operator devices, and **Remove network** in red (asked once more). A
+sign-in's outcome shows below the buttons only when it adds something: a failure, or groups that
+give the device no access. At the bottom, **Connect** or **Disconnect**, the phone's (one VPN for
+every network), then **Advanced**, a small link. The technical details are on `AdvancedActivity`:
+the phone's (the agent, routes, DNS server, the exit in use and its network, last error, the
+agent's and the app's versions), then each network's under its domain (address and range, whether
+it runs, who is signed in, approval, groups, role, peers with their last handshakes, exits offered,
+posture, failing checks, attestation); then **Join another network** and **Send logs**. The screens use the website's colours, light or dark as the
 phone is (`res/values/colors.xml`, `res/values-night/`). Its one library is ZXing's core (0.30, a single jar without
 dependencies), which decodes the camera's frames; the camera code is the app's own (Camera2, no
 `androidx`), and the camera permission is asked for when someone scans. Every artifact
@@ -169,16 +175,19 @@ other platforms, bound with gomobile (`mobile/`, pinned in `go.mod`):
 - several networks (0.60): Android gives an app one VPN interface, so every network the phone is in
   shares it. The interface carries each network's address and range and their routes; the agent
   runs one WireGuard per network and hands each packet the system sends to the network whose range
-  or routes hold its destination (the first network takes the rest: its exit), and writes what
+  or routes hold its destination (the network whose exit is in use takes the rest, else the
+  first), and writes what
   every network sends back to the one interface (`internal/agent/muxtun.go`). Android picks one
   source address whatever the destination, often the first network's: a packet for another
   network leaves with that network's own address, and its answers get the address the program used
   back (addresses and checksums rewritten; flows kept 3 minutes idle, TCP 2 hours). The VPN's one
-  DNS server is the first network's resolver, which hands the names another network holds (its
-  domain, fixed names, forwarded zones) to that network's resolver. Joining another network runs
+  DNS server is a network's resolver (the one whose exit is in use, else the first running one's
+  that can answer every name, 0.61), which hands the names another network holds (its domain,
+  fixed names, forwarded zones) to that network's resolver. Joining another network runs
   its enrollment on a network stack of its own, its sockets protected, and the VPN is created
   again with the new address; approvals come from every network, each notification naming its
-  network. `test/e2e-mobile-networks.sh` tries it on Linux, `test/mobilehost` playing the app;
+  network. `test/e2e-mobile-networks.sh` tries it on Linux, `test/mobilehost` playing the app (0.61:
+  also another network's exit, and removing the first network);
 - the service starts the agent only once Android reports the VPN network: sockets opened before
   would reach the control nodes outside the tunnel;
 - while the tunnel is up, the app shows a notification for each sign-in approval waiting for the
@@ -1813,6 +1822,7 @@ all of them.
 - **Exits and releases** come from the first network only: a joined network's exits are not used,
   and its release offers are not taken. While the first network's exit is in use, the joined
   networks' own WireGuard packets leave by the device's connection, as the first's do (marked).
+  On a phone (0.61) any network's exit can be used, one at a time (below).
 
 Leaving forgets the network on the device (its interface, filter table and state); the network
 keeps the device in its list until an administrator there deletes it. Each network learns what
@@ -1820,15 +1830,31 @@ the device reports to it (host name, posture), as any network it is in does. mac
 join one network for now (`ento join` says so); linked networks remain for keeping
 a network apart from the device's other programs (a namespace of its own).
 
-The Android app (0.60) joins further networks too: **Join another network** on the main screen,
-then the network's QR code, or its domain and words, as for the first (a network the phone is in,
-or whose range overlaps one of its ranges or routes, is refused before the words are checked).
-Once the phone is in more than one, a row at the top picks the network the screen is about: its
-state, **Sign in** or **Sign out**, the admin page, and **Leave DOMAIN on this phone** for a joined
-one. **Connect** is the phone's (one VPN for all), exits are the first network's, and approvals
-arrive from every network, each naming its network. Advanced lists each joined network with its
-address, whether it runs and who is signed in. The networks are kept apart as on Linux: ranges,
-routes and names (see Android app for how they share the one VPN).
+The Android app (0.60) joins further networks too: **Join another network** (under **Advanced**
+since 0.61), then the network's QR code, or its domain and words, as for the first (a network the
+phone is in, or whose range overlaps one of its ranges or routes, is refused before the words are
+checked). Since 0.61 the app treats every network alike, the first included: a card each on the
+main screen; the one tapped has its own **Sign in** or **Sign out**, exit, admin page and
+**Remove network**. **Connect** and **Disconnect** are the phone's (Android gives an app one VPN,
+so every network is up or down together), and approvals arrive from every network, each naming its
+network.
+
+- **Removing any network.** A joined network goes while connected. The first network's state is
+  the app's state directory itself, so removing it stops the VPN for a moment: the network joined
+  next (by domain) moves into its place (its state into the state directory; `mobile.Leave`,
+  `agent.LeaveFirstInProcess`) and the VPN starts again with the networks left. Removing the last
+  leaves the phone in none, back at **Join your network**. Before 0.61 the first network could only
+  go by clearing the app's storage.
+- **Any network's exit, one at a time.** Each network's card offers the exit its administrator
+  gives this phone; choosing one turns the others' off (`mobile.SetExit` writes `off` in the other
+  networks' state). The network whose exit is in use takes every packet no network's range or
+  route claims, and its resolver becomes the VPN's DNS server (it asks the exit's gateway, and
+  hands the other networks' names to theirs). Should two networks offer an exit used by default,
+  the one whose map comes first keeps it; the other logs that the phone uses the first one's.
+  Before 0.61 only the first network's exits were used.
+
+The networks are kept apart as on Linux: ranges, routes and names (see Android app for how they
+share the one VPN).
 
 ## Linked networks
 

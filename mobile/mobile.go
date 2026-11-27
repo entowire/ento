@@ -168,11 +168,17 @@ func JoinWords(stateDir, domain, record, words, hostname string) (err error) {
 	return agent.JoinInProcess(ctx, cfg(stateDir, hostname), domain, rec.Network, tok)
 }
 
-// Leave forgets a joined network on this phone (not the first: the app's own reset does). The
-// network keeps the device until an administrator deletes it.
+// Leave forgets a network on this phone ("" or its domain for the first); the network keeps the
+// device until an administrator deletes it. Any network (0.61): the first only while the agent is
+// stopped (the app stops its VPN, then starts it again), and the network joined next takes its
+// place; leaving the last leaves the phone in none.
 func Leave(stateDir, domain string) (err error) {
 	defer plain(&err)
-	return agent.LeaveInProcess(stateDir, domain)
+	d := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	if d == "" || d == agent.FirstDomain(stateDir) {
+		return agent.LeaveFirstInProcess(stateDir)
+	}
+	return agent.LeaveInProcess(stateDir, d)
 }
 
 // dir is the state directory of a network: the first for "" or its domain.
@@ -301,14 +307,15 @@ func SetAttestor(a Attestor) {
 // "login_required", "error", "peers": [{"endpoint", "handshake_seconds_ago", "rx", "tx"}]}, and
 // once the network map arrived "user" (the person signed in, "" for none), "bound_user" (the person
 // the phone belongs to, signed in or not), "approved", "groups", "administers" (an admin or operator device),
-// "routes" (the networks the VPN routes, 0.0.0.0/0 while an exit is in use), "exits" (offered:
-// [{"route", "via", "default", "in_use"}]), "exit" (the one in use, "" for none) and "dns" (the
-// DNS server the VPN names, the agent's resolver, "" for none);
+// "routes" (the networks the VPN routes, 0.0.0.0/0 while an exit is in use), "exits" (the ones this
+// network offers: [{"route", "via", "default", "in_use"}]), "exit" and "exit_network" (the exit the
+// phone uses and the domain of its network, "" for none) and "dns" (the DNS server the VPN names, a
+// network's resolver, "" for none);
 // once the agent reported its posture "posture" (a summary), "posture_failing" (the checks the
 // device fails: [{"check", "reason"}]) and "attested" (what the control plane found in the
 // phone's attestation, api.Attested; absent when it sent none).
 //
-// domain names the network ("" for the first, 0.60); routes, exits, exit and dns are the phone's,
+// domain names the network ("" for the first, 0.60); routes, exit and dns are the phone's,
 // whichever network is asked about.
 func Status(stateDir, domain string) string {
 	out := map[string]any{"enrolled": false, "version": version, "domain": domain}
@@ -339,8 +346,8 @@ func Status(stateDir, domain string) string {
 		}
 		out["bound_user"] = self.User // whose phone it is, signed in or not
 		out["routes"] = agent.InProcessRoutes()
-		out["exits"] = agent.InProcessExits()
-		out["exit"] = agent.InProcessExit()
+		out["exits"] = agent.InProcessExits(domain)
+		out["exit"], out["exit_network"] = agent.InProcessExit()
 		out["dns"] = agent.InProcessDNS()
 	}
 	if facts, _, failing := agent.InProcessPosture(domain); facts != nil || len(failing) > 0 {
@@ -518,11 +525,30 @@ func AnswerApproval(stateDir, domain, id string, number int32, approve bool) (_ 
 	return agent.AnswerApproval(ctx, cfg(stateDir, ""), id, int(number), approve)
 }
 
-// SetExit chooses the exit the phone uses: a route's name, "off", or "" for the one used by default
-// (if any). The agent applies it within seconds; the VPN is created again with its routes.
-func SetExit(stateDir, choice string) (err error) {
+// SetExit chooses the exit the phone uses in a network ("" for the first): a route's name, "off",
+// or "" for the one used by default (if any). Choosing a route turns the other networks' exits off
+// (0.61: one exit at a time, any network's). The agents apply it within seconds; the VPN is created
+// again with its routes.
+func SetExit(stateDir, domain, choice string) (err error) {
 	defer plain(&err)
-	return agent.SetExitChoice(stateDir, choice)
+	d, err := dir(stateDir, domain)
+	if err != nil {
+		return err
+	}
+	if choice != "" && choice != agent.ExitOff {
+		others := []string{stateDir}
+		for _, n := range agent.Networks(stateDir) {
+			others = append(others, agent.NetworkDir(stateDir, n))
+		}
+		for _, o := range others {
+			if o != d {
+				if err := agent.SetExitChoice(o, agent.ExitOff); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return agent.SetExitChoice(d, choice)
 }
 
 // SetUpstreamDNS gives the agent the DNS servers of the network the phone uses beside the VPN

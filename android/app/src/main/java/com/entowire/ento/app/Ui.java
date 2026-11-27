@@ -14,7 +14,8 @@ import android.widget.TextView;
 
 /**
  * The app's few building blocks in the website's colours (res/values/colors.xml, values-night/ when
- * the phone is dark): text, a primary and a secondary button, a discreet link, a text field.
+ * the phone is dark): text, a primary, a secondary and a red button, a network's card, a discreet
+ * link, a text field.
  */
 final class Ui {
     private Ui() {
@@ -67,6 +68,39 @@ final class Ui {
         }
         int ripple = (color(c, R.color.muted) & 0x00ffffff) | 0x40000000;
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(ripple), shape, null));
+    }
+
+    /** A button for what cannot be undone (Remove network): filled with the warning red. */
+    static void setDanger(Button b) {
+        Context c = b.getContext();
+        GradientDrawable shape = new GradientDrawable();
+        shape.setCornerRadius(dp(c, 8));
+        shape.setColor(color(c, R.color.warn));
+        b.setTextColor(color(c, R.color.accent_ink));
+        int ripple = (color(c, R.color.muted) & 0x00ffffff) | 0x40000000;
+        b.setBackground(new RippleDrawable(ColorStateList.valueOf(ripple), shape, null));
+    }
+
+    /**
+     * A network's card on the main screen, full width: outlined, in the accent and bold when it is
+     * the one picked (the buttons below are its own).
+     */
+    static LinearLayout card(Context c, boolean picked) {
+        LinearLayout card = new LinearLayout(c);
+        card.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(c, 16);
+        card.setPadding(pad, dp(c, 14), pad, dp(c, 14));
+        GradientDrawable shape = new GradientDrawable();
+        shape.setCornerRadius(dp(c, 8));
+        shape.setColor(color(c, R.color.bg));
+        shape.setStroke(dp(c, picked ? 3 : 1), color(c, picked ? R.color.accent : R.color.line));
+        int ripple = (color(c, R.color.muted) & 0x00ffffff) | 0x40000000;
+        card.setBackground(new RippleDrawable(ColorStateList.valueOf(ripple), shape, null));
+        card.setClickable(true);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.bottomMargin = dp(c, 10);
+        card.setLayoutParams(p);
+        return card;
     }
 
     /** A small underlined text that acts as a link (Advanced, the typed way to join). */

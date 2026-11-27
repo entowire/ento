@@ -295,9 +295,13 @@ func startNetwork(cfg Config, env netEnv, st State, onApply func(api.NetMap), me
 }
 
 // home reports whether the runner is the device's first network: not a linked network, which lives
-// in a namespace of its own, nor another network the device joined (networks.go). Exits and
-// releases come from it alone.
+// in a namespace of its own, nor another network the device joined (networks.go). Releases come
+// from it alone, and exits but on a phone (exitsHere).
 func (a *runner) home() bool { return !a.member && !a.linked() }
+
+// exitsHere reports whether the runner may use an exit: the first network, and on a phone (an app's
+// VPN, inprocess.go) every network, one exit at a time (0.61).
+func (a *runner) exitsHere() bool { return a.home() || a.member && inAppVPN(a.ifc) }
 
 // linked reports whether the runner is a linked network's, in a namespace of its own (the system's
 // DNS and the device's other networks are none of its business).
@@ -325,6 +329,7 @@ func (a *runner) close() {
 		a.resolver = nil
 	}
 	a.mu.Unlock()
+	appExit.CompareAndSwap(a, nil)
 	if !a.linked() {
 		dropClaim(a.ifc.IfName())
 	}
@@ -691,12 +696,14 @@ func (a *runner) apply(nm api.NetMap) error {
 		}
 		granted = claimRoutes(a.ifc.IfName(), candidates)
 	}
-	if a.home() {
+	if a.exitsHere() {
 		if o, ok := chooseExit(nm, ExitChoice(a.cfg.StateDir)); ok {
-			if exitsSupported(a.ifc) {
-				exit = &o
-			} else {
+			if !exitsSupported(a.ifc) {
 				a.noteExit(fmt.Sprintf("exit %s through %q left unused: this system cannot use exits yet (Linux and Android can)", o.Route, o.Via))
+			} else if other := takeAppExit(a); other != "" {
+				a.noteExit(fmt.Sprintf("exit %s through %q left unused: the phone uses %s's exit", o.Route, o.Via, other))
+			} else {
+				exit = &o
 			}
 		}
 	}
@@ -791,7 +798,7 @@ func (a *runner) apply(nm api.NetMap) error {
 		return err
 	}
 	a.syncRoutes(wantRoutes)
-	if a.home() {
+	if a.exitsHere() {
 		if !exitPeer {
 			exit = nil
 		}

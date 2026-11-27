@@ -101,6 +101,9 @@ func syncPortLocked(p *muxPort, a *runner) {
 	for n := range a.osRoutes {
 		list = append(list, n)
 	}
+	if a.exit != nil { // the network whose exit is in use takes what no network claims (0.61)
+		list = append(list, exitNetwork)
+	}
 	p.setClaims(list)
 	inproc.Lock()
 	defer inproc.Unlock()
@@ -326,20 +329,11 @@ func LeaveInProcess(stateDir, domain string) error {
 }
 
 // InProcessRoutes returns the routes' networks every running network wants in the tunnel, sorted,
-// with 0.0.0.0/0 while the first network's exit is in use: a mobile system's VPN fixes its routes
+// with 0.0.0.0/0 while an exit is in use: a mobile system's VPN fixes its routes
 // when it is created, so the app creates it again when these change.
 func InProcessRoutes() []string {
-	var all []*runner
-	if a := current.Load(); a != nil {
-		all = append(all, a)
-	}
-	inproc.Lock()
-	for _, a := range inproc.members {
-		all = append(all, a)
-	}
-	inproc.Unlock()
 	var out []string
-	for _, a := range all {
+	for _, a := range inProcessAll() {
 		a.mu.Lock()
 		for n := range a.osRoutes {
 			out = append(out, n.String())
@@ -379,44 +373,71 @@ func InProcessPeers(domain string) (map[wgtypes.Key]PeerStatus, bool, bool) {
 	return st, true, a.loginRequired
 }
 
-// InProcessDNS returns the DNS server the VPN names, "" for none: the first network's resolver in
-// the packet path (dnsAddress), once it can answer every name (an exit in use, or the phone's DNS
-// servers known: SetUpstreamDNS). It sends the joined networks' names to theirs.
+// inProcessAll returns the running networks: the first, then the joined ones by domain.
+func inProcessAll() []*runner {
+	var all []*runner
+	if a := current.Load(); a != nil {
+		all = append(all, a)
+	}
+	inproc.Lock()
+	domains := make([]string, 0, len(inproc.members))
+	for d := range inproc.members {
+		domains = append(domains, d)
+	}
+	slices.Sort(domains)
+	for _, d := range domains {
+		all = append(all, inproc.members[d])
+	}
+	inproc.Unlock()
+	return all
+}
+
+// InProcessDNS returns the DNS server the VPN names, "" for none: a network's resolver in the
+// packet path (dnsAddress), once it can answer every name (an exit in use, or the phone's DNS
+// servers known: SetUpstreamDNS). It is the resolver of the network whose exit is in use, else the
+// first running network's that has one (0.61); it sends the names the other networks hold to theirs.
 func InProcessDNS() string {
-	a := current.Load()
-	if a == nil {
-		return ""
+	all := inProcessAll()
+	if o := appExit.Load(); o != nil && slices.Contains(all, o) {
+		all = append([]*runner{o}, all...)
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.resolver == nil {
-		return ""
+	for _, a := range all {
+		a.mu.Lock()
+		r := a.resolver
+		network := a.st.Network
+		a.mu.Unlock()
+		if r == nil {
+			continue
+		}
+		c := r.conf.Load()
+		if !c.exit.IsValid() && len(c.upstream) == 0 {
+			continue
+		}
+		return dnsAddress(network).String()
 	}
-	c := a.resolver.conf.Load()
-	if !c.exit.IsValid() && len(c.upstream) == 0 {
-		return ""
-	}
-	return dnsAddress(a.st.Network).String()
+	return ""
 }
 
-// InProcessExit returns the exit the first network uses ("" when none): the app routes 0.0.0.0/0
-// into its VPN then (InProcessRoutes lists it). Exits are the first network's only.
-func InProcessExit() string {
-	a := current.Load()
-	if a == nil {
-		return ""
+// InProcessExit returns the exit the phone uses and the domain of the network that offers it ("" when
+// none): the app routes 0.0.0.0/0 into its VPN then (InProcessRoutes lists it). Any network's exit,
+// one at a time (0.61).
+func InProcessExit() (route, domain string) {
+	for _, a := range inProcessAll() {
+		a.mu.Lock()
+		if a.exit != nil {
+			route, domain = a.exit.Route, a.st.RecordDomain
+		}
+		a.mu.Unlock()
+		if route != "" {
+			return route, domain
+		}
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.exit == nil {
-		return ""
-	}
-	return a.exit.Route
+	return "", ""
 }
 
-// InProcessExits returns the exits the first network offers.
-func InProcessExits() []RunningExit {
-	a := current.Load()
+// InProcessExits returns the exits a network offers ("" for the first).
+func InProcessExits(domain string) []RunningExit {
+	a := inProcessRunner(domain)
 	if a == nil {
 		return nil
 	}
@@ -442,4 +463,108 @@ func inProcessProtect() func(fd int) bool {
 	inproc.Lock()
 	defer inproc.Unlock()
 	return inproc.protect
+}
+
+// inAppVPN reports whether a network runs on a port of an app's VPN (RunOnTUN), where the app
+// routes and names the DNS server.
+func inAppVPN(t tunnel) bool {
+	u, ok := t.(*userTunnel)
+	return ok && u.noOS
+}
+
+// appExit is the network of the app's VPN whose exit is in use (nil: none): a phone sends all its
+// traffic through one exit at most, whichever network offers it (0.61).
+var appExit atomic.Pointer[runner]
+
+// takeAppExit lets a network of the app's VPN use an exit unless another uses one: "" when it may
+// (it holds the VPN's exit until syncExit drops it), else the domain of the network that does.
+// Elsewhere only the first network uses exits, and "" is returned. The caller holds a.mu.
+func takeAppExit(a *runner) string {
+	if !inAppVPN(a.ifc) {
+		return ""
+	}
+	if appExit.CompareAndSwap(nil, a) {
+		return ""
+	}
+	o := appExit.Load()
+	if o == nil || o == a {
+		if o == nil && !appExit.CompareAndSwap(nil, a) {
+			return takeAppExit(a)
+		}
+		return ""
+	}
+	if o.st.RecordDomain == "" {
+		return "the first network"
+	}
+	return o.st.RecordDomain
+}
+
+// deviceFiles are what the state directory keeps for the device rather than for its first network.
+var deviceFiles = []string{"networks", "links", defaultNetworkFile, "update-pending.json", "update-failed", downFile}
+
+// LeaveFirstInProcess forgets the first network on a phone (0.61), while its agent is stopped: the
+// network keeps the device until an administrator deletes it. The joined network first by domain
+// takes its place (its state moves into the state directory itself), so that every network can be
+// left alike; with none, the phone is in no network.
+func LeaveFirstInProcess(stateDir string) error {
+	if current.Load() != nil {
+		return errors.New("disconnect first: the networks stop while the first one is left")
+	}
+	if _, err := LoadState(stateDir); err != nil {
+		return errors.New("this phone is in no network")
+	}
+	dropMapApprovals(stateDir)
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !slices.Contains(deviceFiles, e.Name()) {
+			if err := os.RemoveAll(filepath.Join(stateDir, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	var next string
+	for _, d := range Networks(stateDir) {
+		if !exists(filepath.Join(NetworkDir(stateDir, d), "remove")) && exists(filepath.Join(NetworkDir(stateDir, d), stateFile)) {
+			next = d
+			break
+		}
+	}
+	if next == "" {
+		return nil
+	}
+	dir := NetworkDir(stateDir, next)
+	moved, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	// state.json last: until it is there, the state directory holds no network (an interruption
+	// leaves the phone to join again, never half of two networks).
+	slices.SortStableFunc(moved, func(a, b os.DirEntry) int {
+		return boolInt(a.Name() == stateFile) - boolInt(b.Name() == stateFile)
+	})
+	for _, e := range moved {
+		if e.Name() == membershipFile || slices.Contains(deviceFiles, e.Name()) {
+			continue
+		}
+		if err := os.Rename(filepath.Join(dir, e.Name()), filepath.Join(stateDir, e.Name())); err != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if DefaultNetwork(stateDir) == "" { // it named the network now first
+		_ = os.Remove(filepath.Join(stateDir, defaultNetworkFile))
+	}
+	return nil
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -13,7 +13,9 @@
 # Checks: both networks reached through the one interface by address, md's route through its
 # gateway, each network's names from the one DNS server the VPN names (the first network's
 # resolver hands md's names to md's), status of each network, a network overlapping one of the
-# phone's refused, and leaving md (home stays, md's addresses go).
+# phone's refused, md's exit (srv-m, into namespace en-inet) used by the phone (0.61: any network's
+# exit, with that network's resolver as the VPN's DNS server), leaving md (home stays, md's
+# addresses go), and, md joined again, leaving home, the first network: md takes its place.
 # Needs root (sudo), nsenter, docker (psql) and a PostgreSQL server the test may create databases
 # on (ENTO_TEST_POSTGRES, a DSN of its maintenance database).
 #
@@ -25,7 +27,7 @@ bin="$(realpath "${1:?usage: $0 path/to/ento}")"
 here="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d)"
 pids=()
-namespaces=(en-ph en-srvh en-srvm)
+namespaces=(en-ph en-srvh en-srvm en-inet)
 
 cleanup() {
   set +e
@@ -129,8 +131,12 @@ record_home="$(ENTO_DATABASE_URL="$(db home)" "$bin" control record --network 10
 record_md="$(ENTO_DATABASE_URL="$(db md)" "$bin" control record --network 100.81.0.0/16 2>/dev/null)"
 words() { ENTO_DATABASE_URL="$(db "$1")" "$bin" control token --network "$2" --approve --groups mobiles --words --ttl 10m 2>/dev/null | head -1; }
 phone enroll "$work/phone" "$record_home" "$(words home 100.80.0.0/16)" || fail "enrolling in home"
-inns en-ph "$work/mobilehost" run "$work/phone" > "$work/phone.log" 2>&1 &
-pids+=($!)
+start_phone() {
+  inns en-ph "$work/mobilehost" run "$work/phone" >> "$work/phone.log" 2>&1 &
+  phone_pid=$!
+  pids+=($phone_pid)
+}
+start_phone
 wait_for 60 inns en-ph ping -c1 -W1 "$srv_h" || fail "the phone cannot reach srv-h in home"
 
 step "a network overlapping home is refused"
@@ -162,11 +168,58 @@ dns="$(phone status "$work/phone" | field dns)"
 wait_for 30 sh -c "sudo nsenter --net=/run/netns/en-ph $work/mobilehost resolve $dns srv-h.home.internal | grep -qx $srv_h" || fail "home's name from $dns"
 wait_for 30 sh -c "sudo nsenter --net=/run/netns/en-ph $work/mobilehost resolve $dns srv-m.md.internal | grep -qx $srv_m" || fail "md's name from $dns (the first network's resolver)"
 
+step "md's exit: srv-m into namespace en-inet (203.0.113.0/24); the phone uses it"
+sudo ip netns add en-inet
+sudo ip link add en-inetm netns en-srvm type veth peer name eth0 netns en-inet
+inns en-srvm ip addr add 203.0.113.1/24 dev en-inetm
+inns en-srvm ip link set en-inetm up
+inns en-inet ip addr add 203.0.113.2/24 dev eth0
+inns en-inet ip link set eth0 up
+inns en-inet ip link set lo up
+inns en-inet ip route add default via 203.0.113.1
+mkdir -p "$work/www" && echo inet > "$work/www/index.html"
+inns en-inet python3 -m http.server 80 --directory "$work/www" > "$work/http-inet.log" 2>&1 &
+pids+=($!)
+# The phone's WireGuard packets keep their path once 0.0.0.0/0 goes into the VPN (Android protects
+# its sockets; mobilehost has no protector).
+inns en-ph ip route add 10.200.0.0/16 via 10.200.2.1
+admin en-srvm "$work/state-m" route add internet --exit --via srv-m >/dev/null || fail "md's exit"
+admin en-srvm "$work/state-m" allow mobiles route:internet >/dev/null || fail "md's exit rule"
+offered() { phone status "$work/phone" md.test | grep -q '"route":"internet"'; }
+wait_for 30 offered || fail "md does not offer its exit to the phone"
+phone exit "$work/phone" md.test internet || fail "choosing md's exit"
+exit_in() { [[ "$(phone status "$work/phone" | field exit_network)" == "$1" ]]; }
+wait_for 30 exit_in md.test || fail "md's exit not in use"
+wait_for 30 sh -c "sudo nsenter --net=/run/netns/en-ph ip route get 203.0.113.2 | grep -q 'dev tun0'" || fail "0.0.0.0/0 is not in the VPN"
+wait_for 30 inns en-ph curl -s -o /dev/null --max-time 3 http://203.0.113.2/ || fail "the phone does not reach en-inet through md's exit"
+inns en-ph ping -c1 -W2 "$srv_h" >/dev/null || fail "home lost while md's exit is in use"
+dns="$(phone status "$work/phone" | field dns)"
+[[ "$dns" == 100.81.* ]] || fail "the VPN's DNS server is $dns, not md's resolver (md's exit is in use)"
+wait_for 30 sh -c "sudo nsenter --net=/run/netns/en-ph $work/mobilehost resolve $dns srv-h.home.internal | grep -qx $srv_h" || fail "home's name from md's resolver"
+phone exit "$work/phone" md.test off || fail "stopping md's exit"
+wait_for 30 exit_in "" || fail "md's exit still in use"
+wait_for 30 sh -c "! sudo nsenter --net=/run/netns/en-ph curl -s -o /dev/null --max-time 2 http://203.0.113.2/" || fail "en-inet still reached with the exit off"
+
 step "the phone leaves md: home stays, md's address goes"
 phone leave "$work/phone" md.test || fail "leave"
 phone networks "$work/phone" | grep -q '"md.test"' && fail "md is still among the phone's networks"
 wait_for 30 sh -c "! sudo nsenter --net=/run/netns/en-ph ip -br addr show tun0 | grep -q $ph_md" || fail "tun0 still carries md's address"
 wait_for 30 inns en-ph ping -c1 -W1 "$srv_h" || fail "home lost after leaving md"
 if inns en-ph ping -c1 -W2 "$srv_m" >/dev/null 2>&1; then fail "md still reached after leaving it"; fi
+
+step "md joined again; the phone leaves home, its first network (disconnected): md takes its place"
+phone join "$work/phone" md.test "$record_md" "$(words md 100.81.0.0/16)" || fail "joining md again"
+wait_for 60 inns en-ph ping -c1 -W1 "$srv_m" || fail "the phone cannot reach srv-m after joining md again"
+sudo kill "$phone_pid"
+wait_for 15 sh -c "! sudo kill -0 $phone_pid 2>/dev/null" || fail "the phone did not disconnect"
+phone leave "$work/phone" "" || fail "leaving home"
+[[ "$(phone networks "$work/phone")" == '[{"domain":"md.test","first":true}]' ]] || fail "networks after leaving home: $(phone networks "$work/phone")"
+start_phone
+wait_for 60 inns en-ph ping -c1 -W1 "$srv_m" || fail "md, now first, not reached"
+if inns en-ph ping -c1 -W2 "$srv_h" >/dev/null 2>&1; then fail "home still reached after leaving it"; fi
+dns_is() { [[ "$(phone status "$work/phone" | field dns)" == $1 ]]; }
+wait_for 30 dns_is '100.81.*' || fail "the VPN's DNS server is $(phone status "$work/phone" | field dns), not md's resolver"
+dns="$(phone status "$work/phone" | field dns)"
+wait_for 30 sh -c "sudo nsenter --net=/run/netns/en-ph $work/mobilehost resolve $dns srv-m.md.internal | grep -qx $srv_m" || fail "md's name from $dns after leaving home"
 
 printf '\nPASS\n'
