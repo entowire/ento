@@ -919,6 +919,9 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   (done, refused, failed) and kind, 50 entries a page with **Newer** and **Older** between pages
   (0.57; before, older entries were added below the first 100), each with its date and time, and
   **Export CSV** of what matches. A refresh updates the first page only, so a page being read stays put.
+  On a phone's screen (narrower than 700 px) each entry, here and in the Overview's latest activity,
+  puts its time and outcome on one line and what happened below it at full width (0.61.1; before,
+  the Overview squeezed what happened into a narrow column beside a stretched outcome).
 
 Group names are checked wherever they are set: 1 to 64 characters, no commas or control
 characters, `*` only in rules. The page carries the version of the control node that served it and

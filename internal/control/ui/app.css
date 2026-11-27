@@ -396,14 +396,18 @@ body.viewer :is(.row-actions, .dfoot, .builder, #add-device, [data-add-device], 
 .feed .what b { font-weight: 600; }
 .feed .target { display: block; color: var(--muted); font-size: 13px; font-family: var(--mono); margin-top: 2px; }
 #ov-activity .target { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ov-activity > .item { grid-template-columns: 6.5em minmax(0, 1fr) auto; }
 @media (max-width: 700px) {
-  .feed > .item { grid-template-columns: minmax(0, 1fr) auto; }
-  .feed .when { grid-column: 1 / -1; }
+  /* When and the outcome on one line, what happened below it at full width (#ov-activity too). */
+  .feed > .item, #ov-activity > .item { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "when result" "what what"; }
+  .feed .when { grid-area: when; }
+  .feed .what { grid-area: what; }
+  .feed > .item > .badge { grid-area: result; }
 }
+.feed > .item > .badge { justify-self: end; }
 /* The activity a page at a time: newer on the left, older on the right, the page between. */
 #act-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; }
 #act-pager button:disabled { visibility: hidden; }
-#ov-activity > .item { grid-template-columns: 6.5em minmax(0, 1fr) auto; }
 /* Sign-in providers (0.59) */
 .provider-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .provider-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
