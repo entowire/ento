@@ -654,7 +654,8 @@ Without `--public-key`, the key pair is made there and its private half is in th
 only, nowhere else; with `--public-key KEY` (made on the device: `wg genkey | wg pubkey`), the
 configuration leaves its private key to the device. The configuration's `Endpoint` is the gateway as
 the control nodes last saw it (`--endpoint HOST:PORT` for another: the gateway's WireGuard port must
-be reachable from the device), its `AllowedIPs` the network's range, its `PresharedKey` the key of
+be reachable from the device; `sudo wg show ento0 listen-port` on the gateway says which it is, and
+from 0.62.2 an agent keeps its interface's port across restarts, so it stays), its `AllowedIPs` the network's range, its `PresharedKey` the key of
 its tunnel with the gateway (Constitution 9.3): it changes only with a new configuration.
 
 The gateway forwards its traffic: what it opens is judged where it arrives, as anyone's (a device's

@@ -28,7 +28,8 @@ var inWSL = func() bool {
 // above it (up to 100 further), saying so: another WireGuard client on the same machine (another
 // network's agent, wg-quick) using the port must not keep this agent from starting (0.38.2; it
 // had exited at once, "address already in use", and the service restarted it for ever). The port
-// only matters for direct connections, and peers learn it from the control nodes.
+// only matters for direct connections, and peers learn it from the control nodes; plain WireGuard
+// peers do not, so an agent whose interface exists keeps its port.
 //
 // Inside WSL the default port is WSLListenPort, also for agents installed with 51830 in their
 // service: Windows' own ento keeps 51830.
@@ -36,6 +37,14 @@ func ChooseListenPort(cfg *Config) {
 	cfg.defaults()
 	if cfg.ListenPort == DefaultListenPort && inWSL() {
 		cfg.ListenPort = WSLListenPort
+	}
+	// The device's own interface outlives the agent (Linux's kernel WireGuard): its port is in use,
+	// by this agent's own tunnel. It keeps that port, one this choice could have given (0.62.2):
+	// before, a restart found its own port taken and moved to the next free one, and the one after
+	// back, which broke the configurations of plain WireGuard peers, which name the gateway's port.
+	if p, ok := ownListenPort(cfg.Interface); ok && p >= cfg.ListenPort && p <= cfg.ListenPort+100 {
+		cfg.ListenPort = p
+		return
 	}
 	if udpPortFree(cfg.ListenPort) {
 		return

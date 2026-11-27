@@ -546,6 +546,10 @@ not suspended, not in a `--no-gateways` group, no plain peer itself).
   signed; 0.62.1), and the control nodes take it as its last seen (only for the gateway's own plain
   peers, never ahead of now). With its keepalive every 25 s it is "online" (a handshake within 3
   minutes) while it is up.
+- **The gateway's port.** Its configuration names the gateway's WireGuard port, which other devices
+  learn from the control nodes and it cannot: an agent whose kernel interface exists (it outlives
+  the agent) keeps that interface's port (`ChooseListenPort`, 0.62.2). Before, a restart found its
+  own port taken, moved to the next free one, and moved back at the restart after.
 - **Its keys.** Made on the device (the administrator gives the public key) or by the control node,
   which shows the private half once in the configuration and keeps only the public one (6.3). The
   gateway's key is in the configuration, so a gateway that carries plain peers refuses its daily

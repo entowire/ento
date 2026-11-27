@@ -78,3 +78,39 @@ func TestRelayerPortTaken(t *testing.T) {
 		t.Fatalf("not said: %q", logged)
 	}
 }
+
+// The device's own interface outlives the agent: its port is in use by it, and a restart keeps that
+// port (0.62.2) instead of moving to the next free one and back at the restart after (which broke
+// plain WireGuard peers' configurations). A port it could not have chosen is not kept.
+func TestChooseListenPortOwnInterface(t *testing.T) {
+	old := ownListenPort
+	defer func() { ownListenPort = old }()
+	busy, err := net.ListenUDP("udp4", &net.UDPAddr{Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	port := busy.LocalAddr().(*net.UDPAddr).Port // held by the interface itself
+	quiet := func(string, ...any) {}
+	for _, c := range []struct {
+		own, want int
+		exists    bool
+	}{
+		{own: port, want: port, exists: true},         // the interface holds the port asked for
+		{own: port + 1, want: port + 1, exists: true}, // it moved there once: it stays
+	} {
+		ownListenPort = func(string) (int, bool) { return c.own, c.exists }
+		cfg := Config{ListenPort: port, Interface: "ento0", Logf: quiet}
+		ChooseListenPort(&cfg)
+		if cfg.ListenPort != c.want {
+			t.Fatalf("own interface on %d: chose %d, want %d", c.own, cfg.ListenPort, c.want)
+		}
+	}
+	// An interface on a port this choice could not give (another --listen-port): the usual choice.
+	ownListenPort = func(string) (int, bool) { return port + 500, true }
+	cfg := Config{ListenPort: port, Interface: "ento0", Logf: quiet}
+	ChooseListenPort(&cfg)
+	if cfg.ListenPort == port+500 || cfg.ListenPort == port {
+		t.Fatalf("chose %d", cfg.ListenPort)
+	}
+}
