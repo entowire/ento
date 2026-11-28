@@ -798,13 +798,20 @@ function showPersonWords(name, r) {
 $("people-search").addEventListener("input", renderPeople);
 
 function filterChips(box, filters, items, current, pick) {
-  put(box, ...filters.map(([v, label, test]) => el("button", { type: "button", class: "chip", "aria-pressed": String(v === current), onclick: () => pick(v) },
-    label, el("span", {}, String(items.filter(test).length)))));
+  put(box, ...filters.map(([v, label, test, count]) => el("button", { type: "button", class: "chip", "aria-pressed": String(v === current), onclick: () => pick(v) },
+    label, el("span", {}, String(count ? count() : items.filter(test).length)))));
 }
 
 // --- devices --------------------------------------------------------------------------------------
 const deviceFilters = [["all", "All", () => true], ["online", "Online", online], ["pending", "Isolated", (p) => !p.suspended && (isIsolated(p) || !p.approved)],
-  ["posture", "Failing a check", failsPosture], ["suspended", "Suspended", (p) => p.suspended], ["admin", "Admins", hasRole]];
+  ["posture", "Failing a check", failsPosture], ["suspended", "Suspended", (p) => p.suspended], ["admin", "Admins", hasRole],
+  ["controls", "Control nodes", () => false, () => controlNodes().length]];
+
+// The network's control nodes are part of it too: shown among its devices, as what they are. They
+// are not devices (no groups, rules or approval apply to them), so nothing here changes them.
+const controlNodes = () => (info && info.controls) || [];
+const controlKey = (c) => "control:" + c.name;
+const controlOnline = (c) => c.last_seen && Date.now() - Date.parse(c.last_seen) < 180000;
 
 function openDevice(id) {
   ui.device = id;
@@ -848,14 +855,28 @@ function versionOf(p) {
 
 function renderDevices() {
   const pending = pendingOf().length;
-  $("dev-sub").textContent = `${plural(peers.length, "device")} · ${peers.filter(online).length} online` + (pending ? ` · ${pending} waiting for you` : "");
+  $("dev-sub").textContent = `${plural(peers.length, "device")} · ${peers.filter(online).length} online · ${plural(controlNodes().length, "control node")}` + (pending ? ` · ${pending} waiting for you` : "");
   filterChips($("device-filter"), deviceFilters, peers, ui.deviceFilter, (v) => { ui.deviceFilter = v; renderDevices(); });
   const q = $("device-search").value.trim().toLowerCase();
   const test = deviceFilters.find((f) => f[0] === ui.deviceFilter)[2];
+  const controls = ["all", "controls"].includes(ui.deviceFilter)
+    ? controlNodes().filter((c) => !q || [c.name, c.address, c.endpoint, "control node"].some((x) => (x || "").toLowerCase().includes(q))) : [];
   const shown = peers.filter((p) => test(p) && (!q || [p.hostname, p.reported_hostname, p.user, p.address, p.os, p.endpoint, p.authority, p.posture && p.posture.agent, ...(p.groups || [])]
     .some((x) => (x || "").toLowerCase().includes(q))));
   const body = $("device-table").tBodies[0];
-  put(body, ...(shown.length ? shown.map((p) => {
+  const controlRows = controls.map((c) => {
+    const pick = () => { ui.device = controlKey(c); renderDevices(); };
+    return el("tr", { class: "pick" + (ui.device === controlKey(c) ? " sel" : ""), tabindex: "0", onclick: pick, onkeydown: (e) => { if (e.key === "Enter") pick(); } },
+      el("td", {}, el("div", { class: "cell" }, el("span", { class: "ico sm" }, icon("server")), el("div", {}, el("b", {}, c.name),
+        el("small", { class: "seen", title: when(c.last_seen) }, el("span", { class: "dot" + (controlOnline(c) ? " on" : "") }), controlOnline(c) ? "answering" : "seen " + ago(c.last_seen))))),
+      el("td", {}, el("span", { class: "dim" }, "–")),
+      el("td", { class: "mono" }, c.address),
+      el("td", {}, info.node === c.name ? info.version : el("span", { class: "dim" }, "–")),
+      el("td", {}, el("div", { class: "tags" }, el("span", { class: "badge info" }, "Control node"))),
+      el("td", {}, el("span", { class: "dim" }, "–")),
+      el("td", { class: "right" }));
+  });
+  put(body, ...controlRows, ...(shown.length || controlRows.length ? shown.map((p) => {
     const machineApproved = p.authority || !p.user ? p.approved : p.machine_approved;
     const pick = () => { ui.device = p.id; renderDevices(); };
     return el("tr", { class: "pick" + (ui.device === p.id ? " sel" : "") + (!p.approved && !p.suspended ? " wait" : ""), tabindex: "0", onclick: pick,
@@ -875,10 +896,25 @@ function renderDevices() {
 // The panel beside the table: a device's details, or nothing (the table takes the width).
 function renderDeviceSide() {
   const p = peers.find((x) => x.id === ui.device);
-  $("device-side").hidden = !p;
-  $("device-split").classList.toggle("solo", !p);
-  $("device-detail").hidden = !p;
+  const c = controlNodes().find((x) => controlKey(x) === ui.device);
+  $("device-side").hidden = !p && !c;
+  $("device-split").classList.toggle("solo", !p && !c);
+  $("device-detail").hidden = !p && !c;
   if (p) renderDeviceDetail(p);
+  else if (c) renderControlDetail(c);
+}
+
+function renderControlDetail(c) {
+  const facts = [["Overlay address", c.address], ["Endpoint", c.endpoint || "–"], ["Last seen", controlOnline(c) ? "answering now" : ago(c.last_seen)]];
+  if (info.node === c.name) facts.push(["Version", info.version], ["This page", "served by this node"]);
+  put($("device-detail"),
+    el("div", { class: "dhead" }, el("span", { class: "ico" }, icon("server")), el("div", {}, el("b", {}, c.name), el("small", {}, "control node")),
+      button(icon("close", 16), () => { ui.device = null; renderDevices(); }, "icon-btn", { "aria-label": "Close" })),
+    el("div", { class: "tags" }, el("span", { class: "badge info" }, "Control node")),
+    el("p", { class: "hint" }, "One of this network's own servers: it decides who is in the network and what each device reaches, "
+      + "hands every device its configuration and passes on, still encrypted, what two devices cannot send each other directly. "
+      + "Every device reaches it. Its endpoint is the public address devices find it at (the network's record)."),
+    el("div", { class: "sect" }, el("h3", {}, "About"), el("dl", { class: "facts" }, facts.flatMap(([k, v]) => [el("dt", {}, k), el("dd", { class: k === "Overlay address" || k === "Endpoint" ? "mono" : null }, v)]))));
 }
 
 function renderDeviceDetail(p) {

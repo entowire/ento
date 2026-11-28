@@ -936,7 +936,11 @@ network's dashboard (0.39, rebuilt from scratch). It has these pages:
   device on a slower connection failed with "context deadline exceeded ... while reading body"
   and stayed behind until updated by hand: downloads now have 10 minutes), and
   **update by hand** on Windows and Android, which do not update themselves yet; searchable), filtered (online, waiting,
-  failing a check, suspended, admins) and searched; a device's panel shows its groups, its posture
+  failing a check, suspended, admins, control nodes) and searched. The network's control nodes are
+  listed too, first, as what they are (0.63.1): they are part of the network everyone in it should
+  see, though not devices (no groups, rules or approval apply to them, so nothing there changes them);
+  a control node's panel shows its overlay address, its public endpoint (as the network's record
+  gives it), whether it answers, and the version of the one that served the page. A device's panel shows its groups, its posture
   report and each check, and does what the admin commands do: approve and unapprove (**Sign out**
   for a device bound to a person, who gets it back by signing in again; **Unapprove** for others),
   suspend and resume, rename or confirm the reported name, groups (picked as tags, with the

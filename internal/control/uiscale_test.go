@@ -104,10 +104,11 @@ func TestUIAtScale(t *testing.T) {
 	}{{"desktop", 1280, 900}, {"phone", 390, 844}} {
 		b.size(w.w, w.h)
 		b.theme("light")
-		for _, d := range []struct{ page, sel string }{
-			{"people", `#people-table tbody tr`},
-			{"devices", `#device-table tbody tr`},
-			{"groups", `#group-list > *`},
+		for _, d := range []struct{ page, sel, name string }{
+			{"people", `#people-table tbody tr`, "people"},
+			{"devices", `#device-table tbody tr:nth-child(2)`, "devices"},
+			{"devices", `#device-table tbody tr:first-child`, "control"},
+			{"groups", `#group-list > *`, "groups"},
 		} {
 			b.open(t, d.page)
 			if !b.clickFirst(d.sel) {
@@ -116,12 +117,22 @@ func TestUIAtScale(t *testing.T) {
 			}
 			time.Sleep(700 * time.Millisecond)
 			over := b.overflow()
-			results = append(results, result{d.page + "-detail", w.name, "light", 0, over})
-			b.screenshot(t, filepath.Join(shots, fmt.Sprintf("%s-detail-%s.png", d.page, w.name)))
+			results = append(results, result{d.name + "-detail", w.name, "light", 0, over})
+			b.screenshot(t, filepath.Join(shots, fmt.Sprintf("%s-detail-%s.png", d.name, w.name)))
 			if len(over) > 0 {
-				t.Errorf("%s detail (%s): sticks out sideways: %s", d.page, w.name, strings.Join(over, "; "))
+				t.Errorf("%s detail (%s): sticks out sideways: %s", d.name, w.name, strings.Join(over, "; "))
 			}
 		}
+	}
+	// The network's control nodes are among its devices, first, with a panel of their own.
+	b.size(1280, 900)
+	b.open(t, "devices")
+	if first, _ := b.eval(`document.querySelector("#device-table tbody tr").innerText`).(string); !strings.Contains(first, "c1") || !strings.Contains(first, "Control node") {
+		t.Errorf("the first row is not the control node: %q", first)
+	}
+	b.clickFirst(`#device-table tbody tr:first-child`)
+	if side, _ := b.eval(`document.getElementById("device-detail").innerText`).(string); !strings.Contains(side, "One of this network's own servers") {
+		t.Errorf("the control node's panel: %q", side)
 	}
 	var rep strings.Builder
 	fmt.Fprintf(&rep, "# Admin interface at scale\n\nData: %v\n\n| Page | Width | Theme | Load (ms) | Sticks out |\n|---|---|---|---|---|\n", counts)
